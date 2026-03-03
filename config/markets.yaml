@@ -311,6 +311,20 @@ dolomite:
     - id: 47
       symbol: savUSD
       decimals: 18
+  ethereum:
+    wallets:
+      - '0x7C0756a00BB3336a487C9995d2c3ACe3b234Ab70'
+    margin: '0x003Ca23Fd5F0ca87D01F6eC6CD14A8AE60c2b97D'
+    account_numbers:
+      - 0
+      - 53264033539368490529602524145926241742265540327776018710110135204710263909860
+    markets:
+    - id: 0
+      symbol: WETH
+      decimals: 18
+    - id: 6
+      symbol: weETH
+      decimals: 18
 
 kamino:
   solana:
