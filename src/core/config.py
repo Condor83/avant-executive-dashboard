@@ -72,6 +72,15 @@ class DolomiteChainConfig(ConfigModel):
     margin: str
     wallets: list[str]
     markets: list[DolomiteMarket]
+    account_numbers: list[int] = Field(default_factory=lambda: [0])
+
+    @model_validator(mode="after")
+    def validate_account_numbers(self) -> DolomiteChainConfig:
+        if not self.account_numbers:
+            raise ValueError("dolomite account_numbers must not be empty")
+        if any(account_number < 0 for account_number in self.account_numbers):
+            raise ValueError("dolomite account_numbers must be non-negative")
+        return self
 
 
 class KaminoMarket(ConfigModel):

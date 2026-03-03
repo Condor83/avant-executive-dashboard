@@ -19,6 +19,8 @@ DOLO_GET_MARKET_CURRENT_INDEX_SELECTOR = "0x56ea84b2"
 DOLO_GET_MARKET_TOTAL_PAR_SELECTOR = "0xcb04a34c"
 DOLO_GET_MARKET_INTEREST_RATE_SELECTOR = "0xfd47eda6"
 DOLO_GET_MARKET_PRICE_SELECTOR = "0x8928378e"
+DOLO_GET_NUM_MARKETS_SELECTOR = "0x295c39a5"
+ERC20_DECIMALS_SELECTOR = "0x313ce567"
 
 WAD = Decimal("1e18")
 SECONDS_PER_YEAR_FLOAT = 31536000.0
@@ -127,6 +129,9 @@ class DolomiteRpcClient(Protocol):
     def get_market_token_address(self, chain_code: str, margin_address: str, market_id: int) -> str:
         """Return token address for a Dolomite market id."""
 
+    def get_num_markets(self, chain_code: str, margin_address: str) -> int:
+        """Return total number of market ids available on Dolomite margin."""
+
     def get_market_price(self, chain_code: str, margin_address: str, market_id: int) -> int:
         """Return market price raw value for a Dolomite market id."""
 
@@ -152,6 +157,9 @@ class DolomiteRpcClient(Protocol):
         market_id: int,
     ) -> DolomiteSignedWei:
         """Return signed wei balance for wallet/account/market."""
+
+    def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
+        """Return ERC20 decimals for a token."""
 
 
 class EvmRpcDolomiteClient:
@@ -206,6 +214,12 @@ class EvmRpcDolomiteClient:
             raise RuntimeError("Dolomite getMarketTokenAddress returned empty response")
         return _decode_address_word(words[0])
 
+    def get_num_markets(self, chain_code: str, margin_address: str) -> int:
+        words = self._eth_call_words(chain_code, margin_address, DOLO_GET_NUM_MARKETS_SELECTOR)
+        if not words:
+            raise RuntimeError("Dolomite getNumMarkets returned empty response")
+        return int(words[0])
+
     def get_market_price(self, chain_code: str, margin_address: str, market_id: int) -> int:
         data = f"{DOLO_GET_MARKET_PRICE_SELECTOR}{_encode_uint(market_id)}"
         words = self._eth_call_words(chain_code, margin_address, data)
@@ -255,6 +269,12 @@ class EvmRpcDolomiteClient:
             raise RuntimeError("Dolomite getAccountWei returned insufficient words")
         return DolomiteSignedWei(is_positive=bool(words[0]), value=words[1])
 
+    def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
+        words = self._eth_call_words(chain_code, token_address, ERC20_DECIMALS_SELECTOR)
+        if not words:
+            raise RuntimeError("ERC20 decimals call returned empty response")
+        return int(words[0])
+
 
 class DolomiteAdapter:
     """Collect canonical Dolomite positions and market snapshots."""
@@ -266,8 +286,13 @@ class DolomiteAdapter:
         self.rpc_client = rpc_client
 
     @staticmethod
-    def _position_key(chain_code: str, wallet_address: str, market_ref: str) -> str:
-        return f"dolomite:{chain_code}:{wallet_address}:{market_ref}"
+    def _position_key(
+        chain_code: str,
+        wallet_address: str,
+        account_number: int,
+        market_ref: str,
+    ) -> str:
+        return f"dolomite:{chain_code}:{wallet_address}:{account_number}:{market_ref}"
 
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
@@ -427,69 +452,77 @@ class DolomiteAdapter:
             margin_address = canonical_address(chain_config.margin)
             for wallet in chain_config.wallets:
                 wallet_address = canonical_address(wallet)
-                account_number = 0
-                for market_id, runtime in runtimes.items():
-                    try:
-                        account_wei = self.rpc_client.get_account_wei(
-                            chain_code,
-                            margin_address,
-                            wallet_address,
-                            account_number,
-                            market_id,
+                for account_number in chain_config.account_numbers:
+                    for market_id, runtime in runtimes.items():
+                        try:
+                            account_wei = self.rpc_client.get_account_wei(
+                                chain_code,
+                                margin_address,
+                                wallet_address,
+                                account_number,
+                                market_id,
+                            )
+                        except Exception as exc:
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="dolomite_account_read_failed",
+                                    error_message=str(exc),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet_address,
+                                    market_ref=runtime.market_ref,
+                                    payload_json={
+                                        "market_id": market_id,
+                                        "account_number": account_number,
+                                    },
+                                )
+                            )
+                            continue
+
+                        if account_wei.value == 0:
+                            continue
+
+                        supplied_raw = account_wei.value if account_wei.is_positive else 0
+                        borrowed_raw = account_wei.value if not account_wei.is_positive else 0
+                        supplied_amount = normalize_raw_amount(
+                            supplied_raw, runtime.config.decimals
                         )
-                    except Exception as exc:
-                        issues.append(
-                            self._issue(
+                        borrowed_amount = normalize_raw_amount(
+                            borrowed_raw, runtime.config.decimals
+                        )
+
+                        supplied_usd = supplied_amount * runtime.price_usd
+                        borrowed_usd = borrowed_amount * runtime.price_usd
+                        equity_usd = supplied_usd - borrowed_usd
+                        ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
+
+                        positions.append(
+                            PositionSnapshotInput(
                                 as_of_ts_utc=as_of_ts_utc,
-                                stage="sync_snapshot",
-                                error_type="dolomite_account_read_failed",
-                                error_message=str(exc),
+                                protocol_code=self.protocol_code,
                                 chain_code=chain_code,
                                 wallet_address=wallet_address,
                                 market_ref=runtime.market_ref,
-                                payload_json={"market_id": market_id},
+                                position_key=self._position_key(
+                                    chain_code,
+                                    wallet_address,
+                                    account_number,
+                                    runtime.market_ref,
+                                ),
+                                supplied_amount=supplied_amount,
+                                supplied_usd=supplied_usd,
+                                borrowed_amount=borrowed_amount,
+                                borrowed_usd=borrowed_usd,
+                                supply_apy=runtime.supply_apy,
+                                borrow_apy=runtime.borrow_apy,
+                                reward_apy=Decimal("0"),
+                                equity_usd=equity_usd,
+                                ltv=ltv,
+                                source="rpc",
+                                block_number_or_slot=block_number_or_slot,
                             )
                         )
-                        continue
-
-                    if account_wei.value == 0:
-                        continue
-
-                    supplied_raw = account_wei.value if account_wei.is_positive else 0
-                    borrowed_raw = account_wei.value if not account_wei.is_positive else 0
-                    supplied_amount = normalize_raw_amount(supplied_raw, runtime.config.decimals)
-                    borrowed_amount = normalize_raw_amount(borrowed_raw, runtime.config.decimals)
-
-                    supplied_usd = supplied_amount * runtime.price_usd
-                    borrowed_usd = borrowed_amount * runtime.price_usd
-                    equity_usd = supplied_usd - borrowed_usd
-                    ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
-
-                    positions.append(
-                        PositionSnapshotInput(
-                            as_of_ts_utc=as_of_ts_utc,
-                            protocol_code=self.protocol_code,
-                            chain_code=chain_code,
-                            wallet_address=wallet_address,
-                            market_ref=runtime.market_ref,
-                            position_key=self._position_key(
-                                chain_code,
-                                wallet_address,
-                                runtime.market_ref,
-                            ),
-                            supplied_amount=supplied_amount,
-                            supplied_usd=supplied_usd,
-                            borrowed_amount=borrowed_amount,
-                            borrowed_usd=borrowed_usd,
-                            supply_apy=runtime.supply_apy,
-                            borrow_apy=runtime.borrow_apy,
-                            reward_apy=Decimal("0"),
-                            equity_usd=equity_usd,
-                            ltv=ltv,
-                            source="rpc",
-                            block_number_or_slot=block_number_or_slot,
-                        )
-                    )
 
         return positions, issues
 

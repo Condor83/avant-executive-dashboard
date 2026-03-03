@@ -24,6 +24,9 @@ class FakeDolomiteClient:
     def get_market_token_address(self, chain_code: str, margin_address: str, market_id: int) -> str:
         return "0x549943e04f40284185054145c6e4e9568c1d3241"
 
+    def get_num_markets(self, chain_code: str, margin_address: str) -> int:
+        return 4
+
     def get_market_price(self, chain_code: str, margin_address: str, market_id: int) -> int:
         return 10**30
 
@@ -52,7 +55,12 @@ class FakeDolomiteClient:
         account_number: int,
         market_id: int,
     ) -> DolomiteSignedWei:
+        if account_number != 1:
+            return DolomiteSignedWei(is_positive=True, value=0)
         return DolomiteSignedWei(is_positive=True, value=500_000_000)
+
+    def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
+        return 6
 
 
 def _config() -> MarketsConfig:
@@ -65,6 +73,7 @@ def _config() -> MarketsConfig:
                 "bera": {
                     "margin": "0x003ca23fd5f0ca87d01f6ec6cd14a8ae60c2b97d",
                     "wallets": ["0xc1d023141ad6935f81e5286e577768b75c9ff8eb"],
+                    "account_numbers": [0, 1],
                     "markets": [
                         {"id": 2, "symbol": "USDC.e", "decimals": 6},
                         {"id": 3, "symbol": "HONEY", "decimals": 18},
@@ -89,6 +98,7 @@ def test_dolomite_invariants_hold() -> None:
     assert not market_issues
     assert positions
     assert markets
+    assert all(":1:" in row.position_key for row in positions)
 
     epsilon = Decimal("1e-12")
     for position_row in positions:

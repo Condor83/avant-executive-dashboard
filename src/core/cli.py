@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Protocol
 
@@ -14,9 +15,10 @@ from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
-from core.config import load_markets_config
+from core.config import load_markets_config, load_wallet_products_config
 from core.coverage_report import build_coverage_report
 from core.db.session import get_engine
+from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
 from core.settings import get_settings
@@ -31,6 +33,29 @@ app.add_typer(compute_app, name="compute")
 
 AS_OF_OPTION = typer.Option(default=None, help="UTC timestamp in ISO-8601 format")
 MARKETS_PATH_OPTION = typer.Option(default=Path("config/markets.yaml"), help="markets config path")
+WALLET_PRODUCTS_PATH_OPTION = typer.Option(
+    default=Path("config/wallet_products.yaml"),
+    help="wallet products config path",
+)
+DOLOMITE_CHAIN_CODE_OPTION = typer.Option("bera", "--chain-code", help="Dolomite chain code")
+DOLOMITE_WALLET_GROUPS_OPTION = typer.Option(
+    "avETH,avETHx",
+    "--wallet-groups",
+    help="Comma-separated wallet groups from wallet_products (for example avETH,avETHx)",
+)
+DOLOMITE_MAX_ACCOUNT_NUMBER_OPTION = typer.Option(
+    32, "--max-account-number", help="Maximum Dolomite account number to scan (inclusive)"
+)
+DOLOMITE_MIN_USD_OPTION = typer.Option(
+    "1000",
+    "--min-usd",
+    help="Minimum absolute supplied+borrowed USD exposure to show",
+)
+DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION = typer.Option(
+    63,
+    "--fallback-probe-max-market-id",
+    help="Fallback max market id probe when getNumMarkets RPC fails",
+)
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
 
 
@@ -233,6 +258,108 @@ def sync_coverage_report(
         typer.echo(report)
     finally:
         session.close()
+
+
+@sync_app.command("discover-dolomite-wallets")
+def sync_discover_dolomite_wallets(
+    markets_path: Path = MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    chain_code: str = DOLOMITE_CHAIN_CODE_OPTION,
+    wallet_groups: str = DOLOMITE_WALLET_GROUPS_OPTION,
+    max_account_number: int = DOLOMITE_MAX_ACCOUNT_NUMBER_OPTION,
+    min_usd: str = DOLOMITE_MIN_USD_OPTION,
+    fallback_probe_max_market_id: int = DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION,
+) -> None:
+    """Read-only scan to discover Dolomite wallets/accounts with meaningful balances."""
+
+    if max_account_number < 0:
+        raise typer.BadParameter("max-account-number must be non-negative")
+    try:
+        min_usd_decimal = Decimal(min_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("min-usd must be a valid decimal number") from exc
+    if min_usd_decimal < 0:
+        raise typer.BadParameter("min-usd must be non-negative")
+    if fallback_probe_max_market_id < 0:
+        raise typer.BadParameter("fallback-probe-max-market-id must be non-negative")
+
+    requested_groups = [token.strip() for token in wallet_groups.split(",") if token.strip()]
+    if not requested_groups:
+        raise typer.BadParameter("wallet-groups must contain at least one group")
+
+    markets_config = load_markets_config(markets_path)
+    chain_config = markets_config.dolomite.get(chain_code)
+    if chain_config is None:
+        raise typer.BadParameter(
+            f"dolomite chain '{chain_code}' not found in {markets_path}",
+            param_hint="--chain-code",
+        )
+
+    wallet_products = load_wallet_products_config(wallet_products_path)
+    candidate_wallets, wallet_warnings = wallet_candidates_for_groups(
+        wallet_products_path=wallet_products_path,
+        wallet_groups=requested_groups,
+        assignments=wallet_products.assignments,
+    )
+
+    if not candidate_wallets:
+        for warning in wallet_warnings:
+            typer.echo(f"warning: {warning}")
+        typer.echo("no candidate wallets found")
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    client = EvmRpcDolomiteClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    try:
+        result = discover_wallet_positions(
+            chain_code=chain_code,
+            chain_config=chain_config,
+            wallets=candidate_wallets,
+            rpc_client=client,
+            max_account_number=max_account_number,
+            min_abs_exposure_usd=min_usd_decimal,
+            fallback_probe_max_market_id=fallback_probe_max_market_id,
+        )
+    finally:
+        client.close()
+
+    for warning in wallet_warnings:
+        typer.echo(f"warning: {warning}")
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}")
+
+    typer.echo(
+        "scan summary:"
+        f" chain={chain_code}"
+        f" wallet_groups={','.join(requested_groups)}"
+        f" candidate_wallets={len(candidate_wallets)}"
+        f" markets_scanned={len(result.market_ids_scanned)}"
+        f" max_account_number={max_account_number}"
+        f" min_usd={min_usd_decimal}"
+    )
+
+    if not result.rows:
+        typer.echo("no dolomite exposures matched the filter")
+        return
+
+    typer.echo(
+        "wallet\taccount\tmarket_id\tsymbol\ttoken\tsupplied_usd\tborrowed_usd\tnet_usd\tabs_exposure_usd"
+    )
+    for row in result.rows:
+        typer.echo(
+            f"{row.wallet_address}\t"
+            f"{row.account_number}\t"
+            f"{row.market_id}\t"
+            f"{row.symbol}\t"
+            f"{row.token_address}\t"
+            f"{row.supplied_usd:.2f}\t"
+            f"{row.borrowed_usd:.2f}\t"
+            f"{row.net_usd:.2f}\t"
+            f"{row.abs_exposure_usd:.2f}"
+        )
 
 
 @compute_app.command("daily")

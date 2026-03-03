@@ -24,7 +24,7 @@ class FakeDolomiteClient:
         interest_rate_raw: dict[int, int],
         market_index: dict[int, DolomiteMarketIndex],
         total_par: dict[int, DolomiteMarketPar],
-        account_wei: dict[tuple[str, int], DolomiteSignedWei],
+        account_wei: dict[tuple[str, int, int], DolomiteSignedWei],
     ) -> None:
         self.token_addresses = token_addresses
         self.price_raw = price_raw
@@ -44,6 +44,11 @@ class FakeDolomiteClient:
         assert chain_code == "bera"
         assert margin_address
         return self.token_addresses[market_id]
+
+    def get_num_markets(self, chain_code: str, margin_address: str) -> int:
+        assert chain_code == "bera"
+        assert margin_address
+        return max(self.token_addresses) + 1
 
     def get_market_price(self, chain_code: str, margin_address: str, market_id: int) -> int:
         assert chain_code == "bera"
@@ -74,8 +79,15 @@ class FakeDolomiteClient:
         market_id: int,
     ) -> DolomiteSignedWei:
         assert chain_code == "bera"
-        assert account_number == 0
-        return self.account_wei[(wallet_address, market_id)]
+        return self.account_wei.get(
+            (wallet_address, account_number, market_id),
+            DolomiteSignedWei(is_positive=False, value=0),
+        )
+
+    def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
+        assert chain_code == "bera"
+        assert token_address
+        return 18
 
 
 def _minimal_dolomite_config() -> tuple[MarketsConfig, list[str], list[int]]:
@@ -96,6 +108,7 @@ def _minimal_dolomite_config() -> tuple[MarketsConfig, list[str], list[int]]:
                     "margin": chain.margin,
                     "wallets": wallets,
                     "markets": [market.model_dump() for market in markets],
+                    "account_numbers": [0, 1],
                 }
             },
             "kamino": {},
@@ -143,8 +156,8 @@ def test_dolomite_golden_wallets_returns_positions_and_market_snapshots() -> Non
             ),
         },
         account_wei={
-            (wallet, market_ids[0]): DolomiteSignedWei(is_positive=True, value=350_000_000),
-            (wallet, market_ids[1]): DolomiteSignedWei(
+            (wallet, 0, market_ids[0]): DolomiteSignedWei(is_positive=True, value=350_000_000),
+            (wallet, 1, market_ids[1]): DolomiteSignedWei(
                 is_positive=False,
                 value=12_000_000_000_000_000_000,
             ),
@@ -166,6 +179,8 @@ def test_dolomite_golden_wallets_returns_positions_and_market_snapshots() -> Non
 
     assert {row.wallet_address for row in position_rows} == {wallet}
     assert {row.market_ref for row in position_rows} == {str(market_id) for market_id in market_ids}
+    assert sum(":0:" in row.position_key for row in position_rows) == 1
+    assert sum(":1:" in row.position_key for row in position_rows) == 1
 
     for row in position_rows:
         assert row.supply_apy >= Decimal("0")

@@ -45,6 +45,8 @@ def test_markets_and_tokens_have_required_fields() -> None:
 
     for dolomite_chain in markets.dolomite.values():
         assert dolomite_chain.margin
+        assert dolomite_chain.account_numbers
+        assert all(account_number >= 0 for account_number in dolomite_chain.account_numbers)
         for dolomite_market in dolomite_chain.markets:
             assert dolomite_market.id >= 0
             assert dolomite_market.symbol
