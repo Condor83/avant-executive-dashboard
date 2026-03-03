@@ -380,9 +380,7 @@ class YieldEngine:
         now_utc_provider: Callable[[], datetime] | None = None,
     ) -> None:
         if boundary_policy not in ("auto", "in_day", "latest_snapshot"):
-            raise ValueError(
-                "boundary_policy must be one of: auto, in_day, latest_snapshot"
-            )
+            raise ValueError("boundary_policy must be one of: auto, in_day, latest_snapshot")
         self.session = session
         self.boundary_policy = boundary_policy
         self.now_utc_provider = now_utc_provider or (lambda: datetime.now(UTC))

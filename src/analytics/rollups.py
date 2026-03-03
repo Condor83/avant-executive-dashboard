@@ -222,7 +222,7 @@ def _query_protocol_rollups(
 
 
 def _build_metrics_from_row(
-    row: Row[tuple[int | None, Decimal, Decimal, Decimal, Decimal, Decimal | None]]
+    row: Row[tuple[int | None, Decimal, Decimal, Decimal, Decimal, Decimal | None]],
 ) -> RollupMetrics:
     avg_equity_usd = row[5] if row[5] is not None else ZERO
     roe = compute_roe_breakdown(
