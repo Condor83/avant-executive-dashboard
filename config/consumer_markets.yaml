@@ -8,7 +8,7 @@
 #   - protocol: "silo_v2"
 #     chain: "avalanche"
 #     name: "savUSD/USDC"
-#     market_address: "0x..."
+#     market_address: "0x..."  # or protocol-specific market ref/id
 #     collateral_token:
 #       symbol: "savUSD"
 #       address: "0x..."
@@ -42,3 +42,75 @@ markets:
       symbol: "BTC.b"
       address: "0x152b9d0FdC40C096757F570A51E494bd4b943E50"
       decimals: 8
+  - protocol: "euler_v2"
+    chain: "avalanche"
+    name: "savUSD (deposit)"
+    market_address: "0xbaC3983342b805E66F8756E265b3B0DdF4B685Fc"
+    collateral_token:
+      symbol: "savUSD"
+      address: "0x06d47F3fb376649c3A9Dafe069B3D6E35572219E"
+      decimals: 18
+    borrow_token:
+      symbol: "savUSD"
+      address: "0x06d47F3fb376649c3A9Dafe069B3D6E35572219E"
+      decimals: 18
+  - protocol: "euler_v2"
+    chain: "avalanche"
+    name: "savUSD/USDC"
+    market_address: "0xbaC3983342b805E66F8756E265b3B0DdF4B685Fc/0x37ca03aD51B8ff79aAD35FadaCBA4CEDF0C3e74e"
+    collateral_token:
+      symbol: "savUSD"
+      address: "0x06d47F3fb376649c3A9Dafe069B3D6E35572219E"
+      decimals: 18
+    borrow_token:
+      symbol: "USDC"
+      address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+      decimals: 6
+  - protocol: "euler_v2"
+    chain: "avalanche"
+    name: "savUSD/BTC.b"
+    market_address: "0xbaC3983342b805E66F8756E265b3B0DdF4B685Fc/0xF983f92bd962A94EAc85a8c58237C1CC1cDfBBBa"
+    collateral_token:
+      symbol: "savUSD"
+      address: "0x06d47F3fb376649c3A9Dafe069B3D6E35572219E"
+      decimals: 18
+    borrow_token:
+      symbol: "BTC.b"
+      address: "0x152b9d0FdC40C096757F570A51E494bd4b943E50"
+      decimals: 8
+  - protocol: "morpho"
+    chain: "ethereum"
+    name: "savUSD/USDC"
+    market_address: "0xe07d416323a1afbfe0bf2fe27ffb549ff565cf5c86d21b79fc60664038e597c9"
+    collateral_token:
+      symbol: "savUSD"
+      address: "0xb8D89678E75a973E74698c976716308abB8a46A4"
+      decimals: 18
+    borrow_token:
+      symbol: "USDC"
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      decimals: 6
+  - protocol: "morpho"
+    chain: "ethereum"
+    name: "savETH/WETH"
+    market_address: "0x66c19b7c49ce674e964eb917d117d987b693f508f2c1e3f71ac914454ed42e13"
+    collateral_token:
+      symbol: "savETH"
+      address: "0xDA06eE2dACF9245Aa80072a4407deBDea0D7e341"
+      decimals: 18
+    borrow_token:
+      symbol: "WETH"
+      address: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+      decimals: 18
+  - protocol: "morpho"
+    chain: "ethereum"
+    name: "wbravUSDC/USDC"
+    market_address: "0x0a834fe24f42cf9cbf0644926c5637a9da42dbfae8c4c4ca0c2f2d9c712896d3"
+    collateral_token:
+      symbol: "wbravUSDC"
+      address: "0x7309e1e2E74Af170c69Bde8fcB30397f8697d5ff"
+      decimals: 6
+    borrow_token:
+      symbol: "USDC"
+      address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"
+      decimals: 6

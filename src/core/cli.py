@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Protocol
 
 import typer
+import yaml
 from sqlalchemy.orm import Session
 
 from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
@@ -19,11 +20,22 @@ from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from core.config import (
+    canonical_address,
     load_consumer_markets_config,
     load_markets_config,
     load_wallet_products_config,
 )
 from core.coverage_report import build_coverage_report
+from core.customer_cohort import (
+    ROUTESCAN_BASE_URL,
+    RouteScanClient,
+    build_customer_wallet_cohort,
+    build_wallet_cohort_config_payload,
+    collect_evm_addresses_from_yaml,
+    collect_strategy_wallets,
+    minimum_balance_raw_for_usd_threshold,
+    rpc_contract_addresses,
+)
 from core.db.session import get_engine
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
@@ -69,6 +81,61 @@ DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION = typer.Option(
     help="Fallback max market id probe when getNumMarkets RPC fails",
 )
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
+COHORT_CHAIN_CODE_OPTION = typer.Option(
+    "avalanche",
+    "--chain-code",
+    help="Chain code used for RPC contract checks and metadata",
+)
+COHORT_CHAIN_ID_OPTION = typer.Option(
+    "43114",
+    "--chain-id",
+    help="EVM chain id used in RouteScan holder API path",
+)
+COHORT_TOKEN_SYMBOL_OPTION = typer.Option(
+    "savUSD",
+    "--token-symbol",
+    help="Token symbol metadata for the generated cohort config",
+)
+COHORT_TOKEN_ADDRESS_OPTION = typer.Option(
+    "0x06d47f3fb376649c3a9dafe069b3d6e35572219e",
+    "--token-address",
+    help="ERC20 token address to query from RouteScan",
+)
+COHORT_TOKEN_DECIMALS_OPTION = typer.Option(
+    18,
+    "--token-decimals",
+    help="Token decimals used to convert raw balances to token units",
+)
+COHORT_THRESHOLD_USD_OPTION = typer.Option(
+    "50000",
+    "--threshold-usd",
+    help="Minimum balance threshold in USD",
+)
+COHORT_TOKEN_PRICE_USD_OPTION = typer.Option(
+    "1",
+    "--token-price-usd",
+    help="Token price assumption used to convert USD threshold to token units",
+)
+COHORT_ROUTESCAN_LIMIT_OPTION = typer.Option(
+    200,
+    "--routescan-limit",
+    help="Page size for RouteScan holders API pagination",
+)
+COHORT_NAME_OPTION = typer.Option(
+    "savusd_avalanche_50k_users",
+    "--cohort-name",
+    help="Logical cohort name in generated YAML",
+)
+COHORT_INCLUDE_CONTRACT_WALLETS_OPTION = typer.Option(
+    False,
+    "--include-contract-wallets",
+    help="Include contract wallets instead of excluding them as protocol wallets",
+)
+COHORT_OUTPUT_PATH_OPTION = typer.Option(
+    Path("config/consumer_wallets_savusd_50k.yaml"),
+    "--output",
+    help="Output path for generated wallet cohort YAML",
+)
 
 
 class Closeable(Protocol):
@@ -419,6 +486,131 @@ def sync_discover_dolomite_wallets(
             f"{row.net_usd:.2f}\t"
             f"{row.abs_exposure_usd:.2f}"
         )
+
+
+@sync_app.command("build-holder-cohort")
+def sync_build_holder_cohort(
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    chain_code: str = COHORT_CHAIN_CODE_OPTION,
+    chain_id: str = COHORT_CHAIN_ID_OPTION,
+    token_symbol: str = COHORT_TOKEN_SYMBOL_OPTION,
+    token_address: str = COHORT_TOKEN_ADDRESS_OPTION,
+    token_decimals: int = COHORT_TOKEN_DECIMALS_OPTION,
+    threshold_usd: str = COHORT_THRESHOLD_USD_OPTION,
+    token_price_usd: str = COHORT_TOKEN_PRICE_USD_OPTION,
+    routescan_limit: int = COHORT_ROUTESCAN_LIMIT_OPTION,
+    cohort_name: str = COHORT_NAME_OPTION,
+    include_contract_wallets: bool = COHORT_INCLUDE_CONTRACT_WALLETS_OPTION,
+    output: Path = COHORT_OUTPUT_PATH_OPTION,
+) -> None:
+    """Build user-only holder cohort config from RouteScan + local exclusions."""
+
+    if token_decimals < 0:
+        raise typer.BadParameter("token-decimals must be non-negative")
+    if routescan_limit <= 0:
+        raise typer.BadParameter("routescan-limit must be positive")
+
+    try:
+        threshold_usd_decimal = Decimal(threshold_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("threshold-usd must be a valid decimal") from exc
+    if threshold_usd_decimal < 0:
+        raise typer.BadParameter("threshold-usd must be non-negative")
+
+    try:
+        token_price_usd_decimal = Decimal(token_price_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("token-price-usd must be a valid decimal") from exc
+    if token_price_usd_decimal <= 0:
+        raise typer.BadParameter("token-price-usd must be positive")
+
+    settings = get_settings()
+    markets_config = load_markets_config(markets_path)
+    wallet_products_config = load_wallet_products_config(wallet_products_path)
+
+    routescan_client = RouteScanClient(timeout_seconds=settings.request_timeout_seconds)
+    try:
+        holders = routescan_client.get_erc20_holders(
+            chain_id=chain_id,
+            token_address=token_address,
+            limit=routescan_limit,
+        )
+    finally:
+        routescan_client.close()
+
+    minimum_balance_raw = minimum_balance_raw_for_usd_threshold(
+        threshold_usd=threshold_usd_decimal,
+        token_price_usd=token_price_usd_decimal,
+        token_decimals=token_decimals,
+    )
+    strategy_wallets = collect_strategy_wallets(
+        markets_config=markets_config,
+        wallet_products_config=wallet_products_config,
+    )
+    protocol_wallets = collect_evm_addresses_from_yaml(
+        [markets_path, consumer_markets_path, wallet_products_path]
+    )
+
+    pre_contract_result = build_customer_wallet_cohort(
+        holders=holders,
+        minimum_balance_raw=minimum_balance_raw,
+        strategy_wallets=strategy_wallets,
+        protocol_wallets=protocol_wallets,
+        contract_wallets=set(),
+    )
+    contract_wallets: set[str] = set()
+    if not include_contract_wallets:
+        rpc_url = settings.evm_rpc_urls.get(chain_code)
+        if not rpc_url:
+            raise typer.BadParameter(
+                f"missing AVANT_EVM_RPC_URLS entry for chain '{chain_code}'",
+                param_hint="--chain-code",
+            )
+        contract_wallets = rpc_contract_addresses(
+            rpc_url=rpc_url,
+            addresses=[wallet.address for wallet in pre_contract_result.wallets],
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+
+    result = build_customer_wallet_cohort(
+        holders=holders,
+        minimum_balance_raw=minimum_balance_raw,
+        strategy_wallets=strategy_wallets,
+        protocol_wallets=protocol_wallets,
+        contract_wallets=contract_wallets,
+    )
+
+    source_url = (
+        f"{ROUTESCAN_BASE_URL}/v2/network/mainnet/evm/{chain_id}/erc20/"
+        f"{canonical_address(token_address)}/holders"
+    )
+    payload = build_wallet_cohort_config_payload(
+        cohort_name=cohort_name,
+        chain_code=chain_code,
+        chain_id=chain_id,
+        token_symbol=token_symbol,
+        token_address=token_address,
+        token_decimals=token_decimals,
+        threshold_usd=threshold_usd_decimal,
+        token_price_usd=token_price_usd_decimal,
+        minimum_balance_raw=minimum_balance_raw,
+        source_url=source_url,
+        result=result,
+    )
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    typer.echo(
+        f"build holder cohort complete chain={chain_code} chain_id={chain_id}"
+        f" token={token_symbol} fetched_rows={result.fetched_rows}"
+        f" threshold_rows={result.threshold_rows} strategy_excluded={result.strategy_excluded}"
+        f" protocol_excluded={result.protocol_excluded}"
+        f" contract_excluded={result.contract_excluded}"
+        f" wallets={len(result.wallets)} output={output}"
+    )
 
 
 @compute_app.command("daily")

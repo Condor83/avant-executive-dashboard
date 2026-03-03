@@ -1,0 +1,75 @@
+cohort:
+  name: avbtcx_avalanche_0p1_users
+  chain: avalanche
+  chain_id: '43114'
+  token_symbol: avBTCx
+  token_address: '0xa7c10c510df4b1702e1f36451dd29d7c3edc760c'
+  token_decimals: 18
+  threshold_usd: '0.1'
+  token_price_usd_assumption: '1'
+  minimum_balance_raw: '100000000000000000'
+  generated_at_utc: '2026-03-03T20:44:26.017964+00:00'
+  source:
+    provider: routescan
+    url: https://api.routescan.io/v2/network/mainnet/evm/43114/erc20/0xa7c10c510df4b1702e1f36451dd29d7c3edc760c/holders
+    fetched_rows: 66
+  filters:
+    deduped_unique_rows: 66
+    threshold_rows: 15
+    strategy_wallets_excluded: 0
+    protocol_wallets_excluded: 0
+    contract_wallets_excluded: 2
+  wallet_addresses:
+  - '0x8e234a6fe4ee15ea4b15088b64af80db26c8ae69'
+  - '0x4c7fc3cc133be91467ea437fc402495549fee508'
+  - '0x86364de18acccbd3239fa58931bb2564fe6b895d'
+  - '0x6f593a98f9fd364027cd053bdee1fa97f9826a45'
+  - '0x94dc0b13e66aba9450b3cc44c2643bbb4c264bc7'
+  - '0x121cdaef7f950defdf4d9c04f483a7f7fd32d085'
+  - '0x468190a410f8453311a85c442b9455b76671323d'
+  - '0xdaba4e38d3a7838955c75ef59ea9103e8941e871'
+  - '0xe072f384164c28fba5a174f25b5005a0fc8cf777'
+  - '0x159330e894fe92df19ec10c443761663d2c03be0'
+  - '0xd74c00cbff1b0a4c434a5fe7828555ae88f5516a'
+  - '0x66c0d9152209b51977047b9dc3b0b5bf2339b67c'
+  - '0xd85acdcade26c1121a31630ebd94e67cc63b1c30'
+  wallets:
+  - address: '0x8e234a6fe4ee15ea4b15088b64af80db26c8ae69'
+    balance_raw: '11543854038007949425'
+    balance_tokens: '11.543854038007949425'
+  - address: '0x4c7fc3cc133be91467ea437fc402495549fee508'
+    balance_raw: '5054464059562623514'
+    balance_tokens: '5.054464059562623514'
+  - address: '0x86364de18acccbd3239fa58931bb2564fe6b895d'
+    balance_raw: '3162537986178601913'
+    balance_tokens: '3.162537986178601913'
+  - address: '0x6f593a98f9fd364027cd053bdee1fa97f9826a45'
+    balance_raw: '1982279953422938849'
+    balance_tokens: '1.982279953422938849'
+  - address: '0x94dc0b13e66aba9450b3cc44c2643bbb4c264bc7'
+    balance_raw: '1416198589965648483'
+    balance_tokens: '1.416198589965648483'
+  - address: '0x121cdaef7f950defdf4d9c04f483a7f7fd32d085'
+    balance_raw: '1174242173785107695'
+    balance_tokens: '1.174242173785107695'
+  - address: '0x468190a410f8453311a85c442b9455b76671323d'
+    balance_raw: '1022990508697816830'
+    balance_tokens: '1.02299050869781683'
+  - address: '0xdaba4e38d3a7838955c75ef59ea9103e8941e871'
+    balance_raw: '958289055869558761'
+    balance_tokens: '0.958289055869558761'
+  - address: '0xe072f384164c28fba5a174f25b5005a0fc8cf777'
+    balance_raw: '495422909960212760'
+    balance_tokens: '0.49542290996021276'
+  - address: '0x159330e894fe92df19ec10c443761663d2c03be0'
+    balance_raw: '258394692617154808'
+    balance_tokens: '0.258394692617154808'
+  - address: '0xd74c00cbff1b0a4c434a5fe7828555ae88f5516a'
+    balance_raw: '232482476303630995'
+    balance_tokens: '0.232482476303630995'
+  - address: '0x66c0d9152209b51977047b9dc3b0b5bf2339b67c'
+    balance_raw: '199468521077247150'
+    balance_tokens: '0.19946852107724715'
+  - address: '0xd85acdcade26c1121a31630ebd94e67cc63b1c30'
+    balance_raw: '192556925758000915'
+    balance_tokens: '0.192556925758000915'

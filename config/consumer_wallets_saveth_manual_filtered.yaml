@@ -1,0 +1,79 @@
+cohort:
+  name: saveth_manual_input_users
+  chain: avalanche
+  token_symbol: savETH
+  generated_at_utc: '2026-03-03T20:31:47.025977+00:00'
+  source:
+    provider: manual_input
+    input_count: 31
+    deduped_count: 31
+  filters:
+    strategy_wallets_excluded: 0
+    protocol_wallets_excluded: 0
+    contract_wallets_excluded: 1
+  strategy_wallets_removed: []
+  protocol_wallets_removed: []
+  contract_wallets_removed:
+  - '0x1cde180fd33935c744623d655696eb3a77e5d891'
+  wallet_addresses:
+  - '0x0bead90132dfcf4318d2699f7f8e6b5f8919c8c3'
+  - '0x0c0f1a11b220fd1d53306f67b9327cdeb31d662b'
+  - '0x19a7f6caabc643f4fc86e597b3e99c0c7821a7d4'
+  - '0x1e45d9c4da6461737a45ca8b2bc325daa26f9083'
+  - '0x1e8d8d2aa301169250538659142df6de1cedf244'
+  - '0x210df9fd4cc67cdf45c840989f5e660a20f12455'
+  - '0x23ae9960301d474ca1f31432de94b0e08e016620'
+  - '0x2a96ab6b44bb20f2ae91d250558e30ef6d7257d5'
+  - '0x312874c97cdd918fa45cd3a3625e012037850ebe'
+  - '0x3a8b8c5952387dbfdfae22da3a78f242abc5ff91'
+  - '0x477a4c7354c8f675dd9030acbe0d3846712a7903'
+  - '0x47d3eeeca5f031d3862f0eca1ce84e1722111382'
+  - '0x4a6f696a6f921921dc959d19e911a2034063cfda'
+  - '0x5267b2ca53fc241e5114b45404c1b9c6a31139a6'
+  - '0x54e4b5982e812cd752d68334d9e047a7207a5647'
+  - '0x898c36bc24df391d8bf220587f29939256ccec52'
+  - '0x96977d15ee849bcbb23ea88f0517e1e4faad81d4'
+  - '0xabbc839e12818ceb757293335309a72c0d8f26e5'
+  - '0xb1df383462b32511420d801d95e85f1540920dba'
+  - '0xb4740ddbec2e97b4c978aaf21612a611cbf98257'
+  - '0xb6bec03d08dc57d492ab3143494f59ca2187dbdc'
+  - '0xb9a5628e2cca45732078183a322d6e8ce0ad179b'
+  - '0xbc0b8482ab2cee2c527f1c83f5d97bac7cf2bc37'
+  - '0xcc803585886d30522ff60d97af93ebfe848ae715'
+  - '0xd1d79eeb13a4396f02b48ac813b412a30ded8d3c'
+  - '0xe21c7a3b721e5dbc456f3c038928bb7f08c99ddc'
+  - '0xec5e3e8b88d934e650bf26ca80b5ade7fdc5e06b'
+  - '0xeda6041c56d471a617d018ca16078e43bdfd5c30'
+  - '0xee3199db522fc97d1c2b9990584b968c012da2ca'
+  - '0xef047abd1455f3cfe82628844e44ccaa274ba396'
+  wallets:
+  - address: '0x0bead90132dfcf4318d2699f7f8e6b5f8919c8c3'
+  - address: '0x0c0f1a11b220fd1d53306f67b9327cdeb31d662b'
+  - address: '0x19a7f6caabc643f4fc86e597b3e99c0c7821a7d4'
+  - address: '0x1e45d9c4da6461737a45ca8b2bc325daa26f9083'
+  - address: '0x1e8d8d2aa301169250538659142df6de1cedf244'
+  - address: '0x210df9fd4cc67cdf45c840989f5e660a20f12455'
+  - address: '0x23ae9960301d474ca1f31432de94b0e08e016620'
+  - address: '0x2a96ab6b44bb20f2ae91d250558e30ef6d7257d5'
+  - address: '0x312874c97cdd918fa45cd3a3625e012037850ebe'
+  - address: '0x3a8b8c5952387dbfdfae22da3a78f242abc5ff91'
+  - address: '0x477a4c7354c8f675dd9030acbe0d3846712a7903'
+  - address: '0x47d3eeeca5f031d3862f0eca1ce84e1722111382'
+  - address: '0x4a6f696a6f921921dc959d19e911a2034063cfda'
+  - address: '0x5267b2ca53fc241e5114b45404c1b9c6a31139a6'
+  - address: '0x54e4b5982e812cd752d68334d9e047a7207a5647'
+  - address: '0x898c36bc24df391d8bf220587f29939256ccec52'
+  - address: '0x96977d15ee849bcbb23ea88f0517e1e4faad81d4'
+  - address: '0xabbc839e12818ceb757293335309a72c0d8f26e5'
+  - address: '0xb1df383462b32511420d801d95e85f1540920dba'
+  - address: '0xb4740ddbec2e97b4c978aaf21612a611cbf98257'
+  - address: '0xb6bec03d08dc57d492ab3143494f59ca2187dbdc'
+  - address: '0xb9a5628e2cca45732078183a322d6e8ce0ad179b'
+  - address: '0xbc0b8482ab2cee2c527f1c83f5d97bac7cf2bc37'
+  - address: '0xcc803585886d30522ff60d97af93ebfe848ae715'
+  - address: '0xd1d79eeb13a4396f02b48ac813b412a30ded8d3c'
+  - address: '0xe21c7a3b721e5dbc456f3c038928bb7f08c99ddc'
+  - address: '0xec5e3e8b88d934e650bf26ca80b5ade7fdc5e06b'
+  - address: '0xeda6041c56d471a617d018ca16078e43bdfd5c30'
+  - address: '0xee3199db522fc97d1c2b9990584b968c012da2ca'
+  - address: '0xef047abd1455f3cfe82628844e44ccaa274ba396'
