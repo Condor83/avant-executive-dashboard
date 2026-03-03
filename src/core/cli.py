@@ -18,6 +18,8 @@ from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
 from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
+from analytics.rollups import compute_window_rollups
+from analytics.yield_engine import YieldEngine
 from core.config import (
     load_consumer_markets_config,
     load_markets_config,
@@ -69,6 +71,12 @@ DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION = typer.Option(
     help="Fallback max market id probe when getNumMarkets RPC fails",
 )
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
+WINDOW_OPTION = typer.Option(..., "--window", help="Rollup window (7d or 30d)")
+END_DATE_OPTION = typer.Option(
+    None,
+    "--end-date",
+    help="Window end date (YYYY-MM-DD). Defaults to latest available business_date.",
+)
 
 
 class Closeable(Protocol):
@@ -423,16 +431,67 @@ def sync_discover_dolomite_wallets(
 
 @compute_app.command("daily")
 def compute_daily(target_date: str = DATE_OPTION) -> None:
-    """Stub command reserved for Sprint 06 yield analytics."""
+    """Compute daily yield + fees + rollups for a Denver business date."""
 
     try:
         parsed_date = date.fromisoformat(target_date)
     except ValueError as exc:
         raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
 
-    typer.echo(f"compute daily for {parsed_date.isoformat()} is not implemented until Sprint 06")
-    raise typer.Exit(
-        code=1,
+    session = Session(get_engine())
+    try:
+        summary = YieldEngine(session).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute daily complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" sod_ts_utc={summary.sod_ts_utc.isoformat() if summary.sod_ts_utc else 'none'}"
+        f" eod_ts_utc={summary.eod_ts_utc.isoformat() if summary.eod_ts_utc else 'none'}"
+        f" position_rows={summary.position_rows_written}"
+        f" rollup_rows={summary.rollup_rows_written}"
+        f" issues_written={summary.issues_written}"
+    )
+
+
+@compute_app.command("rollups")
+def compute_rollups(window: str = WINDOW_OPTION, end_date: str | None = END_DATE_OPTION) -> None:
+    """Compute trailing 7d/30d rollups from persisted daily position rows."""
+
+    parsed_end_date: date | None = None
+    if end_date is not None:
+        try:
+            parsed_end_date = date.fromisoformat(end_date)
+        except ValueError as exc:
+            raise typer.BadParameter("end-date must be formatted as YYYY-MM-DD") from exc
+
+    session = Session(get_engine())
+    try:
+        try:
+            result = compute_window_rollups(session, window=window, end_date=parsed_end_date)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--window") from exc
+    finally:
+        session.close()
+
+    if result.end_date is None or result.start_date is None:
+        typer.echo(f"compute rollups window={window} has no daily rows to aggregate")
+        return
+
+    typer.echo(
+        "compute rollups complete"
+        f" window={window}"
+        f" start_date={result.start_date.isoformat()}"
+        f" end_date={result.end_date.isoformat()}"
+        f" wallet_rows={len(result.wallet_rollups)}"
+        f" product_rows={len(result.product_rollups)}"
+        f" protocol_rows={len(result.protocol_rollups)}"
+        f" gross_total={result.total.gross_yield_usd}"
+        f" strategy_fee_total={result.total.strategy_fee_usd}"
+        f" avant_gop_total={result.total.avant_gop_usd}"
+        f" net_total={result.total.net_yield_usd}"
     )
 
 

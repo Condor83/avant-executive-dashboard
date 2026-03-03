@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -225,6 +225,46 @@ class Price(Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
 
     token: Mapped[Token] = relationship()
+
+
+class YieldDaily(Base):
+    """Derived daily yield and fee rows at position + rollup levels."""
+
+    __tablename__ = "yield_daily"
+
+    yield_daily_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    wallet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wallets.wallet_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    product_id: Mapped[int | None] = mapped_column(
+        ForeignKey("products.product_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    protocol_id: Mapped[int | None] = mapped_column(
+        ForeignKey("protocols.protocol_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    market_id: Mapped[int | None] = mapped_column(
+        ForeignKey("markets.market_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    position_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    gross_yield_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    strategy_fee_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    avant_gop_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    net_yield_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    method: Mapped[str] = mapped_column(String(64), nullable=False)
+    confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+
+    wallet: Mapped[Wallet | None] = relationship()
+    product: Mapped[Product | None] = relationship()
+    protocol: Mapped[Protocol | None] = relationship()
+    market: Mapped[Market | None] = relationship()
 
 
 class DataQuality(Base):

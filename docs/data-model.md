@@ -101,7 +101,11 @@ One row per market per snapshot time.
 
 ### yield_daily
 - business_date (Denver date)
-- wallet_id, product_id, market_id, position_key (nullable for rollups)
+- wallet_id, product_id, protocol_id, market_id, position_key
+  - position rows: `position_key` is non-null
+  - rollup rows: `position_key` is null and exactly one rollup dimension is set
+    (`wallet_id` or `product_id` or `protocol_id`), plus one total row with all rollup
+    dimensions null
 - gross_yield_usd
 - strategy_fee_usd
 - avant_gop_usd
