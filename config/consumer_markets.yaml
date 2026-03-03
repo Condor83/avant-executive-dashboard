@@ -1,0 +1,20 @@
+# consumer_markets.yaml
+# Incentivized customer markets to monitor (Euler v2, Morpho, Silo v2).
+#
+# This file should be updated when Avant incentives change.
+#
+# Minimal contract:
+# markets:
+#   - protocol: "silo_v2"
+#     chain: "avalanche"
+#     name: "savUSD/USDC"
+#     market_address: "0x..."
+#     collateral_token:
+#       symbol: "savUSD"
+#       address: "0x..."
+#       decimals: 18
+#     borrow_token:
+#       symbol: "USDC"
+#       address: "0x..."
+#       decimals: 6
+markets: []

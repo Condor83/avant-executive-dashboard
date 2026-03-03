@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "avant-exec-dashboard"
+version = "0.1.0"
+description = "Foundation for the Avant executive dashboard platform"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.7.0",
+  "typer>=0.15.1",
+]
+
+[project.scripts]
+avant-dashboard = "core.cli:main"
+
+[dependency-groups]
+dev = [
+  "black>=24.10.0",
+  "mypy>=1.13.0",
+  "pre-commit>=4.0.1",
+  "pytest>=8.3.3",
+  "ruff>=0.8.4",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/core", "src/adapters", "src/analytics", "src/api"]
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+strict_optional = true
+mypy_path = "src"
+explicit_package_bases = true
+packages = ["core", "adapters", "analytics", "api"]
