@@ -26,5 +26,6 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "position_snapshots",
         "market_snapshots",
         "prices",
+        "data_quality",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))

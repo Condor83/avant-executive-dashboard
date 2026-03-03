@@ -29,6 +29,10 @@ This directory contains the sprint-by-sprint PRD and the minimal set of context 
    - `make db-seed`
 5. Open DB UI:
    - `make db-ui` (Adminer at `http://localhost:8080`)
+6. Run manual ingestion sync:
+   - `uv run python -m core.cli sync prices --as-of 2026-03-03T00:00:00Z`
+   - `uv run python -m core.cli sync snapshot --as-of 2026-03-03T00:00:00Z`
+   - `uv run python -m core.cli sync markets --as-of 2026-03-03T00:00:00Z`
 
 Run checks:
 - `make lint`

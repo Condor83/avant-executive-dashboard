@@ -23,6 +23,18 @@ class Settings(BaseSettings):
         default="postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard",
         description="Database URL used by SQLAlchemy",
     )
+    defillama_base_url: str = Field(
+        default="https://coins.llama.fi",
+        description="DefiLlama base URL for token price requests",
+    )
+    request_timeout_seconds: float = Field(
+        default=15.0,
+        description="HTTP request timeout used by external service clients",
+    )
+    evm_rpc_urls: dict[str, str] = Field(
+        default_factory=dict,
+        description="Chain code -> EVM RPC URL mapping for wallet balance reads",
+    )
 
     postgres_host: str = "localhost"
     postgres_port: int = 5432

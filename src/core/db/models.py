@@ -6,7 +6,16 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -124,6 +133,9 @@ class PositionSnapshot(Base):
     """Position snapshot fact table."""
 
     __tablename__ = "position_snapshots"
+    __table_args__ = (
+        UniqueConstraint("as_of_ts_utc", "position_key", name="uq_position_snapshots_asof_key"),
+    )
 
     snapshot_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     as_of_ts_utc: Mapped[datetime] = mapped_column(
@@ -160,6 +172,14 @@ class MarketSnapshot(Base):
     """Market-level snapshot fact table."""
 
     __tablename__ = "market_snapshots"
+    __table_args__ = (
+        UniqueConstraint(
+            "as_of_ts_utc",
+            "market_id",
+            "source",
+            name="uq_market_snapshots_asof_market_source",
+        ),
+    )
 
     snapshot_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     as_of_ts_utc: Mapped[datetime] = mapped_column(
@@ -205,3 +225,27 @@ class Price(Base):
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
 
     token: Mapped[Token] = relationship()
+
+
+class DataQuality(Base):
+    """Ingestion failure records keyed by as-of timestamp and entity context."""
+
+    __tablename__ = "data_quality"
+
+    data_quality_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    as_of_ts_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    stage: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    protocol_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    chain_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    wallet_address: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    market_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    error_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    error_message: Mapped[str] = mapped_column(String(2000), nullable=False)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )

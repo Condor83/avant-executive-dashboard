@@ -1,0 +1,63 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Host:
+      - coins.llama.fi
+      User-Agent:
+      - python-httpx/0.28.1
+    method: GET
+    uri: https://coins.llama.fi/prices/current/ethereum:0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/zWOSwqDMBBA7zLrUDIxGZ1s6w1KD5DPlAaMilpoEe9eu+jbv8fbIU1lXMHvINtT
+        FnlVr99Bx46YMZHBLjaUMCNnG4ywRJ2kIU0SbffTsqRSw3AmSMH6qXEawMP91l9BwbyUJOD1hU+c
+        tQYbi86QU7CVKusW6gwe29Y4ZM1GnTvjo2QZ/9pxHF8klgsJpAAAAA==
+    headers:
+      Age:
+      - '239'
+      CF-RAY:
+      - 9d66976549e51258-SLC
+      Connection:
+      - keep-alive
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json
+      Date:
+      - Tue, 03 Mar 2026 06:30:14 GMT
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      access-control-allow-credentials:
+      - 'true'
+      access-control-allow-origin:
+      - '*'
+      apigw-requestid:
+      - ZojJLhfBliAEPqQ=
+      cf-cache-status:
+      - MISS
+      expires:
+      - Tue, 03 Mar 2026 06:30:20 GMT
+      last-modified:
+      - Tue, 03 Mar 2026 06:30:14 GMT
+      via:
+      - 1.1 0d2565d62631582154b675bfb2ae2764.cloudfront.net (CloudFront)
+      x-amz-cf-id:
+      - 4lqlUhFD9d3SUEk8q7EgTLeQjyHd0SCZa4Z6mmXF75GzJu05X0_Lng==
+      x-amz-cf-pop:
+      - SLC52-P2
+      x-cache:
+      - Hit from cloudfront
+    status:
+      code: 200
+      message: OK
+version: 1

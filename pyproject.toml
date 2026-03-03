@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "alembic>=1.14.0",
+  "httpx>=0.28.1",
   "pydantic>=2.10.0",
   "pydantic-settings>=2.7.0",
   "psycopg[binary]>=3.2.3",
@@ -30,6 +31,7 @@ dev = [
   "pytest>=8.3.3",
   "ruff>=0.8.4",
   "types-PyYAML>=6.0.12.20250915",
+  "vcrpy>=7.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]

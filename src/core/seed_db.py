@@ -128,6 +128,7 @@ def _collect_protocol_codes(markets: MarketsConfig, consumer: ConsumerMarketsCon
         "dolomite",
         "kamino",
         "zest",
+        "wallet_balances",
     }
     for market in consumer.markets:
         protocols.add(market.protocol)
@@ -340,6 +341,23 @@ def _collect_market_rows(
                     "borrow_fn": zest_market.borrow_fn,
                     "decimals": zest_market.decimals,
                     "kind": "market",
+                },
+            )
+
+    for chain_code, wallet_balance_chain in markets.wallet_balances.items():
+        for token in wallet_balance_chain.tokens:
+            token_address = _normalize_token_address(token.address)
+            token_id = token_ids.get((chain_code, token_address))
+            add_market(
+                protocol_code="wallet_balances",
+                chain_code=chain_code,
+                market_address=token_address,
+                base_asset_token_id=token_id,
+                collateral_token_id=None,
+                metadata={
+                    "symbol": token.symbol,
+                    "decimals": token.decimals,
+                    "kind": "wallet_balance_token",
                 },
             )
 
