@@ -27,6 +27,10 @@ class Settings(BaseSettings):
         default="https://coins.llama.fi",
         description="DefiLlama base URL for token price requests",
     )
+    defillama_yields_base_url: str = Field(
+        default="https://yields.llama.fi",
+        description="DefiLlama base URL for pool yield requests",
+    )
     merkl_base_url: str = Field(
         default="https://api.merkl.xyz",
         description="Merkl API base URL for reward campaign APY requests",
@@ -42,6 +46,34 @@ class Settings(BaseSettings):
     evm_rpc_urls: dict[str, str] = Field(
         default_factory=dict,
         description="Chain code -> EVM RPC URL mapping for wallet balance reads",
+    )
+    solana_rpc_urls: dict[str, str] = Field(
+        default_factory=dict,
+        description="Chain code -> Solana RPC URL mapping",
+    )
+    stacks_api_base_url: str = Field(
+        default="https://api.hiro.so",
+        description="Stacks API base URL used for read-only balance queries",
+    )
+    zest_api_base_url: str | None = Field(
+        default=None,
+        description="Optional Zest API base URL for market totals/rates and borrow reads",
+    )
+    kamino_api_base_url: str = Field(
+        default="https://api.kamino.finance",
+        description="Kamino API base URL for market snapshots",
+    )
+    silo_api_base_url: str = Field(
+        default="https://app.silo.finance",
+        description="Silo app API base URL for consumer market snapshots",
+    )
+    silo_points_api_base_url: str | None = Field(
+        default="https://api-points.silo.finance",
+        description="Silo points API base URL for consumer top-holder reads",
+    )
+    silo_top_holders_limit: int = Field(
+        default=50,
+        description="Top-holder limit for Silo consumer position ingestion",
     )
 
     postgres_host: str = "localhost"

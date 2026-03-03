@@ -1,0 +1,1 @@
+"""Kamino adapter tests."""

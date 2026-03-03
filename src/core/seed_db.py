@@ -150,6 +150,7 @@ def _collect_wallet_rows(
         markets.morpho,
         markets.euler_v2,
         markets.dolomite,
+        markets.kamino,
         markets.zest,
         markets.wallet_balances,
     ):

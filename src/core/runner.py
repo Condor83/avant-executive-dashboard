@@ -11,7 +11,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from core.config import MarketsConfig
+from core.config import ConsumerMarketsConfig, MarketsConfig, canonical_address
 from core.db.models import (
     Chain,
     DataQuality,
@@ -76,9 +76,11 @@ class SnapshotRunner:
         price_oracle: PriceOracle | None,
         position_adapters: list[PositionAdapter],
         market_adapters: list[MarketAdapter] | None = None,
+        consumer_markets_config: ConsumerMarketsConfig | None = None,
     ) -> None:
         self.session = session
         self.markets_config = markets_config
+        self.consumer_markets_config = consumer_markets_config
         self.price_oracle = price_oracle
         self.position_adapters = position_adapters
         self.market_adapters = market_adapters or []
@@ -179,8 +181,27 @@ class SnapshotRunner:
                 targets.add((chain_code, self._normalize_address(token.address)))
 
         for chain_code, aave_chain in self.markets_config.aave_v3.items():
-            for market in aave_chain.markets:
-                targets.add((chain_code, self._normalize_address(market.asset)))
+            for aave_market in aave_chain.markets:
+                targets.add((chain_code, self._normalize_address(aave_market.asset)))
+
+        for chain_code, zest_chain in self.markets_config.zest.items():
+            for zest_market in zest_chain.markets:
+                targets.add((chain_code, canonical_address(zest_market.asset_contract)))
+
+        if self.consumer_markets_config is not None:
+            for consumer_market in self.consumer_markets_config.markets:
+                targets.add(
+                    (
+                        consumer_market.chain,
+                        canonical_address(consumer_market.collateral_token.address),
+                    )
+                )
+                targets.add(
+                    (
+                        consumer_market.chain,
+                        canonical_address(consumer_market.borrow_token.address),
+                    )
+                )
 
         return targets
 
