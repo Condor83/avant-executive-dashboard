@@ -45,6 +45,14 @@
 - Flag stale prices (older than threshold).
 - Stablecoins: consider depeg detection as a risk signal.
 
+## Vault protocols need explicit surface policy
+
+- For vault protocols (especially Euler v2), define whether config is:
+  - supply-vault-only, or
+  - explicit supply-vault + borrow-vault mapping.
+- Do not assume debt always lives on the same configured vault surface without confirming strategy behavior.
+- Document the chosen policy in `docs/config.md` and enforce it in adapter tests.
+
 ## Consumer cohort is not “all wallets”
 
 - v1: track only wallets >= $50k in Avant assets.

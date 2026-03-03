@@ -52,6 +52,10 @@ Current Morpho collateral carry policy:
   - wallets list
   - `vaults` list with vault address and symbol
 
+Current caveat:
+- Adapter currently treats each configured vault as the primary surface and reads both supply (`balanceOf`/`convertToAssets`) and borrow (`debtOf`) from that vault.
+- A follow-up product decision is still needed on whether Euler config should support explicit borrow-vault mapping for strategies that separate supply and debt across different vault addresses.
+
 #### Dolomite
 - chain config includes:
   - margin contract address
