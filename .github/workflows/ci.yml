@@ -8,6 +8,23 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: avant_exec_dashboard
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d avant_exec_dashboard"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      AVANT_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard
+      AVANT_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
 
     steps:
       - name: Checkout
@@ -26,6 +43,9 @@ jobs:
 
       - name: Lint
         run: make lint
+
+      - name: Migration smoke check
+        run: make db-migrate
 
       - name: Test
         run: make test

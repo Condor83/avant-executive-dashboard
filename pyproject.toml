@@ -9,13 +9,18 @@ description = "Foundation for the Avant executive dashboard platform"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "alembic>=1.14.0",
   "pydantic>=2.10.0",
   "pydantic-settings>=2.7.0",
+  "psycopg[binary]>=3.2.3",
+  "pyyaml>=6.0.2",
+  "sqlalchemy>=2.0.36",
   "typer>=0.15.1",
 ]
 
 [project.scripts]
 avant-dashboard = "core.cli:main"
+avant-seed-db = "core.seed_db:main"
 
 [dependency-groups]
 dev = [
@@ -24,6 +29,7 @@ dev = [
   "pre-commit>=4.0.1",
   "pytest>=8.3.3",
   "ruff>=0.8.4",
+  "types-PyYAML>=6.0.12.20250915",
 ]
 
 [tool.hatch.build.targets.wheel]

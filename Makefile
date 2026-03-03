@@ -1,4 +1,4 @@
-.PHONY: fmt lint test typecheck check
+.PHONY: fmt lint test typecheck check db-up db-down db-migrate db-seed db-ui
 
 fmt:
 	uv run ruff format .
@@ -16,3 +16,18 @@ typecheck:
 	uv run mypy src tests
 
 check: lint test
+
+db-up:
+	docker compose up -d postgres adminer
+
+db-down:
+	docker compose down
+
+db-migrate:
+	uv run alembic upgrade head
+
+db-seed:
+	uv run python -m core.seed_db --markets config/markets.yaml --wallet-products config/wallet_products.yaml --consumer-markets config/consumer_markets.yaml
+
+db-ui:
+	@echo "Adminer is available at http://localhost:8080"
