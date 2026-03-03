@@ -79,6 +79,26 @@ def _upsert_wallet_product_map(session: Session, rows: list[dict[str, Any]]) -> 
     return TableSeedStats(rows_seen=len(rows), before_count=before, after_count=after)
 
 
+def _upsert_markets(session: Session, rows: list[dict[str, Any]]) -> TableSeedStats:
+    if not rows:
+        before = _count_rows(session, Market)
+        return TableSeedStats(rows_seen=0, before_count=before, after_count=before)
+
+    before = _count_rows(session, Market)
+    stmt = insert(Market).values(rows)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[Market.chain_id, Market.protocol_id, Market.market_address],
+        set_={
+            "base_asset_token_id": stmt.excluded.base_asset_token_id,
+            "collateral_token_id": stmt.excluded.collateral_token_id,
+            "metadata_json": stmt.excluded.metadata_json,
+        },
+    )
+    session.execute(stmt)
+    after = _count_rows(session, Market)
+    return TableSeedStats(rows_seen=len(rows), before_count=before, after_count=after)
+
+
 def _dedupe(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> list[dict[str, Any]]:
     deduped: dict[tuple[Any, ...], dict[str, Any]] = {}
     for row in rows:
@@ -107,6 +127,7 @@ def _collect_chain_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig
     chains: set[str] = set()
     for section in (
         markets.aave_v3,
+        markets.spark,
         markets.morpho,
         markets.euler_v2,
         markets.dolomite,
@@ -123,6 +144,7 @@ def _collect_chain_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig
 def _collect_protocol_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig) -> set[str]:
     protocols = {
         "aave_v3",
+        "spark",
         "morpho",
         "euler_v2",
         "dolomite",
@@ -147,6 +169,7 @@ def _collect_wallet_rows(
 
     for chains in (
         markets.aave_v3,
+        markets.spark,
         markets.morpho,
         markets.euler_v2,
         markets.dolomite,
@@ -183,9 +206,39 @@ def _collect_token_rows(
         for aave_market in aave_chain.markets:
             add_token(chain_code, aave_market.asset, aave_market.symbol, aave_market.decimals)
 
+    for chain_code, spark_chain in markets.spark.items():
+        for spark_market in spark_chain.markets:
+            add_token(chain_code, spark_market.asset, spark_market.symbol, spark_market.decimals)
+
     for chain_code, wallet_balance_chain in markets.wallet_balances.items():
         for token in wallet_balance_chain.tokens:
             add_token(chain_code, token.address, token.symbol, token.decimals)
+
+    for chain_code, euler_chain in markets.euler_v2.items():
+        for vault in euler_chain.vaults:
+            add_token(
+                chain_code,
+                vault.asset_address,
+                vault.asset_symbol,
+                vault.asset_decimals,
+            )
+
+    for chain_code, kamino_chain in markets.kamino.items():
+        for kamino_market in kamino_chain.markets:
+            if kamino_market.supply_token is not None:
+                add_token(
+                    chain_code,
+                    kamino_market.supply_token.mint,
+                    kamino_market.supply_token.symbol,
+                    kamino_market.supply_token.decimals,
+                )
+            if kamino_market.borrow_token is not None:
+                add_token(
+                    chain_code,
+                    kamino_market.borrow_token.mint,
+                    kamino_market.borrow_token.symbol,
+                    kamino_market.borrow_token.decimals,
+                )
 
     for chain_code, zest_chain in markets.zest.items():
         for zest_market in zest_chain.markets:
@@ -255,6 +308,22 @@ def _collect_market_rows(
                 },
             )
 
+    for chain_code, spark_chain in markets.spark.items():
+        for spark_market in spark_chain.markets:
+            token_id = token_ids.get((chain_code, _normalize_token_address(spark_market.asset)))
+            add_market(
+                protocol_code="spark",
+                chain_code=chain_code,
+                market_address=spark_market.asset,
+                base_asset_token_id=token_id,
+                collateral_token_id=None,
+                metadata={
+                    "symbol": spark_market.symbol,
+                    "decimals": spark_market.decimals,
+                    "kind": "reserve",
+                },
+            )
+
     for chain_code, morpho_chain in markets.morpho.items():
         for morpho_market in morpho_chain.markets:
             loan_token_id = token_ids_by_symbol.get((chain_code, morpho_market.loan_token.upper()))
@@ -288,14 +357,22 @@ def _collect_market_rows(
 
     for chain_code, euler_chain in markets.euler_v2.items():
         for euler_vault in euler_chain.vaults:
-            token_id = token_ids_by_symbol.get((chain_code, euler_vault.symbol.upper()))
+            token_id = token_ids.get(
+                (chain_code, _normalize_token_address(euler_vault.asset_address))
+            )
             add_market(
                 protocol_code="euler_v2",
                 chain_code=chain_code,
                 market_address=euler_vault.address,
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
-                metadata={"symbol": euler_vault.symbol, "kind": "vault"},
+                metadata={
+                    "symbol": euler_vault.symbol,
+                    "asset_symbol": euler_vault.asset_symbol,
+                    "asset_address": _normalize_token_address(euler_vault.asset_address),
+                    "asset_decimals": euler_vault.asset_decimals,
+                    "kind": "vault",
+                },
             )
 
     for chain_code, dolomite_chain in markets.dolomite.items():
@@ -316,13 +393,37 @@ def _collect_market_rows(
 
     for chain_code, kamino_chain in markets.kamino.items():
         for kamino_market in kamino_chain.markets:
+            supply_token_id: int | None = None
+            if kamino_market.supply_token is not None:
+                supply_token_id = token_ids.get(
+                    (chain_code, _normalize_token_address(kamino_market.supply_token.mint))
+                )
+            borrow_token_id: int | None = None
+            if kamino_market.borrow_token is not None:
+                borrow_token_id = token_ids.get(
+                    (chain_code, _normalize_token_address(kamino_market.borrow_token.mint))
+                )
             add_market(
                 protocol_code="kamino",
                 chain_code=chain_code,
                 market_address=kamino_market.market_pubkey,
-                base_asset_token_id=None,
-                collateral_token_id=None,
-                metadata={"name": kamino_market.name, "kind": "market"},
+                # For dual-token markets we normalize borrow as base + supply as collateral.
+                base_asset_token_id=borrow_token_id,
+                collateral_token_id=supply_token_id,
+                metadata={
+                    "name": kamino_market.name,
+                    "kind": "market",
+                    "supply_token_symbol": (
+                        kamino_market.supply_token.symbol
+                        if kamino_market.supply_token is not None
+                        else None
+                    ),
+                    "borrow_token_symbol": (
+                        kamino_market.borrow_token.symbol
+                        if kamino_market.borrow_token is not None
+                        else None
+                    ),
+                },
             )
 
     for chain_code, zest_chain in markets.zest.items():
@@ -478,12 +579,7 @@ def seed_database(
         token_ids=token_ids,
         token_ids_by_symbol=token_ids_by_symbol,
     )
-    stats["markets"] = _upsert_do_nothing(
-        session,
-        Market,
-        market_rows,
-        ["chain_id", "protocol_id", "market_address"],
-    )
+    stats["markets"] = _upsert_markets(session, market_rows)
 
     wallet_product_rows = [
         {

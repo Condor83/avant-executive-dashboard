@@ -9,6 +9,7 @@ from typing import Protocol
 
 import typer
 import yaml
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
@@ -17,10 +18,11 @@ from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.kamino import KaminoAdapter, KaminoApiClient
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
 from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
+from adapters.spark import EvmRpcSparkClient, SparkAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from analytics.rollups import compute_window_rollups
-from analytics.yield_engine import YieldEngine
+from analytics.yield_engine import YieldEngine, select_business_day_boundaries
 from core.config import (
     canonical_address,
     load_consumer_markets_config,
@@ -38,6 +40,7 @@ from core.customer_cohort import (
     minimum_balance_raw_for_usd_threshold,
     rpc_contract_addresses,
 )
+from core.db.models import YieldDaily
 from core.db.session import get_engine
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
@@ -83,6 +86,11 @@ DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION = typer.Option(
     help="Fallback max market id probe when getNumMarkets RPC fails",
 )
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
+DAILY_BOUNDARY_POLICY_OPTION = typer.Option(
+    "auto",
+    "--boundary-policy",
+    help="Daily boundary policy: auto, in_day, or latest_snapshot",
+)
 WINDOW_OPTION = typer.Option(..., "--window", help="Rollup window (7d or 30d)")
 END_DATE_OPTION = typer.Option(
     None,
@@ -179,6 +187,10 @@ def _build_runner(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    spark_client = EvmRpcSparkClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
     morpho_client = EvmRpcMorphoClient(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
@@ -205,6 +217,12 @@ def _build_runner(
         defillama_timeout_seconds=settings.request_timeout_seconds,
         merkl_base_url=settings.merkl_base_url,
         merkl_timeout_seconds=settings.merkl_timeout_seconds,
+        yield_oracle=yield_oracle,
+    )
+    spark_adapter = SparkAdapter(
+        markets_config=markets_config,
+        rpc_client=spark_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
         yield_oracle=yield_oracle,
     )
     morpho_adapter = MorphoAdapter(
@@ -258,6 +276,7 @@ def _build_runner(
         position_adapters=[
             wallet_adapter,
             aave_adapter,
+            spark_adapter,
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
@@ -267,6 +286,7 @@ def _build_runner(
         ],
         market_adapters=[
             aave_adapter,
+            spark_adapter,
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
@@ -278,6 +298,7 @@ def _build_runner(
     closeables: list[Closeable] = [
         balance_client,
         aave_client,
+        spark_client,
         morpho_client,
         euler_client,
         dolomite_client,
@@ -622,7 +643,10 @@ def sync_build_holder_cohort(
 
 
 @compute_app.command("daily")
-def compute_daily(target_date: str = DATE_OPTION) -> None:
+def compute_daily(
+    target_date: str = DATE_OPTION,
+    boundary_policy: str = DAILY_BOUNDARY_POLICY_OPTION,
+) -> None:
     """Compute daily yield + fees + rollups for a Denver business date."""
 
     try:
@@ -631,8 +655,38 @@ def compute_daily(target_date: str = DATE_OPTION) -> None:
         raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
 
     session = Session(get_engine())
+    gross_roe_total: str | Decimal = "none"
+    post_strategy_fee_roe_total: str | Decimal = "none"
+    net_roe_total: str | Decimal = "none"
+    avant_gop_roe_total: str | Decimal = "none"
     try:
-        summary = YieldEngine(session).compute_daily(business_date=parsed_date)
+        try:
+            summary = YieldEngine(
+                session,
+                boundary_policy=boundary_policy,
+            ).compute_daily(business_date=parsed_date)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc), param_hint="--boundary-policy") from exc
+        total_row = session.execute(
+            select(
+                YieldDaily.gross_roe,
+                YieldDaily.post_strategy_fee_roe,
+                YieldDaily.net_roe,
+                YieldDaily.avant_gop_roe,
+            ).where(
+                YieldDaily.business_date == parsed_date,
+                YieldDaily.method == "apy_prorated_sod_eod",
+                YieldDaily.position_key.is_(None),
+                YieldDaily.wallet_id.is_(None),
+                YieldDaily.product_id.is_(None),
+                YieldDaily.protocol_id.is_(None),
+            )
+        ).one_or_none()
+        if total_row is not None:
+            gross_roe_total = total_row[0] if total_row[0] is not None else "none"
+            post_strategy_fee_roe_total = total_row[1] if total_row[1] is not None else "none"
+            net_roe_total = total_row[2] if total_row[2] is not None else "none"
+            avant_gop_roe_total = total_row[3] if total_row[3] is not None else "none"
         session.commit()
     finally:
         session.close()
@@ -645,6 +699,41 @@ def compute_daily(target_date: str = DATE_OPTION) -> None:
         f" position_rows={summary.position_rows_written}"
         f" rollup_rows={summary.rollup_rows_written}"
         f" issues_written={summary.issues_written}"
+        f" gross_roe_total={gross_roe_total}"
+        f" post_strategy_fee_roe_total={post_strategy_fee_roe_total}"
+        f" net_roe_total={net_roe_total}"
+        f" avant_gop_roe_total={avant_gop_roe_total}"
+    )
+
+
+@compute_app.command("boundary-check")
+def compute_boundary_check(target_date: str = DATE_OPTION) -> None:
+    """Check exact Denver SOD/EOD snapshot availability for metric signoff."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    session = Session(get_engine())
+    try:
+        result = select_business_day_boundaries(session, business_date=parsed_date)
+    finally:
+        session.close()
+
+    status = "pass" if result.ready_for_signoff else "warn"
+    typer.echo(
+        "compute boundary-check"
+        f" status={status}"
+        f" business_date={result.business_date.isoformat()}"
+        f" sod_exact_ts_utc={result.sod_exact_ts_utc.isoformat()}"
+        f" eod_exact_ts_utc={result.eod_exact_ts_utc.isoformat()}"
+        f" exact_sod_present={result.exact_sod_present}"
+        f" exact_eod_present={result.exact_eod_present}"
+        f" selected_sod_ts_utc={result.sod_ts_utc.isoformat() if result.sod_ts_utc else 'none'}"
+        f" selected_eod_ts_utc={result.eod_ts_utc.isoformat() if result.eod_ts_utc else 'none'}"
+        f" used_sod_fallback={result.used_sod_fallback}"
+        f" used_eod_fallback={result.used_eod_fallback}"
     )
 
 
@@ -672,6 +761,17 @@ def compute_rollups(window: str = WINDOW_OPTION, end_date: str | None = END_DATE
         typer.echo(f"compute rollups window={window} has no daily rows to aggregate")
         return
 
+    gross_roe_total = result.total.gross_roe if result.total.gross_roe is not None else "none"
+    post_strategy_fee_roe_total = (
+        result.total.post_strategy_fee_roe
+        if result.total.post_strategy_fee_roe is not None
+        else "none"
+    )
+    net_roe_total = result.total.net_roe if result.total.net_roe is not None else "none"
+    avant_gop_roe_total = (
+        result.total.avant_gop_roe if result.total.avant_gop_roe is not None else "none"
+    )
+
     typer.echo(
         "compute rollups complete"
         f" window={window}"
@@ -684,6 +784,11 @@ def compute_rollups(window: str = WINDOW_OPTION, end_date: str | None = END_DATE
         f" strategy_fee_total={result.total.strategy_fee_usd}"
         f" avant_gop_total={result.total.avant_gop_usd}"
         f" net_total={result.total.net_yield_usd}"
+        f" avg_equity_total={result.total.avg_equity_usd}"
+        f" gross_roe_total={gross_roe_total}"
+        f" post_strategy_fee_roe_total={post_strategy_fee_roe_total}"
+        f" net_roe_total={net_roe_total}"
+        f" avant_gop_roe_total={avant_gop_roe_total}"
     )
 
 

@@ -31,6 +31,22 @@ class AaveChainConfig(ConfigModel):
     oracle: str | None = None
 
 
+class SparkMarket(ConfigModel):
+    symbol: str
+    asset: str
+    decimals: int = Field(ge=0, le=36)
+    supply_apy_fallback_pool_id: str | None = None
+
+
+class SparkChainConfig(ConfigModel):
+    pool: str
+    pool_data_provider: str
+    wallets: list[str]
+    markets: list[SparkMarket]
+    incentives_controller: str | None = None
+    oracle: str | None = None
+
+
 class MorphoMarket(ConfigModel):
     id: str
     loan_token: str
@@ -55,6 +71,9 @@ class MorphoChainConfig(ConfigModel):
 class EulerVault(ConfigModel):
     address: str
     symbol: str
+    asset_address: str
+    asset_symbol: str
+    asset_decimals: int = Field(ge=0, le=36)
 
 
 class EulerChainConfig(ConfigModel):
@@ -84,9 +103,16 @@ class DolomiteChainConfig(ConfigModel):
 
 
 class KaminoMarket(ConfigModel):
+    class TokenRef(ConfigModel):
+        symbol: str
+        mint: str
+        decimals: int = Field(ge=0, le=36)
+
     market_pubkey: str
     name: str
     defillama_pool_id: str | None = None
+    supply_token: TokenRef | None = None
+    borrow_token: TokenRef | None = None
 
 
 class KaminoChainConfig(ConfigModel):
@@ -124,6 +150,7 @@ class MarketsConfig(ConfigModel):
     """Canonical strategy scope config."""
 
     aave_v3: dict[str, AaveChainConfig]
+    spark: dict[str, SparkChainConfig] = Field(default_factory=dict)
     morpho: dict[str, MorphoChainConfig]
     euler_v2: dict[str, EulerChainConfig]
     dolomite: dict[str, DolomiteChainConfig]

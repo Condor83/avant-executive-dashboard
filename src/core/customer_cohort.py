@@ -137,6 +137,7 @@ def collect_strategy_wallets(
 
     wallet_groups = (
         markets_config.aave_v3,
+        markets_config.spark,
         markets_config.morpho,
         markets_config.euler_v2,
         markets_config.dolomite,

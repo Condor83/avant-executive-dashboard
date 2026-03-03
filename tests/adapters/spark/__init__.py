@@ -1,0 +1,1 @@
+"""Spark adapter tests package."""

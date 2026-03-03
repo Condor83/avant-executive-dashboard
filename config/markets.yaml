@@ -135,6 +135,24 @@ aave_v3:
       asset: '0xC4374775489CB9C56003BF2C9b12495fC64F0771'
       decimals: 6
       supply_apy_fallback_pool_id: '8edfdf02-cdbb-43f7-bca6-954e5fe56813'
+spark:
+  ethereum:
+    pool: '0xC13e21B648A5Ee794902342038FF3aDAB66BE987'
+    pool_data_provider: '0xFc21d6d146E6086B8359705C8b28512a983db0cb'
+    incentives_controller: '0x4370D3b6C9588E02ce9D22e684387859c7Ff5b34'
+    oracle: '0x8105f69D9C41644c6A0803fDA7D03Aa70996cFD9'
+    wallets:
+      - '0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD'
+    markets:
+    - symbol: WETH
+      asset: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
+      decimals: 18
+    - symbol: USDC
+      asset: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      decimals: 6
+    - symbol: USDT
+      asset: '0xdAC17F958D2ee523a2206206994597C13D831ec7'
+      decimals: 6
 morpho:
   arbitrum:
     morpho: '0x6c247b1F6182318877311737BaC0844bAa518F5e'
@@ -257,18 +275,33 @@ euler_v2:
     vaults:
     - address: '0x37ca03aD51B8ff79aAD35FadaCBA4CEDF0C3e74e'
       symbol: eUSDC
+      asset_address: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E'
+      asset_symbol: USDC
+      asset_decimals: 6
     - address: '0x2137568666f12fc5A026f5430Ae7194F1C1362aB'
       symbol: eAUSD
+      asset_address: '0x00000000efe302beaa2b3e6e1b18d08d69a9012a'
+      asset_symbol: AUSD
+      asset_decimals: 6
     - address: '0xbaC3983342b805E66F8756E265b3B0DdF4B685Fc'
       symbol: eavUSD
+      asset_address: '0x06d47F3fb376649c3A9Dafe069B3D6E35572219E'
+      asset_symbol: savUSD
+      asset_decimals: 18
   bera:
     wallets:
       - '0xC1d023141ad6935F81E5286E577768b75C9Ff8EB'
     vaults:
     - address: '0x66f233ac844C3948A516857CA769872E5941f91c'
       symbol: eUSDC.e
+      asset_address: '0x549943e04f40284185054145c6E4e9568C1D3241'
+      asset_symbol: USDC.e
+      asset_decimals: 6
     - address: '0xE932da5A4d00536c224f8153f299cDcD8054c444'
       symbol: eUSDC.e
+      asset_address: '0x549943e04f40284185054145c6E4e9568C1D3241'
+      asset_symbol: USDC.e
+      asset_decimals: 6
   ethereum:
     wallets:
       - '0x020c5bB0d81b8cf539Ca06364Ece4a41631995b4'
@@ -276,19 +309,63 @@ euler_v2:
     vaults:
     - address: '0x3A8992754E2EF51D8F90620d2766278af5C59b90'
       symbol: eUSR
+      asset_address: '0x66a1e37c9B0eAdDCA17d3662D6C05F4DecF3E110'
+      asset_symbol: USR
+      asset_decimals: 18
     - address: '0xe0a80d35bB6618CBA260120b279d357978c42BCE'
       symbol: eUSDC
+      asset_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      asset_symbol: USDC
+      asset_decimals: 6
   sonic:
     wallets:
       - '0xc2d2C22f54c9Fae2456b6E7f7fBdC240E1898DA1'
     vaults:
     - address: '0xeEb1DC1Ca7ffC5b54aD1cc4c1088Db4E5657Cb6c'
       symbol: eUSDC
+      asset_address: '0xd3dcE716f3ef535C5ff8D041C1A41C3Bd89B97aE'
+      asset_symbol: USDC
+      asset_decimals: 6
 dolomite:
   bera:
     wallets:
       - '0xC1d023141ad6935F81E5286E577768b75C9Ff8EB'
+      - '0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd'
     margin: '0x003Ca23Fd5F0ca87D01F6eC6CD14A8AE60c2b97D'
+    account_numbers:
+      - 0
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+      - 6
+      - 7
+      - 8
+      - 9
+      - 10
+      - 11
+      - 12
+      - 13
+      - 14
+      - 15
+      - 16
+      - 17
+      - 18
+      - 19
+      - 20
+      - 21
+      - 22
+      - 23
+      - 24
+      - 25
+      - 26
+      - 27
+      - 28
+      - 29
+      - 30
+      - 31
+      - 32
     markets:
     - id: 2
       symbol: USDC.e
@@ -334,6 +411,14 @@ kamino:
       - market_pubkey: '6WEGfej9B9wjxRs6t4BYpb9iCXd8CpTpJ8fVSNzHCC5y'
         name: Maple Market
         defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
+        supply_token:
+          symbol: syrupUSDC
+          mint: 'AvZZF1YaZDziPY2RCK4oJrRVrbN3mTD9NL24hPeaZeUj'
+          decimals: 6
+        borrow_token:
+          symbol: PYUSD
+          mint: '2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo'
+          decimals: 6
       - market_pubkey: '7u3HeHxYDLhnCoErrtycNokbQYbWGzLs6JSDqGAv5PfF'
         name: Main Market
 

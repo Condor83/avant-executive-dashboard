@@ -12,6 +12,7 @@ def test_markets_yaml_has_expected_protocol_keys() -> None:
 
     assert set(markets.model_dump().keys()) == {
         "aave_v3",
+        "spark",
         "morpho",
         "euler_v2",
         "dolomite",
@@ -30,6 +31,12 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert aave_market.asset
             assert aave_market.decimals >= 0
 
+    for spark_chain in markets.spark.values():
+        for spark_market in spark_chain.markets:
+            assert spark_market.symbol
+            assert spark_market.asset
+            assert spark_market.decimals >= 0
+
     for morpho_chain in markets.morpho.values():
         assert morpho_chain.morpho
         for morpho_market in morpho_chain.markets:
@@ -42,6 +49,9 @@ def test_markets_and_tokens_have_required_fields() -> None:
         for vault in euler_chain.vaults:
             assert vault.address
             assert vault.symbol
+            assert vault.asset_address
+            assert vault.asset_symbol
+            assert vault.asset_decimals >= 0
 
     for dolomite_chain in markets.dolomite.values():
         assert dolomite_chain.margin
@@ -51,6 +61,19 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert dolomite_market.id >= 0
             assert dolomite_market.symbol
             assert dolomite_market.decimals >= 0
+
+    for kamino_chain in markets.kamino.values():
+        for kamino_market in kamino_chain.markets:
+            assert kamino_market.market_pubkey
+            assert kamino_market.name
+            if kamino_market.supply_token is not None:
+                assert kamino_market.supply_token.symbol
+                assert kamino_market.supply_token.mint
+                assert kamino_market.supply_token.decimals >= 0
+            if kamino_market.borrow_token is not None:
+                assert kamino_market.borrow_token.symbol
+                assert kamino_market.borrow_token.mint
+                assert kamino_market.borrow_token.decimals >= 0
 
     for wallet_balance_chain in markets.wallet_balances.values():
         for token in wallet_balance_chain.tokens:

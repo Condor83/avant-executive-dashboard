@@ -12,7 +12,7 @@ from core.config import MarketsConfig
 from core.db.models import DataQuality, Market, MarketSnapshot, PositionSnapshot
 from core.db.models import Protocol as ProtocolModel
 
-ADAPTER_PROTOCOLS = ("morpho", "euler_v2", "dolomite")
+ADAPTER_PROTOCOLS = ("spark", "morpho", "euler_v2", "dolomite")
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,16 @@ def expected_coverage_from_config(markets_config: MarketsConfig) -> dict[str, Ex
     )
     dolomite_markets = sum(len(chain.markets) for chain in markets_config.dolomite.values())
 
+    spark_pairs = sum(
+        len(chain.wallets) * len(chain.markets) for chain in markets_config.spark.values()
+    )
+    spark_markets = sum(len(chain.markets) for chain in markets_config.spark.values())
+
     return {
+        "spark": ExpectedCoverage(
+            expected_wallet_market_pairs=spark_pairs,
+            expected_markets=spark_markets,
+        ),
         "morpho": ExpectedCoverage(
             expected_wallet_market_pairs=morpho_pairs,
             expected_markets=morpho_markets,
