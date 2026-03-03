@@ -66,3 +66,23 @@ class DataQualityIssue:
     wallet_address: str | None = None
     market_ref: str | None = None
     payload_json: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class MarketSnapshotInput:
+    """Adapter output used for market snapshot persistence."""
+
+    as_of_ts_utc: datetime
+    protocol_code: str
+    chain_code: str
+    market_ref: str
+    total_supply_usd: Decimal
+    total_borrow_usd: Decimal
+    utilization: Decimal
+    supply_apy: Decimal
+    borrow_apy: Decimal
+    source: str = "rpc"
+    block_number_or_slot: str | None = None
+    available_liquidity_usd: Decimal | None = None
+    caps_json: dict[str, Any] | None = None
+    irm_params_json: dict[str, Any] | None = None

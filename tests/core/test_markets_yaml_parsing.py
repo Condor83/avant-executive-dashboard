@@ -30,6 +30,26 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert market.asset
             assert market.decimals >= 0
 
+    for chain_config in markets.morpho.values():
+        assert chain_config.morpho
+        for market in chain_config.markets:
+            assert market.id
+            assert market.loan_token
+            assert market.collateral_token
+            assert market.loan_decimals >= 0
+
+    for chain_config in markets.euler_v2.values():
+        for vault in chain_config.vaults:
+            assert vault.address
+            assert vault.symbol
+
+    for chain_config in markets.dolomite.values():
+        assert chain_config.margin
+        for market in chain_config.markets:
+            assert market.id >= 0
+            assert market.symbol
+            assert market.decimals >= 0
+
     for wallet_balance_chain in markets.wallet_balances.values():
         for token in wallet_balance_chain.tokens:
             assert token.symbol

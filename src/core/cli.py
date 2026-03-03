@@ -4,12 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Protocol
 
 import typer
 from sqlalchemy.orm import Session
 
+from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
+from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
+from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from core.config import load_markets_config
+from core.coverage_report import build_coverage_report
 from core.db.session import get_engine
 from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
@@ -27,6 +32,13 @@ MARKETS_PATH_OPTION = typer.Option(default=Path("config/markets.yaml"), help="ma
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
 
 
+class Closeable(Protocol):
+    """Simple close protocol for client cleanup in CLI commands."""
+
+    def close(self) -> None:
+        """Close underlying resources."""
+
+
 def _parse_as_of(as_of: str | None) -> datetime:
     if as_of is None:
         return datetime.now(UTC)
@@ -39,7 +51,7 @@ def _parse_as_of(as_of: str | None) -> datetime:
 
 def _build_runner(
     markets_path: Path,
-) -> tuple[SnapshotRunner, Session, EvmRpcBalanceClient, PriceOracle]:
+) -> tuple[SnapshotRunner, Session, list[Closeable]]:
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
 
@@ -47,8 +59,32 @@ def _build_runner(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    morpho_client = EvmRpcMorphoClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    euler_client = EvmRpcEulerV2Client(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    dolomite_client = EvmRpcDolomiteClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
     wallet_adapter = WalletBalancesAdapter(
         markets_config=markets_config, balance_client=balance_client
+    )
+    morpho_adapter = MorphoAdapter(
+        markets_config=markets_config,
+        rpc_client=morpho_client,
+    )
+    euler_adapter = EulerV2Adapter(
+        markets_config=markets_config,
+        rpc_client=euler_client,
+    )
+    dolomite_adapter = DolomiteAdapter(
+        markets_config=markets_config,
+        rpc_client=dolomite_client,
     )
 
     price_oracle = PriceOracle(
@@ -60,9 +96,26 @@ def _build_runner(
         session=session,
         markets_config=markets_config,
         price_oracle=price_oracle,
-        position_adapters=[wallet_adapter],
+        position_adapters=[
+            wallet_adapter,
+            morpho_adapter,
+            euler_adapter,
+            dolomite_adapter,
+        ],
+        market_adapters=[
+            morpho_adapter,
+            euler_adapter,
+            dolomite_adapter,
+        ],
     )
-    return runner, session, balance_client, price_oracle
+    closeables: list[Closeable] = [
+        balance_client,
+        morpho_client,
+        euler_client,
+        dolomite_client,
+        price_oracle,
+    ]
+    return runner, session, closeables
 
 
 @app.command("show-config")
@@ -82,7 +135,7 @@ def sync_snapshot(
     """Sync position snapshots from configured adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path)
 
     try:
         result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
@@ -93,8 +146,8 @@ def sync_snapshot(
         )
     finally:
         session.close()
-        balance_client.close()
-        price_oracle.close()
+        for closeable in closeables:
+            closeable.close()
 
 
 @sync_app.command("prices")
@@ -105,7 +158,7 @@ def sync_prices(
     """Sync token prices via shared price oracle."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path)
 
     try:
         result = runner.sync_prices(as_of_ts_utc=as_of_ts_utc)
@@ -116,8 +169,8 @@ def sync_prices(
         )
     finally:
         session.close()
-        balance_client.close()
-        price_oracle.close()
+        for closeable in closeables:
+            closeable.close()
 
 
 @sync_app.command("markets")
@@ -128,7 +181,7 @@ def sync_markets(
     """Sync market health snapshots (scaffold for protocol adapters)."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path)
 
     try:
         result = runner.sync_markets(as_of_ts_utc=as_of_ts_utc)
@@ -139,8 +192,30 @@ def sync_markets(
         )
     finally:
         session.close()
-        balance_client.close()
-        price_oracle.close()
+        for closeable in closeables:
+            closeable.close()
+
+
+@sync_app.command("coverage-report")
+def sync_coverage_report(
+    as_of: str | None = AS_OF_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+) -> None:
+    """Print wallet/market coverage and failures for adapter protocols."""
+
+    as_of_ts_utc = _parse_as_of(as_of)
+    markets_config = load_markets_config(markets_path)
+    session = Session(get_engine())
+
+    try:
+        report = build_coverage_report(
+            session=session,
+            markets_config=markets_config,
+            as_of_ts_utc=as_of_ts_utc,
+        )
+        typer.echo(report)
+    finally:
+        session.close()
 
 
 @compute_app.command("daily")

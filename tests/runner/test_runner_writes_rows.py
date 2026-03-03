@@ -18,9 +18,9 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from core.config import load_markets_config
-from core.db.models import Chain, Market, PositionSnapshot, Protocol, Wallet
+from core.db.models import Chain, Market, MarketSnapshot, PositionSnapshot, Protocol, Wallet
 from core.runner import SnapshotRunner
-from core.types import DataQualityIssue, PositionSnapshotInput
+from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
 
 DEFAULT_TEST_ADMIN_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 
@@ -103,6 +103,49 @@ class MockAdapter:
         )
 
 
+class MockMarketAdapter:
+    protocol_code = "wallet_balances"
+
+    def collect_markets(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[MarketSnapshotInput], list[DataQualityIssue]]:
+        del prices_by_token
+        return (
+            [
+                MarketSnapshotInput(
+                    as_of_ts_utc=as_of_ts_utc,
+                    protocol_code="wallet_balances",
+                    chain_code="ethereum",
+                    market_ref="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    total_supply_usd=Decimal("10"),
+                    total_borrow_usd=Decimal("2"),
+                    utilization=Decimal("0.2"),
+                    supply_apy=Decimal("0.03"),
+                    borrow_apy=Decimal("0.05"),
+                    available_liquidity_usd=Decimal("8"),
+                    source="rpc",
+                ),
+                MarketSnapshotInput(
+                    as_of_ts_utc=as_of_ts_utc,
+                    protocol_code="wallet_balances",
+                    chain_code="ethereum",
+                    market_ref="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    total_supply_usd=Decimal("7.5"),
+                    total_borrow_usd=Decimal("1.5"),
+                    utilization=Decimal("0.2"),
+                    supply_apy=Decimal("0.02"),
+                    borrow_apy=Decimal("0.04"),
+                    available_liquidity_usd=Decimal("6"),
+                    source="rpc",
+                ),
+            ],
+            [],
+        )
+
+
 def test_runner_writes_position_rows(postgres_database_url: str) -> None:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", postgres_database_url)
@@ -163,3 +206,61 @@ def test_runner_writes_position_rows(postgres_database_url: str) -> None:
 
         usd_total = session.scalar(select(func.sum(PositionSnapshot.supplied_usd)))
         assert usd_total == Decimal("17.500000000000000000")
+
+
+def test_runner_writes_market_rows(postgres_database_url: str) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="wallet_balances")
+        session.add(chain)
+        session.add(protocol)
+        session.flush()
+
+        session.add_all(
+            [
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=None,
+            position_adapters=[],
+            market_adapters=[MockMarketAdapter()],
+        )
+        summary = runner.sync_markets(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert summary.rows_written == 2
+        assert summary.issues_written == 0
+
+        row_count = session.scalar(select(func.count()).select_from(MarketSnapshot))
+        assert row_count == 2
+
+        utilization_avg = session.scalar(select(func.avg(MarketSnapshot.utilization)))
+        assert utilization_avg == Decimal("0.2000000000")

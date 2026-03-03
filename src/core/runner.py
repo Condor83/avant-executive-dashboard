@@ -16,6 +16,7 @@ from core.db.models import (
     Chain,
     DataQuality,
     Market,
+    MarketSnapshot,
     PositionSnapshot,
     Price,
     Token,
@@ -25,7 +26,7 @@ from core.db.models import (
     Protocol as ProtocolModel,
 )
 from core.pricing import PriceOracle
-from core.types import DataQualityIssue, PositionSnapshotInput, PriceRequest
+from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput, PriceRequest
 
 
 class PositionAdapter(Protocol):
@@ -40,6 +41,20 @@ class PositionAdapter(Protocol):
         prices_by_token: dict[tuple[str, str], Decimal],
     ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
         """Collect canonical position snapshot rows and data-quality issues."""
+
+
+class MarketAdapter(Protocol):
+    """Adapter contract for market snapshot collection."""
+
+    protocol_code: str
+
+    def collect_markets(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[MarketSnapshotInput], list[DataQualityIssue]]:
+        """Collect canonical market snapshot rows and data-quality issues."""
 
 
 @dataclass(frozen=True)
@@ -60,11 +75,13 @@ class SnapshotRunner:
         markets_config: MarketsConfig,
         price_oracle: PriceOracle | None,
         position_adapters: list[PositionAdapter],
+        market_adapters: list[MarketAdapter] | None = None,
     ) -> None:
         self.session = session
         self.markets_config = markets_config
         self.price_oracle = price_oracle
         self.position_adapters = position_adapters
+        self.market_adapters = market_adapters or []
 
     @staticmethod
     def _normalize_address(value: str) -> str:
@@ -152,35 +169,27 @@ class SnapshotRunner:
         issue_count = self._write_data_quality(result.issues)
         return RunnerSummary(rows_written=len(rows), issues_written=issue_count)
 
-    def _price_map_for_wallet_balances(
+    def _price_map_for_all_tokens(
         self, *, as_of_ts_utc: datetime
     ) -> tuple[dict[tuple[str, str], Decimal], int]:
-        """Ensure wallet-balance tokens are priced for snapshot runs."""
+        """Fetch prices for all seeded tokens and return lookup map + issue count."""
 
         if self.price_oracle is None:
             return {}, 0
 
-        balance_tokens: set[tuple[str, str]] = set()
-        for chain_code, chain_config in self.markets_config.wallet_balances.items():
-            for token in chain_config.tokens:
-                balance_tokens.add((chain_code, self._normalize_address(token.address)))
-
-        if not balance_tokens:
+        token_rows = self.session.execute(self._token_select()).all()
+        if not token_rows:
             return {}, 0
 
-        token_rows = self.session.execute(self._token_select()).all()
-        token_requests: list[PriceRequest] = []
-        for token_id, chain_code, address_or_mint, symbol in token_rows:
-            token_key = (chain_code, self._normalize_address(address_or_mint))
-            if token_key in balance_tokens:
-                token_requests.append(
-                    PriceRequest(
-                        token_id=token_id,
-                        chain_code=chain_code,
-                        address_or_mint=address_or_mint,
-                        symbol=symbol,
-                    )
-                )
+        token_requests = [
+            PriceRequest(
+                token_id=token_id,
+                chain_code=chain_code,
+                address_or_mint=address_or_mint,
+                symbol=symbol,
+            )
+            for token_id, chain_code, address_or_mint, symbol in token_rows
+        ]
 
         result = self.price_oracle.fetch_prices(token_requests, as_of_ts_utc=as_of_ts_utc)
         price_rows = [
@@ -205,10 +214,23 @@ class SnapshotRunner:
             self.session.execute(stmt)
 
         issue_count = self._write_data_quality(result.issues)
-        price_map = {
-            (quote.chain_code, self._normalize_address(quote.address_or_mint)): quote.price_usd
-            for quote in result.quotes
-        }
+        symbol_lookup: dict[tuple[str, str], str] = {}
+        for _token_id, chain_code, address_or_mint, symbol in token_rows:
+            symbol_key = (chain_code, symbol.strip().upper())
+            normalized_address = self._normalize_address(address_or_mint)
+            symbol_lookup.setdefault(symbol_key, normalized_address)
+
+        price_map: dict[tuple[str, str], Decimal] = {}
+        for quote in result.quotes:
+            normalized_address = self._normalize_address(quote.address_or_mint)
+            price_map[(quote.chain_code, normalized_address)] = quote.price_usd
+
+        # Symbol aliases allow fallback lookup when config only provides token symbols.
+        for (chain_code, symbol), token_address in symbol_lookup.items():
+            price = price_map.get((chain_code, token_address))
+            if price is not None:
+                price_map[(chain_code, f"symbol:{symbol}")] = price
+
         return price_map, issue_count
 
     def _resolve_wallet_ids(self) -> dict[str, int]:
@@ -234,7 +256,7 @@ class SnapshotRunner:
     def sync_snapshot(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
         """Collect adapter positions and persist position snapshots."""
 
-        prices_by_token, price_issue_count = self._price_map_for_wallet_balances(
+        prices_by_token, price_issue_count = self._price_map_for_all_tokens(
             as_of_ts_utc=as_of_ts_utc
         )
 
@@ -325,16 +347,87 @@ class SnapshotRunner:
         return RunnerSummary(rows_written=len(rows), issues_written=issue_count + price_issue_count)
 
     def sync_markets(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
-        """Sync market health snapshots (adapter implementations start in Sprint 03)."""
+        """Collect adapter market data and persist market snapshots."""
 
-        issue_count = self._write_data_quality(
-            [
-                DataQualityIssue(
-                    as_of_ts_utc=as_of_ts_utc,
-                    stage="sync_markets",
-                    error_type="not_implemented",
-                    error_message="market snapshot adapters are introduced in Sprint 03",
-                )
-            ]
+        prices_by_token, price_issue_count = self._price_map_for_all_tokens(
+            as_of_ts_utc=as_of_ts_utc
         )
-        return RunnerSummary(rows_written=0, issues_written=issue_count)
+
+        all_markets: list[MarketSnapshotInput] = []
+        all_issues: list[DataQualityIssue] = []
+
+        for adapter in self.market_adapters:
+            markets, issues = adapter.collect_markets(
+                as_of_ts_utc=as_of_ts_utc,
+                prices_by_token=prices_by_token,
+            )
+            all_markets.extend(markets)
+            all_issues.extend(issues)
+
+        market_ids = self._resolve_market_ids()
+
+        rows: list[dict[str, object]] = []
+        for market in all_markets:
+            market_id = market_ids.get(
+                (
+                    market.protocol_code,
+                    market.chain_code,
+                    self._normalize_address(market.market_ref),
+                )
+            )
+            if market_id is None:
+                all_issues.append(
+                    DataQualityIssue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_markets",
+                        error_type="dimension_missing",
+                        error_message="market dimension missing for market snapshot",
+                        protocol_code=market.protocol_code,
+                        chain_code=market.chain_code,
+                        market_ref=market.market_ref,
+                    )
+                )
+                continue
+
+            rows.append(
+                {
+                    "as_of_ts_utc": market.as_of_ts_utc,
+                    "block_number_or_slot": market.block_number_or_slot,
+                    "market_id": market_id,
+                    "total_supply_usd": market.total_supply_usd,
+                    "total_borrow_usd": market.total_borrow_usd,
+                    "utilization": market.utilization,
+                    "supply_apy": market.supply_apy,
+                    "borrow_apy": market.borrow_apy,
+                    "available_liquidity_usd": market.available_liquidity_usd,
+                    "caps_json": market.caps_json,
+                    "irm_params_json": market.irm_params_json,
+                    "source": market.source,
+                }
+            )
+
+        if rows:
+            stmt = insert(MarketSnapshot).values(rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[
+                    MarketSnapshot.as_of_ts_utc,
+                    MarketSnapshot.market_id,
+                    MarketSnapshot.source,
+                ],
+                set_={
+                    "block_number_or_slot": stmt.excluded.block_number_or_slot,
+                    "total_supply_usd": stmt.excluded.total_supply_usd,
+                    "total_borrow_usd": stmt.excluded.total_borrow_usd,
+                    "utilization": stmt.excluded.utilization,
+                    "supply_apy": stmt.excluded.supply_apy,
+                    "borrow_apy": stmt.excluded.borrow_apy,
+                    "available_liquidity_usd": stmt.excluded.available_liquidity_usd,
+                    "caps_json": stmt.excluded.caps_json,
+                    "irm_params_json": stmt.excluded.irm_params_json,
+                    "market_id": stmt.excluded.market_id,
+                },
+            )
+            self.session.execute(stmt)
+
+        issue_count = self._write_data_quality(all_issues)
+        return RunnerSummary(rows_written=len(rows), issues_written=issue_count + price_issue_count)
