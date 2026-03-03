@@ -212,5 +212,6 @@ def test_morpho_golden_wallets_returns_positions_and_market_snapshots() -> None:
     # If defillama_pool_id is configured, adapter must attach it for downstream fallback.
     by_market = {row.market_ref: row for row in market_rows}
     for market_id, pool_id in zip(market_ids, pool_ids, strict=True):
-        assert by_market[market_id].irm_params_json is not None
-        assert by_market[market_id].irm_params_json["defillama_pool_id"] == pool_id
+        irm_params = by_market[market_id].irm_params_json
+        assert irm_params is not None
+        assert irm_params["defillama_pool_id"] == pool_id

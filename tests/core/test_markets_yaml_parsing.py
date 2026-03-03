@@ -24,31 +24,31 @@ def test_markets_yaml_has_expected_protocol_keys() -> None:
 def test_markets_and_tokens_have_required_fields() -> None:
     markets = load_markets_config(Path("config/markets.yaml"))
 
-    for chain_config in markets.aave_v3.values():
-        for market in chain_config.markets:
-            assert market.symbol
-            assert market.asset
-            assert market.decimals >= 0
+    for aave_chain in markets.aave_v3.values():
+        for aave_market in aave_chain.markets:
+            assert aave_market.symbol
+            assert aave_market.asset
+            assert aave_market.decimals >= 0
 
-    for chain_config in markets.morpho.values():
-        assert chain_config.morpho
-        for market in chain_config.markets:
-            assert market.id
-            assert market.loan_token
-            assert market.collateral_token
-            assert market.loan_decimals >= 0
+    for morpho_chain in markets.morpho.values():
+        assert morpho_chain.morpho
+        for morpho_market in morpho_chain.markets:
+            assert morpho_market.id
+            assert morpho_market.loan_token
+            assert morpho_market.collateral_token
+            assert morpho_market.loan_decimals >= 0
 
-    for chain_config in markets.euler_v2.values():
-        for vault in chain_config.vaults:
+    for euler_chain in markets.euler_v2.values():
+        for vault in euler_chain.vaults:
             assert vault.address
             assert vault.symbol
 
-    for chain_config in markets.dolomite.values():
-        assert chain_config.margin
-        for market in chain_config.markets:
-            assert market.id >= 0
-            assert market.symbol
-            assert market.decimals >= 0
+    for dolomite_chain in markets.dolomite.values():
+        assert dolomite_chain.margin
+        for dolomite_market in dolomite_chain.markets:
+            assert dolomite_market.id >= 0
+            assert dolomite_market.symbol
+            assert dolomite_market.decimals >= 0
 
     for wallet_balance_chain in markets.wallet_balances.values():
         for token in wallet_balance_chain.tokens:

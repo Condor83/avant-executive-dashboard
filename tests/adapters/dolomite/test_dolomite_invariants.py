@@ -91,10 +91,13 @@ def test_dolomite_invariants_hold() -> None:
     assert markets
 
     epsilon = Decimal("1e-12")
-    for row in positions:
-        assert row.supplied_usd >= 0
-        assert row.borrowed_usd >= 0
-        assert abs(row.equity_usd - (row.supplied_usd - row.borrowed_usd)) <= epsilon
+    for position_row in positions:
+        assert position_row.supplied_usd >= 0
+        assert position_row.borrowed_usd >= 0
+        assert (
+            abs(position_row.equity_usd - (position_row.supplied_usd - position_row.borrowed_usd))
+            <= epsilon
+        )
 
-    for row in markets:
-        assert Decimal("0") <= row.utilization <= Decimal("1.5")
+    for market_row in markets:
+        assert Decimal("0") <= market_row.utilization <= Decimal("1.5")

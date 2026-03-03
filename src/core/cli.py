@@ -9,6 +9,7 @@ from typing import Protocol
 import typer
 from sqlalchemy.orm import Session
 
+from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
 from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
@@ -19,6 +20,7 @@ from core.db.session import get_engine
 from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
 from core.settings import get_settings
+from core.yields import DefiLlamaYieldOracle
 
 app = typer.Typer(add_completion=False, help="Avant executive dashboard command line interface.")
 sync_app = typer.Typer(help="Ingestion sync commands")
@@ -49,13 +51,15 @@ def _parse_as_of(as_of: str | None) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _build_runner(
-    markets_path: Path,
-) -> tuple[SnapshotRunner, Session, list[Closeable]]:
+def _build_runner(markets_path: Path) -> tuple[SnapshotRunner, Session, list[Closeable]]:
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
 
     balance_client = EvmRpcBalanceClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    aave_client = EvmRpcAaveV3Client(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
@@ -71,21 +75,30 @@ def _build_runner(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    yield_oracle = DefiLlamaYieldOracle(
+        base_url=settings.defillama_yields_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+
     wallet_adapter = WalletBalancesAdapter(
         markets_config=markets_config, balance_client=balance_client
+    )
+    aave_adapter = AaveV3Adapter(
+        markets_config=markets_config,
+        rpc_client=aave_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        merkl_base_url=settings.merkl_base_url,
+        merkl_timeout_seconds=settings.merkl_timeout_seconds,
+        yield_oracle=yield_oracle,
     )
     morpho_adapter = MorphoAdapter(
         markets_config=markets_config,
         rpc_client=morpho_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        yield_oracle=yield_oracle,
     )
-    euler_adapter = EulerV2Adapter(
-        markets_config=markets_config,
-        rpc_client=euler_client,
-    )
-    dolomite_adapter = DolomiteAdapter(
-        markets_config=markets_config,
-        rpc_client=dolomite_client,
-    )
+    euler_adapter = EulerV2Adapter(markets_config=markets_config, rpc_client=euler_client)
+    dolomite_adapter = DolomiteAdapter(markets_config=markets_config, rpc_client=dolomite_client)
 
     price_oracle = PriceOracle(
         base_url=settings.defillama_base_url,
@@ -98,11 +111,13 @@ def _build_runner(
         price_oracle=price_oracle,
         position_adapters=[
             wallet_adapter,
+            aave_adapter,
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
         ],
         market_adapters=[
+            aave_adapter,
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
@@ -110,10 +125,12 @@ def _build_runner(
     )
     closeables: list[Closeable] = [
         balance_client,
+        aave_client,
         morpho_client,
         euler_client,
         dolomite_client,
         price_oracle,
+        yield_oracle,
     ]
     return runner, session, closeables
 
@@ -178,7 +195,7 @@ def sync_markets(
     as_of: str | None = AS_OF_OPTION,
     markets_path: Path = MARKETS_PATH_OPTION,
 ) -> None:
-    """Sync market health snapshots (scaffold for protocol adapters)."""
+    """Sync market health snapshots from configured market adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
     runner, session, closeables = _build_runner(markets_path)

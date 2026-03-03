@@ -19,6 +19,7 @@ class AaveMarket(ConfigModel):
     symbol: str
     asset: str
     decimals: int = Field(ge=0, le=36)
+    supply_apy_fallback_pool_id: str | None = None
 
 
 class AaveChainConfig(ConfigModel):

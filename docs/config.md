@@ -23,6 +23,17 @@ Adapters must treat this file as the source of truth (no silent discovery in pro
   - oracle (optional)
   - wallets list
   - markets list with underlying asset addresses + decimals
+  - optional per-market `supply_apy_fallback_pool_id` for yield-bearing collateral when on-chain supply rate is zero
+
+Runtime Aave reward settings:
+- `AVANT_MERKL_BASE_URL` (default `https://api.merkl.xyz`)
+- `AVANT_MERKL_TIMEOUT_SECONDS` (default `15`)
+- `AVANT_DEFILLAMA_YIELDS_BASE_URL` (default `https://yields.llama.fi`) for shared pool APY lookups
+
+Current Aave USDe/sUSDe loop policy:
+- `supply_apy` remains protocol-native (or explicit fallback if configured).
+- Merkl campaign increment is modeled as `reward_apy`.
+- `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the same strategy model.
 
 #### Morpho
 - chain config includes:
@@ -30,6 +41,11 @@ Adapters must treat this file as the source of truth (no silent discovery in pro
   - wallets list
   - markets list with `id` (bytes32) and token symbols (plus optional defillama pool id)
   - optional `vaults` (MetaMorpho vault addresses)
+
+Current Morpho collateral carry policy:
+- market snapshot rates remain protocol-native Morpho Blue rates.
+- if a market has `defillama_pool_id`, position `supply_apy` may use that pool APY for collateral carry representation.
+- `borrow_apy` remains protocol-native and is never overridden by DefiLlama.
 
 #### Euler v2
 - chain config includes:

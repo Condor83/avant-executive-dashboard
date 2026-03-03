@@ -12,6 +12,7 @@ import httpx
 
 from core.config import MarketsConfig, MorphoChainConfig, MorphoMarket, canonical_address
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
+from core.yields import DefiLlamaYieldOracle
 
 MORPHO_POSITION_SELECTOR = "0x93c52062"
 MORPHO_MARKET_SELECTOR = "0x5c60e39a"
@@ -293,9 +294,19 @@ class MorphoAdapter:
 
     protocol_code = "morpho"
 
-    def __init__(self, markets_config: MarketsConfig, rpc_client: MorphoRpcClient) -> None:
+    def __init__(
+        self,
+        markets_config: MarketsConfig,
+        rpc_client: MorphoRpcClient,
+        *,
+        defillama_timeout_seconds: float = 15.0,
+        yield_oracle: DefiLlamaYieldOracle | None = None,
+    ) -> None:
         self.markets_config = markets_config
         self.rpc_client = rpc_client
+        self.yield_oracle = yield_oracle or DefiLlamaYieldOracle(
+            timeout_seconds=defillama_timeout_seconds
+        )
 
     @staticmethod
     def _position_key(chain_code: str, wallet_address: str, market_ref: str) -> str:
@@ -592,6 +603,28 @@ class MorphoAdapter:
                     borrowed_usd = borrowed_amount * loan_price
                     equity_usd = supplied_usd - borrowed_usd
                     ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
+                    supply_apy = runtime.supply_apy
+                    if runtime.config.defillama_pool_id and collateral_amount > 0:
+                        try:
+                            supply_apy = self.yield_oracle.get_pool_apy(
+                                runtime.config.defillama_pool_id
+                            )
+                        except Exception as exc:
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="morpho_collateral_apy_fallback_failed",
+                                    error_message=str(exc),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet_address,
+                                    market_ref=market_ref,
+                                    payload_json={
+                                        "pool_id": runtime.config.defillama_pool_id,
+                                        "collateral_token": runtime.config.collateral_token,
+                                    },
+                                )
+                            )
 
                     positions.append(
                         PositionSnapshotInput(
@@ -605,7 +638,7 @@ class MorphoAdapter:
                             supplied_usd=supplied_usd,
                             borrowed_amount=borrowed_amount,
                             borrowed_usd=borrowed_usd,
-                            supply_apy=runtime.supply_apy,
+                            supply_apy=supply_apy,
                             borrow_apy=runtime.borrow_apy,
                             reward_apy=Decimal("0"),
                             equity_usd=equity_usd,
@@ -682,6 +715,10 @@ class MorphoAdapter:
                     "borrow_apy": str(runtime.borrow_apy),
                     "supply_apy": str(runtime.supply_apy),
                     "defillama_pool_id": runtime.config.defillama_pool_id,
+                    "position_supply_apy_policy": (
+                        "collateral_carry_from_defillama_pool_when_configured"
+                    ),
+                    "protocol_supply_apy": str(runtime.supply_apy),
                 }
 
                 snapshots.append(
