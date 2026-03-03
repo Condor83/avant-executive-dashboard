@@ -22,6 +22,6 @@ See `docs/dependency-order.md` for parallelization rules.
 - Sprint 05 — Kamino (Solana) + Zest (Stacks) + Silo v2 (consumer) adapters
 - Sprint 06 — Yield/fees/ROE analytics + rollups
 - Sprint 07 — Risk engine (kink + spread compression) + alerting
-- Sprint 08 — Consumer analytics (>= $50k cohort, leverage %, top wallets)
+- Sprint 08 — Consumer analytics (>= $50k cohort, leverage %, top wallets; includes follow-up design for top-50 savAsset holder value capture)
 - Sprint 09 — API + exec dashboard MVP
 - Sprint 10 — Production hardening (scheduling, backfills, observability)

@@ -86,9 +86,11 @@ class DolomiteChainConfig(ConfigModel):
 class KaminoMarket(ConfigModel):
     market_pubkey: str
     name: str
+    defillama_pool_id: str | None = None
 
 
 class KaminoChainConfig(ConfigModel):
+    wallets: list[str] = Field(default_factory=list)
     markets: list[KaminoMarket]
 
 

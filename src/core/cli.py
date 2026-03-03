@@ -13,15 +13,23 @@ from sqlalchemy.orm import Session
 from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
 from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
+from adapters.kamino import KaminoAdapter, KaminoApiClient
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
+from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
-from core.config import load_markets_config, load_wallet_products_config
+from adapters.zest import StacksApiZestClient, ZestAdapter
+from core.config import (
+    load_consumer_markets_config,
+    load_markets_config,
+    load_wallet_products_config,
+)
 from core.coverage_report import build_coverage_report
 from core.db.session import get_engine
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
 from core.settings import get_settings
+from core.stacks_client import StacksClient
 from core.yields import DefiLlamaYieldOracle
 
 app = typer.Typer(add_completion=False, help="Avant executive dashboard command line interface.")
@@ -33,6 +41,10 @@ app.add_typer(compute_app, name="compute")
 
 AS_OF_OPTION = typer.Option(default=None, help="UTC timestamp in ISO-8601 format")
 MARKETS_PATH_OPTION = typer.Option(default=Path("config/markets.yaml"), help="markets config path")
+CONSUMER_MARKETS_PATH_OPTION = typer.Option(
+    default=Path("config/consumer_markets.yaml"),
+    help="consumer markets config path",
+)
 WALLET_PRODUCTS_PATH_OPTION = typer.Option(
     default=Path("config/wallet_products.yaml"),
     help="wallet products config path",
@@ -76,9 +88,13 @@ def _parse_as_of(as_of: str | None) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def _build_runner(markets_path: Path) -> tuple[SnapshotRunner, Session, list[Closeable]]:
+def _build_runner(
+    markets_path: Path,
+    consumer_markets_path: Path,
+) -> tuple[SnapshotRunner, Session, list[Closeable]]:
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
 
     balance_client = EvmRpcBalanceClient(
         rpc_urls=settings.evm_rpc_urls,
@@ -124,6 +140,36 @@ def _build_runner(markets_path: Path) -> tuple[SnapshotRunner, Session, list[Clo
     )
     euler_adapter = EulerV2Adapter(markets_config=markets_config, rpc_client=euler_client)
     dolomite_adapter = DolomiteAdapter(markets_config=markets_config, rpc_client=dolomite_client)
+    kamino_client = KaminoApiClient(
+        base_url=settings.kamino_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    kamino_adapter = KaminoAdapter(
+        markets_config=markets_config,
+        client=kamino_client,
+        yield_oracle=yield_oracle,
+    )
+    stacks_client = StacksClient(
+        base_url=settings.stacks_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    zest_client = StacksApiZestClient(
+        stacks_client=stacks_client,
+        zest_api_base_url=settings.zest_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    zest_adapter = ZestAdapter(markets_config=markets_config, client=zest_client)
+    silo_client = SiloApiClient(
+        base_url=settings.silo_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        points_base_url=settings.silo_points_api_base_url,
+    )
+    silo_adapter = SiloV2Adapter(
+        markets_config=markets_config,
+        consumer_markets_config=consumer_markets_config,
+        client=silo_client,
+        top_holders_limit=settings.silo_top_holders_limit,
+    )
 
     price_oracle = PriceOracle(
         base_url=settings.defillama_base_url,
@@ -140,12 +186,18 @@ def _build_runner(markets_path: Path) -> tuple[SnapshotRunner, Session, list[Clo
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
+            kamino_adapter,
+            zest_adapter,
+            silo_adapter,
         ],
         market_adapters=[
             aave_adapter,
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
+            kamino_adapter,
+            zest_adapter,
+            silo_adapter,
         ],
     )
     closeables: list[Closeable] = [
@@ -154,6 +206,10 @@ def _build_runner(markets_path: Path) -> tuple[SnapshotRunner, Session, list[Clo
         morpho_client,
         euler_client,
         dolomite_client,
+        kamino_client,
+        stacks_client,
+        zest_client,
+        silo_client,
         price_oracle,
         yield_oracle,
     ]
@@ -173,11 +229,12 @@ def show_config() -> None:
 def sync_snapshot(
     as_of: str | None = AS_OF_OPTION,
     markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
 ) -> None:
     """Sync position snapshots from configured adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
 
     try:
         result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
@@ -196,11 +253,12 @@ def sync_snapshot(
 def sync_prices(
     as_of: str | None = AS_OF_OPTION,
     markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
 ) -> None:
     """Sync token prices via shared price oracle."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
 
     try:
         result = runner.sync_prices(as_of_ts_utc=as_of_ts_utc)
@@ -219,11 +277,12 @@ def sync_prices(
 def sync_markets(
     as_of: str | None = AS_OF_OPTION,
     markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
 ) -> None:
     """Sync market health snapshots from configured market adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path)
+    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
 
     try:
         result = runner.sync_markets(as_of_ts_utc=as_of_ts_utc)

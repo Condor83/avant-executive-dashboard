@@ -30,11 +30,14 @@ This sprint is the bridge to full multi-chain coverage.
   - savBTC/BTC.b
 - Implement customer position ingestion for “top holders” (top 10–20) in those markets (only what’s needed for executive concentration checks).
 
+> Follow-up sprint required: tracking the top 50 savAsset holders (savUSD/savETH/savBTC) and defining the best value-capture methodology is explicitly deferred.
+
 > Note: Silo markets are NOT fully enumerated in markets.yaml in the active section; treat them as **consumer markets** and put their addresses in `consumer_markets.yaml`.
 
 ### Out
 - DEX liquidity tasks / Pendle tasks (not required for money market health)
 - Full Stacks indexing beyond what Zest needs
+- Top 50 savAsset holder coverage and value-capture methodology (separate sprint)
 
 ## Deliverables
 

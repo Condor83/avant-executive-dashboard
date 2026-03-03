@@ -20,6 +20,8 @@ CHAIN_TO_DEFILLAMA: dict[str, str] = {
     "ink": "ink",
     "mantle": "mantle",
     "plasma": "plasma",
+    "solana": "solana",
+    "stacks": "stacks",
     "sonic": "sonic",
 }
 
@@ -68,6 +70,10 @@ class PriceOracle:
             return None
 
         normalized_address = cls._normalize_address(address_or_mint)
+        if chain_code in {"solana", "stacks"}:
+            if not normalized_address:
+                return None
+            return f"{chain}:{normalized_address}"
         if not normalized_address.startswith("0x"):
             return None
 

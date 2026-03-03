@@ -17,4 +17,28 @@
 #       symbol: "USDC"
 #       address: "0x..."
 #       decimals: 6
-markets: []
+markets:
+  - protocol: "silo_v2"
+    chain: "avalanche"
+    name: "savUSD/USDC"
+    market_address: "142"
+    collateral_token:
+      symbol: "savUSD"
+      address: "0x24de8771bc5ddb3362db529fc3358f2df3a0e346"
+      decimals: 18
+    borrow_token:
+      symbol: "USDC"
+      address: "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"
+      decimals: 6
+  - protocol: "silo_v2"
+    chain: "avalanche"
+    name: "savBTC/BTC.b"
+    market_address: "121"
+    collateral_token:
+      symbol: "savBTC"
+      address: "0xfd2c2a98009d0cbed715882036e43d26c4289053"
+      decimals: 18
+    borrow_token:
+      symbol: "BTC.b"
+      address: "0x152b9d0FdC40C096757F570A51E494bd4b943E50"
+      decimals: 8
