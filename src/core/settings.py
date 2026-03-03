@@ -27,9 +27,17 @@ class Settings(BaseSettings):
         default="https://coins.llama.fi",
         description="DefiLlama base URL for token price requests",
     )
+    merkl_base_url: str = Field(
+        default="https://api.merkl.xyz",
+        description="Merkl API base URL for reward campaign APY requests",
+    )
     request_timeout_seconds: float = Field(
         default=15.0,
         description="HTTP request timeout used by external service clients",
+    )
+    merkl_timeout_seconds: float = Field(
+        default=15.0,
+        description="HTTP request timeout used for Merkl API requests",
     )
     evm_rpc_urls: dict[str, str] = Field(
         default_factory=dict,

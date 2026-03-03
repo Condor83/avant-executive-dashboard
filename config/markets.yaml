@@ -41,6 +41,7 @@ aave_v3:
     - symbol: syrupUSDC
       asset: '0x660975730059246A68521a3e2FBD4740173100f5'
       decimals: 6
+      supply_apy_fallback_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
   ethereum:
     pool: '0x87870Bca3F3fD6335C3F4ce8392D69350B4fA4E2'
     pool_data_provider: '0x0a16f2FCC0D44FaE41cc54e079281D84A363bECD'
@@ -71,9 +72,11 @@ aave_v3:
     - symbol: sUSDe
       asset: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497'
       decimals: 18
+      supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
     - symbol: syrupUSDT
       asset: '0x356B8d89c1e1239Cbbb9dE4815c39A1474d5BA7D'
       decimals: 6
+      supply_apy_fallback_pool_id: '8edfdf02-cdbb-43f7-bca6-954e5fe56813'
   ink:
     pool: '0x2816cf15F6d2A220E789aA011D5EE4eB6c47FEbA'
     pool_data_provider: '0x96086C25d13943C80Ff9a19791a40Df6aFC08328'
@@ -91,6 +94,7 @@ aave_v3:
     - symbol: sUSDe
       asset: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2'
       decimals: 18
+      supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
   mantle:
     pool: '0x458F293454fE0d67EC0655f3672301301DD51422'
     pool_data_provider: '0x487c5c669D9eee6057C44973207101276cf73b68'
@@ -108,6 +112,7 @@ aave_v3:
     - symbol: sUSDe
       asset: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2'
       decimals: 18
+      supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
   plasma:
     pool: '0x925a2A7214Ed92428B5b1B090F80b25700095e12'
     pool_data_provider: '0xf2D6E38B407e31E7E7e4a16E6769728b76c7419F'
@@ -125,9 +130,11 @@ aave_v3:
     - symbol: sUSDe
       asset: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2'
       decimals: 18
+      supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
     - symbol: syrupUSDT
       asset: '0xC4374775489CB9C56003BF2C9b12495fC64F0771'
       decimals: 6
+      supply_apy_fallback_pool_id: '8edfdf02-cdbb-43f7-bca6-954e5fe56813'
 morpho:
   arbitrum:
     morpho: '0x6c247b1F6182318877311737BaC0844bAa518F5e'

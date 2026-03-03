@@ -23,6 +23,16 @@ Adapters must treat this file as the source of truth (no silent discovery in pro
   - oracle (optional)
   - wallets list
   - markets list with underlying asset addresses + decimals
+  - optional per-market `supply_apy_fallback_pool_id` for yield-bearing collateral when on-chain supply rate is zero
+
+Runtime Aave reward settings:
+- `AVANT_MERKL_BASE_URL` (default `https://api.merkl.xyz`)
+- `AVANT_MERKL_TIMEOUT_SECONDS` (default `15`)
+
+Current Aave USDe/sUSDe loop policy:
+- `supply_apy` remains protocol-native (or explicit fallback if configured).
+- Merkl campaign increment is modeled as `reward_apy`.
+- `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the same strategy model.
 
 #### Morpho
 - chain config includes:

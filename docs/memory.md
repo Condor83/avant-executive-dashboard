@@ -31,6 +31,12 @@ For each position and each day:
 
 > Note: APY moves intraday. MVP approximates with SOD + EOD rates; production can add time-weighted rate sampling.
 
+### Aave USDe/sUSDe loop policy (current)
+
+- For Aave loops that use `USDe` + `sUSDe` collateral, external campaign yield (Merkl) is modeled as `reward_apy`, not by overwriting `supply_apy`.
+- To avoid double counting, `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the strategy model.
+- If external campaign data is unavailable for a run, reward contribution defaults to zero and is emitted as a data-quality issue.
+
 ## Fee waterfall (always the same)
 
 Fees are applied deterministically, even at wallet/position level:

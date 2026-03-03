@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 from sqlalchemy.orm import Session
 
+from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from core.config import load_markets_config
 from core.db.session import get_engine
@@ -39,7 +40,7 @@ def _parse_as_of(as_of: str | None) -> datetime:
 
 def _build_runner(
     markets_path: Path,
-) -> tuple[SnapshotRunner, Session, EvmRpcBalanceClient, PriceOracle]:
+) -> tuple[SnapshotRunner, Session, EvmRpcBalanceClient, EvmRpcAaveV3Client, PriceOracle]:
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
 
@@ -49,6 +50,17 @@ def _build_runner(
     )
     wallet_adapter = WalletBalancesAdapter(
         markets_config=markets_config, balance_client=balance_client
+    )
+    aave_client = EvmRpcAaveV3Client(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    aave_adapter = AaveV3Adapter(
+        markets_config=markets_config,
+        rpc_client=aave_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        merkl_base_url=settings.merkl_base_url,
+        merkl_timeout_seconds=settings.merkl_timeout_seconds,
     )
 
     price_oracle = PriceOracle(
@@ -60,9 +72,10 @@ def _build_runner(
         session=session,
         markets_config=markets_config,
         price_oracle=price_oracle,
-        position_adapters=[wallet_adapter],
+        position_adapters=[wallet_adapter, aave_adapter],
+        market_adapters=[aave_adapter],
     )
-    return runner, session, balance_client, price_oracle
+    return runner, session, balance_client, aave_client, price_oracle
 
 
 @app.command("show-config")
@@ -82,7 +95,7 @@ def sync_snapshot(
     """Sync position snapshots from configured adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, balance_client, aave_client, price_oracle = _build_runner(markets_path)
 
     try:
         result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
@@ -94,6 +107,7 @@ def sync_snapshot(
     finally:
         session.close()
         balance_client.close()
+        aave_client.close()
         price_oracle.close()
 
 
@@ -105,7 +119,7 @@ def sync_prices(
     """Sync token prices via shared price oracle."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, balance_client, aave_client, price_oracle = _build_runner(markets_path)
 
     try:
         result = runner.sync_prices(as_of_ts_utc=as_of_ts_utc)
@@ -117,6 +131,7 @@ def sync_prices(
     finally:
         session.close()
         balance_client.close()
+        aave_client.close()
         price_oracle.close()
 
 
@@ -125,10 +140,10 @@ def sync_markets(
     as_of: str | None = AS_OF_OPTION,
     markets_path: Path = MARKETS_PATH_OPTION,
 ) -> None:
-    """Sync market health snapshots (scaffold for protocol adapters)."""
+    """Sync market health snapshots from configured market adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, balance_client, price_oracle = _build_runner(markets_path)
+    runner, session, balance_client, aave_client, price_oracle = _build_runner(markets_path)
 
     try:
         result = runner.sync_markets(as_of_ts_utc=as_of_ts_utc)
@@ -140,6 +155,7 @@ def sync_markets(
     finally:
         session.close()
         balance_client.close()
+        aave_client.close()
         price_oracle.close()
 
 
