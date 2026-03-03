@@ -109,7 +109,7 @@ def test_euler_golden_wallets_returns_positions_and_market_snapshots() -> None:
     cfg, wallets, vaults = _minimal_euler_config()
 
     usdc = "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
-    ausd = "0x00000000000000000000000000000000000000a1"
+    ausd = "0x00000000efe302beaa2b3e6e1b18d08d69a9012a"
 
     share_balances: dict[tuple[str, str], int] = {
         (vaults[0], wallets[0]): 120_000_000,

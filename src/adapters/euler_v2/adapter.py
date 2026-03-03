@@ -277,11 +277,17 @@ class EulerV2Adapter:
         *,
         chain_code: str,
         token_address: str,
+        asset_symbol: str,
         vault_symbol: str,
     ) -> Decimal | None:
         address_price = prices_by_token.get((chain_code, canonical_address(token_address)))
         if address_price is not None:
             return address_price
+
+        for symbol in cls._symbol_candidates(asset_symbol):
+            symbol_price = prices_by_token.get((chain_code, f"symbol:{symbol.upper()}"))
+            if symbol_price is not None:
+                return symbol_price
 
         for symbol in cls._symbol_candidates(vault_symbol):
             symbol_price = prices_by_token.get((chain_code, f"symbol:{symbol.upper()}"))
@@ -341,10 +347,12 @@ class EulerV2Adapter:
         for vault in chain_config.vaults:
             market_ref = canonical_address(vault.address)
             try:
-                asset_address = canonical_address(
+                observed_asset_address = canonical_address(
                     self.rpc_client.get_vault_asset(chain_code, market_ref)
                 )
-                asset_decimals = self.rpc_client.get_erc20_decimals(chain_code, asset_address)
+                observed_asset_decimals = self.rpc_client.get_erc20_decimals(
+                    chain_code, observed_asset_address
+                )
                 total_assets = self.rpc_client.get_total_assets(chain_code, market_ref)
                 total_borrows = self.rpc_client.get_total_borrows(chain_code, market_ref)
                 interest_rate = self.rpc_client.get_interest_rate(chain_code, market_ref)
@@ -363,17 +371,43 @@ class EulerV2Adapter:
                 )
                 continue
 
+            configured_asset_address = canonical_address(vault.asset_address)
+            configured_asset_decimals = int(vault.asset_decimals)
+            if (
+                configured_asset_address != observed_asset_address
+                or configured_asset_decimals != observed_asset_decimals
+            ):
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage=stage,
+                        error_type="euler_asset_mismatch",
+                        error_message=(
+                            "Euler vault asset metadata differs between config and on-chain reads"
+                        ),
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={
+                            "symbol": vault.symbol,
+                            "configured_asset_address": configured_asset_address,
+                            "configured_asset_decimals": configured_asset_decimals,
+                            "observed_asset_address": observed_asset_address,
+                            "observed_asset_decimals": observed_asset_decimals,
+                        },
+                    )
+                )
+
             state = EulerVaultState(
-                asset_address=asset_address,
-                asset_decimals=asset_decimals,
+                asset_address=observed_asset_address,
+                asset_decimals=observed_asset_decimals,
                 total_assets=total_assets,
                 total_borrows=total_borrows,
                 interest_rate=interest_rate,
                 interest_fee=interest_fee,
             )
 
-            total_supply_amount = normalize_raw_amount(total_assets, asset_decimals)
-            total_borrow_amount = normalize_raw_amount(total_borrows, asset_decimals)
+            total_supply_amount = normalize_raw_amount(total_assets, observed_asset_decimals)
+            total_borrow_amount = normalize_raw_amount(total_borrows, observed_asset_decimals)
             utilization = self._utilization(total_supply_amount, total_borrow_amount)
 
             # Euler v2 rates are ray-scaled per-second values.
@@ -460,7 +494,8 @@ class EulerV2Adapter:
                     asset_price = self._price_from_map(
                         prices_by_token,
                         chain_code=chain_code,
-                        token_address=runtime.state.asset_address,
+                        token_address=runtime.config.asset_address,
+                        asset_symbol=runtime.config.asset_symbol,
                         vault_symbol=runtime.config.symbol,
                     )
                     if asset_price is None:
@@ -476,7 +511,7 @@ class EulerV2Adapter:
                                 market_ref=market_ref,
                                 payload_json={
                                     "symbol": runtime.config.symbol,
-                                    "asset": runtime.state.asset_address,
+                                    "asset": canonical_address(runtime.config.asset_address),
                                 },
                             )
                         )
@@ -532,7 +567,8 @@ class EulerV2Adapter:
                 asset_price = self._price_from_map(
                     prices_by_token,
                     chain_code=chain_code,
-                    token_address=runtime.state.asset_address,
+                    token_address=runtime.config.asset_address,
+                    asset_symbol=runtime.config.asset_symbol,
                     vault_symbol=runtime.config.symbol,
                 )
                 if asset_price is None:
@@ -547,7 +583,7 @@ class EulerV2Adapter:
                             market_ref=market_ref,
                             payload_json={
                                 "symbol": runtime.config.symbol,
-                                "asset": runtime.state.asset_address,
+                                "asset": canonical_address(runtime.config.asset_address),
                             },
                         )
                     )

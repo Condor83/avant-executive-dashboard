@@ -59,6 +59,9 @@ def _config() -> MarketsConfig:
                         {
                             "address": "0x37ca03ad51b8ff79aad35fadacba4cedf0c3e74e",
                             "symbol": "eUSDC",
+                            "asset_address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+                            "asset_symbol": "USDC",
+                            "asset_decimals": 6,
                         }
                     ],
                 }
@@ -97,3 +100,31 @@ def test_euler_invariants_hold() -> None:
 
     for market_row in markets:
         assert Decimal("0") <= market_row.utilization <= Decimal("1.5")
+
+
+def test_euler_asset_mismatch_uses_configured_pricing_surface() -> None:
+    payload = _config().model_dump()
+    payload["euler_v2"]["avalanche"]["vaults"][0]["asset_address"] = (
+        "0x00000000000000000000000000000000000000a1"
+    )
+    payload["euler_v2"]["avalanche"]["vaults"][0]["asset_symbol"] = "AUSD"
+    cfg = MarketsConfig.model_validate(payload)
+
+    adapter = EulerV2Adapter(markets_config=cfg, rpc_client=FakeEulerClient())
+    as_of = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+    prices = {
+        ("avalanche", "0x00000000000000000000000000000000000000a1"): Decimal("1"),
+        ("avalanche", "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"): Decimal("1"),
+    }
+
+    positions, position_issues = adapter.collect_positions(
+        as_of_ts_utc=as_of, prices_by_token=prices
+    )
+    markets, market_issues = adapter.collect_markets(as_of_ts_utc=as_of, prices_by_token=prices)
+
+    assert positions
+    assert markets
+    assert any(issue.error_type == "euler_asset_mismatch" for issue in position_issues)
+    assert any(issue.error_type == "euler_asset_mismatch" for issue in market_issues)
+    assert not any(issue.error_type == "price_missing" for issue in position_issues)
+    assert not any(issue.error_type == "price_missing" for issue in market_issues)

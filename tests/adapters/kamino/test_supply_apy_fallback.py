@@ -110,6 +110,41 @@ def _kamino_markets_with_fallback() -> MarketsConfig:
     )
 
 
+def _kamino_markets_with_token_expectations() -> MarketsConfig:
+    return MarketsConfig.model_validate(
+        {
+            "aave_v3": {},
+            "morpho": {},
+            "euler_v2": {},
+            "dolomite": {},
+            "kamino": {
+                "solana": {
+                    "wallets": ["29KnJ9mtSMbxAFExns4H8e5Tv9AqSb1Qazy1HhHdUbNH"],
+                    "markets": [
+                        {
+                            "market_pubkey": "6WEGfej9B9wjxRs6t4BYpb9iCXd8CpTpJ8fVSNzHCC5y",
+                            "name": "Maple Market",
+                            "defillama_pool_id": "43641cf5-a92e-416b-bce9-27113d3c0db6",
+                            "supply_token": {
+                                "symbol": "syrupUSDC",
+                                "mint": "AvZZF1YaZDziPY2RCK4oJrRVrbN3mTD9NL24hPeaZeUj",
+                                "decimals": 6,
+                            },
+                            "borrow_token": {
+                                "symbol": "PYUSD",
+                                "mint": "2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+                                "decimals": 6,
+                            },
+                        }
+                    ],
+                }
+            },
+            "zest": {},
+            "wallet_balances": {},
+        }
+    )
+
+
 def test_position_supply_apy_uses_defillama_fallback_for_zero_yield_collateral() -> None:
     adapter = KaminoAdapter(
         markets_config=_kamino_markets_with_fallback(),
@@ -130,3 +165,22 @@ def test_position_supply_apy_uses_defillama_fallback_for_zero_yield_collateral()
     # Weighted borrow APY from PYUSD borrow reserve.
     assert positions[0].borrow_apy == Decimal("0.07")
     assert positions[0].equity_usd == positions[0].supplied_usd - positions[0].borrowed_usd
+
+
+def test_collect_positions_flags_multi_supply_token_when_configured() -> None:
+    adapter = KaminoAdapter(
+        markets_config=_kamino_markets_with_token_expectations(),
+        client=_StubKaminoClient(),
+        yield_oracle=_StubYieldOracle(apy=Decimal("0.08")),
+    )
+
+    positions, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 3, 0, 0, tzinfo=UTC),
+        prices_by_token={},
+    )
+
+    assert len(positions) == 1
+    issue_types = {issue.error_type for issue in issues}
+    assert "kamino_multi_supply_token" in issue_types
+    assert "kamino_supply_token_mismatch" not in issue_types
+    assert "kamino_borrow_token_mismatch" not in issue_types

@@ -50,7 +50,14 @@ Current Morpho collateral carry policy:
 #### Euler v2
 - chain config includes:
   - wallets list
-  - `vaults` list with vault address and symbol
+  - `vaults` list with:
+    - vault `address` + `symbol`
+    - underlying `asset_address` + `asset_symbol` + `asset_decimals`
+
+Euler pricing policy:
+- Euler position/market USD valuation uses the configured underlying asset metadata.
+- Adapter still reads on-chain `asset()` and decimals for validation.
+- If config asset metadata differs from on-chain reads, adapter emits `euler_asset_mismatch` data-quality issues.
 
 Current caveat:
 - Adapter currently treats each configured vault as the primary surface and reads both supply (`balanceOf`/`convertToAssets`) and borrow (`debtOf`) from that vault.
@@ -61,6 +68,21 @@ Current caveat:
   - margin contract address
   - wallets list
   - markets list with numeric market ids and decimals
+
+#### Kamino (Solana)
+- chain config includes:
+  - wallets list
+  - markets list with:
+    - `market_pubkey`
+    - display `name`
+    - optional `defillama_pool_id`
+    - optional `supply_token` block: `symbol`, `mint`, `decimals`
+    - optional `borrow_token` block: `symbol`, `mint`, `decimals`
+
+Kamino token normalization policy:
+- when configured, `supply_token` is seeded as `markets.collateral_token_id`
+- when configured, `borrow_token` is seeded as `markets.base_asset_token_id`
+- this keeps dual-token markets aligned with Morpho semantics for downstream reporting
 
 #### Zest (Stacks)
 - chain config includes:

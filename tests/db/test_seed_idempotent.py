@@ -68,5 +68,23 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
             )
         ).scalar_one()
 
+        kamino_maple_market = session.execute(
+            select(Market)
+            .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+            .join(Chain, Chain.chain_id == Market.chain_id)
+            .where(Protocol.protocol_code == "kamino")
+            .where(Chain.chain_code == "solana")
+            .where(Market.market_address == "6WEGfej9B9wjxRs6t4BYpb9iCXd8CpTpJ8fVSNzHCC5y")
+        ).scalar_one()
+        assert kamino_maple_market.collateral_token_id is not None
+        assert kamino_maple_market.base_asset_token_id is not None
+
+        base_token = session.get(Token, kamino_maple_market.base_asset_token_id)
+        collateral_token = session.get(Token, kamino_maple_market.collateral_token_id)
+        assert base_token is not None
+        assert collateral_token is not None
+        assert base_token.symbol == "PYUSD"
+        assert collateral_token.symbol == "syrupUSDC"
+
     assert first_counts == second_counts
     assert wallet_map_count == distinct_wallets

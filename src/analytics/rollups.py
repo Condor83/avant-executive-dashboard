@@ -7,10 +7,11 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
+from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
-from analytics.yield_engine import METHOD_APY_PRORATED_SOD_EOD
+from analytics.yield_engine import METHOD_APY_PRORATED_SOD_EOD, compute_roe_breakdown
 from core.db.models import YieldDaily
 
 ZERO = Decimal("0")
@@ -25,6 +26,11 @@ class RollupMetrics:
     strategy_fee_usd: Decimal
     avant_gop_usd: Decimal
     net_yield_usd: Decimal
+    avg_equity_usd: Decimal
+    gross_roe: Decimal | None
+    post_strategy_fee_roe: Decimal | None
+    net_roe: Decimal | None
+    avant_gop_roe: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,11 @@ def compute_window_rollups(
                 strategy_fee_usd=ZERO,
                 avant_gop_usd=ZERO,
                 net_yield_usd=ZERO,
+                avg_equity_usd=ZERO,
+                gross_roe=None,
+                post_strategy_fee_roe=None,
+                net_roe=None,
+                avant_gop_roe=None,
             ),
         )
 
@@ -108,13 +119,26 @@ def compute_window_rollups(
             func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+            func.coalesce(func.sum(YieldDaily.avg_equity_usd), ZERO),
         ).where(*filters)
     ).one()
+    total_roe = compute_roe_breakdown(
+        gross_yield_usd=total_row[0],
+        strategy_fee_usd=total_row[1],
+        net_yield_usd=total_row[3],
+        avant_gop_usd=total_row[2],
+        avg_equity_usd=total_row[4],
+    )
     total = RollupMetrics(
         gross_yield_usd=total_row[0],
         strategy_fee_usd=total_row[1],
         avant_gop_usd=total_row[2],
         net_yield_usd=total_row[3],
+        avg_equity_usd=total_roe.avg_equity_usd,
+        gross_roe=total_roe.gross_roe,
+        post_strategy_fee_roe=total_roe.post_strategy_fee_roe,
+        net_roe=total_roe.net_roe,
+        avant_gop_roe=total_roe.avant_gop_roe,
     )
 
     return WindowRollups(
@@ -140,6 +164,7 @@ def _query_wallet_rollups(
             func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+            func.coalesce(func.sum(YieldDaily.avg_equity_usd), ZERO),
         )
         .where(*filters)
         .where(YieldDaily.wallet_id.is_not(None))
@@ -147,18 +172,7 @@ def _query_wallet_rollups(
         .order_by(YieldDaily.wallet_id.asc())
     ).all()
 
-    return [
-        GroupRollup(
-            entity_id=row[0],
-            metrics=RollupMetrics(
-                gross_yield_usd=row[1],
-                strategy_fee_usd=row[2],
-                avant_gop_usd=row[3],
-                net_yield_usd=row[4],
-            ),
-        )
-        for row in rows
-    ]
+    return [GroupRollup(entity_id=row[0], metrics=_build_metrics_from_row(row)) for row in rows]
 
 
 def _query_product_rollups(
@@ -173,6 +187,7 @@ def _query_product_rollups(
             func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+            func.coalesce(func.sum(YieldDaily.avg_equity_usd), ZERO),
         )
         .where(*filters)
         .where(YieldDaily.product_id.is_not(None))
@@ -180,18 +195,7 @@ def _query_product_rollups(
         .order_by(YieldDaily.product_id.asc())
     ).all()
 
-    return [
-        GroupRollup(
-            entity_id=row[0],
-            metrics=RollupMetrics(
-                gross_yield_usd=row[1],
-                strategy_fee_usd=row[2],
-                avant_gop_usd=row[3],
-                net_yield_usd=row[4],
-            ),
-        )
-        for row in rows
-    ]
+    return [GroupRollup(entity_id=row[0], metrics=_build_metrics_from_row(row)) for row in rows]
 
 
 def _query_protocol_rollups(
@@ -206,6 +210,7 @@ def _query_protocol_rollups(
             func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
             func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+            func.coalesce(func.sum(YieldDaily.avg_equity_usd), ZERO),
         )
         .where(*filters)
         .where(YieldDaily.protocol_id.is_not(None))
@@ -213,15 +218,28 @@ def _query_protocol_rollups(
         .order_by(YieldDaily.protocol_id.asc())
     ).all()
 
-    return [
-        GroupRollup(
-            entity_id=row[0],
-            metrics=RollupMetrics(
-                gross_yield_usd=row[1],
-                strategy_fee_usd=row[2],
-                avant_gop_usd=row[3],
-                net_yield_usd=row[4],
-            ),
-        )
-        for row in rows
-    ]
+    return [GroupRollup(entity_id=row[0], metrics=_build_metrics_from_row(row)) for row in rows]
+
+
+def _build_metrics_from_row(
+    row: Row[tuple[int | None, Decimal, Decimal, Decimal, Decimal, Decimal | None]]
+) -> RollupMetrics:
+    avg_equity_usd = row[5] if row[5] is not None else ZERO
+    roe = compute_roe_breakdown(
+        gross_yield_usd=row[1],
+        strategy_fee_usd=row[2],
+        net_yield_usd=row[4],
+        avant_gop_usd=row[3],
+        avg_equity_usd=avg_equity_usd,
+    )
+    return RollupMetrics(
+        gross_yield_usd=row[1],
+        strategy_fee_usd=row[2],
+        avant_gop_usd=row[3],
+        net_yield_usd=row[4],
+        avg_equity_usd=roe.avg_equity_usd,
+        gross_roe=roe.gross_roe,
+        post_strategy_fee_roe=roe.post_strategy_fee_roe,
+        net_roe=roe.net_roe,
+        avant_gop_roe=roe.avant_gop_roe,
+    )

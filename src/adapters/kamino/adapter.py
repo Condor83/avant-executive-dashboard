@@ -446,6 +446,21 @@ class KaminoAdapter:
             return None
         return weighted_sum / total_weight
 
+    @staticmethod
+    def _non_zero_reserve_symbols(
+        reserve_values: dict[str, Decimal],
+        reserve_rates: dict[str, KaminoReserveRate],
+    ) -> set[str]:
+        symbols: set[str] = set()
+        for reserve_ref, weight in reserve_values.items():
+            if weight <= 0:
+                continue
+            rate_row = reserve_rates.get(reserve_ref)
+            if rate_row is None or not rate_row.liquidity_token:
+                continue
+            symbols.add(rate_row.liquidity_token)
+        return symbols
+
     def collect_positions(
         self,
         *,
@@ -522,6 +537,99 @@ class KaminoAdapter:
                     for obligation in obligations:
                         if obligation.supplied_usd == 0 and obligation.borrowed_usd == 0:
                             continue
+
+                        observed_supply_symbols = self._non_zero_reserve_symbols(
+                            obligation.deposit_reserve_values,
+                            market_rates.reserve_rates,
+                        )
+                        observed_borrow_symbols = self._non_zero_reserve_symbols(
+                            obligation.borrow_reserve_values,
+                            market_rates.reserve_rates,
+                        )
+                        if market.supply_token is not None and len(observed_supply_symbols) > 1:
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="kamino_multi_supply_token",
+                                    error_message=(
+                                        "obligation has multiple non-zero Kamino supply tokens"
+                                    ),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet,
+                                    market_ref=market_ref,
+                                    payload_json={
+                                        "obligation_ref": obligation.obligation_ref,
+                                        "expected_supply_token": market.supply_token.symbol,
+                                        "observed_supply_tokens": sorted(observed_supply_symbols),
+                                    },
+                                )
+                            )
+                        if (
+                            market.supply_token is not None
+                            and observed_supply_symbols
+                            and market.supply_token.symbol not in observed_supply_symbols
+                        ):
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="kamino_supply_token_mismatch",
+                                    error_message=(
+                                        "configured Kamino supply token differs from obligation"
+                                    ),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet,
+                                    market_ref=market_ref,
+                                    payload_json={
+                                        "obligation_ref": obligation.obligation_ref,
+                                        "expected_supply_token": market.supply_token.symbol,
+                                        "observed_supply_tokens": sorted(observed_supply_symbols),
+                                    },
+                                )
+                            )
+                        if market.borrow_token is not None and len(observed_borrow_symbols) > 1:
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="kamino_multi_borrow_token",
+                                    error_message=(
+                                        "obligation has multiple non-zero Kamino borrow tokens"
+                                    ),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet,
+                                    market_ref=market_ref,
+                                    payload_json={
+                                        "obligation_ref": obligation.obligation_ref,
+                                        "expected_borrow_token": market.borrow_token.symbol,
+                                        "observed_borrow_tokens": sorted(observed_borrow_symbols),
+                                    },
+                                )
+                            )
+                        if (
+                            market.borrow_token is not None
+                            and observed_borrow_symbols
+                            and market.borrow_token.symbol not in observed_borrow_symbols
+                        ):
+                            issues.append(
+                                self._issue(
+                                    as_of_ts_utc=as_of_ts_utc,
+                                    stage="sync_snapshot",
+                                    error_type="kamino_borrow_token_mismatch",
+                                    error_message=(
+                                        "configured Kamino borrow token differs from obligation"
+                                    ),
+                                    chain_code=chain_code,
+                                    wallet_address=wallet,
+                                    market_ref=market_ref,
+                                    payload_json={
+                                        "obligation_ref": obligation.obligation_ref,
+                                        "expected_borrow_token": market.borrow_token.symbol,
+                                        "observed_borrow_tokens": sorted(observed_borrow_symbols),
+                                    },
+                                )
+                            )
 
                         # Kamino obligations can span multiple reserve assets. For canonical market
                         # rows we store aggregated notional values in amount fields.

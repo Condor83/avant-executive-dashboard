@@ -25,6 +25,8 @@ For each protocol adapter:
 - `sync snapshot` writes rows to `position_snapshots`
 - `compute daily` writes rows to `yield_daily`
 - API endpoints return JSON with expected schema
+- `compute boundary-check --date <D>` reports `status=pass` only when exact Denver SOD/EOD snapshots exist
+- In dev/testing, `compute daily --boundary-policy latest_snapshot` may use the latest available snapshot for both SOD/EOD as an approximation; those rows should be treated as non-signoff metrics.
 
 ## External call recording
 
@@ -42,6 +44,9 @@ For each protocol adapter:
 - Timezone boundary correctness (Denver):
   - business_date mapping for UTC timestamps
   - DST regression test
+- ROE denominator policy:
+  - ROE variants are null when avg_equity_usd <= 0
+  - rollup ROE uses ratio-of-sums (not average of row ROEs)
 
 ## “Done” means tests pass in CI
 

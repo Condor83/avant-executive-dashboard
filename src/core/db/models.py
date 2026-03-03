@@ -258,6 +258,11 @@ class YieldDaily(Base):
     strategy_fee_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     avant_gop_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     net_yield_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    avg_equity_usd: Mapped[Decimal | None] = mapped_column(Numeric(38, 18), nullable=True)
+    gross_roe: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    post_strategy_fee_roe: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    net_roe: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    avant_gop_roe: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     method: Mapped[str] = mapped_column(String(64), nullable=False)
     confidence_score: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
 

@@ -50,6 +50,10 @@ This repo uses snapshot-first facts plus derived aggregates.
 - collateral_token_id (nullable)
 - metadata_json (IRM params, caps, etc.)
 
+Token-role convention:
+- single-asset lending markets (for example Aave reserve): `base_asset_token_id` is both supply and borrow token
+- dual-token markets (for example Morpho/Kamino): `base_asset_token_id` = borrow token, `collateral_token_id` = supply/collateral token
+
 ## Facts (append-only)
 
 ### position_snapshots
@@ -110,6 +114,11 @@ One row per market per snapshot time.
 - strategy_fee_usd
 - avant_gop_usd
 - net_yield_usd
+- avg_equity_usd = ((equity_usd_SOD + equity_usd_EOD) / 2) for position rows; rollups use sum of component average equity
+- gross_roe = gross_yield_usd / avg_equity_usd (nullable when avg_equity_usd <= 0)
+- post_strategy_fee_roe = (gross_yield_usd - strategy_fee_usd) / avg_equity_usd (nullable when avg_equity_usd <= 0)
+- net_roe = net_yield_usd / avg_equity_usd (nullable when avg_equity_usd <= 0)
+- avant_gop_roe = avant_gop_usd / avg_equity_usd (nullable when avg_equity_usd <= 0)
 - method: `apy_prorated_sod_eod`
 - confidence_score
 

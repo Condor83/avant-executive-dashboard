@@ -31,6 +31,23 @@ For each position and each day:
 
 > Note: APY moves intraday. MVP approximates with SOD + EOD rates; production can add time-weighted rate sampling.
 
+### ROE definition (strategy)
+
+ROE uses average deployed equity as denominator:
+
+- equity_usd_SOD = supply_usd_SOD - borrow_usd_SOD
+- equity_usd_EOD = supply_usd_EOD - borrow_usd_EOD
+- avg_equity_usd = (equity_usd_SOD + equity_usd_EOD) / 2
+
+Daily ROE variants:
+
+- gross_roe = gross_yield_usd / avg_equity_usd
+- post_strategy_fee_roe = (gross_yield_usd - strategy_fee_usd) / avg_equity_usd
+- net_roe = net_yield_usd / avg_equity_usd
+- avant_gop_roe = avant_gop_usd / avg_equity_usd
+
+When `avg_equity_usd <= 0`, ROE values are null.
+
 ### Aave USDe/sUSDe loop policy (current)
 
 - For Aave loops that use `USDe` + `sUSDe` collateral, external campaign yield (Merkl) is modeled as `reward_apy`, not by overwriting `supply_apy`.
