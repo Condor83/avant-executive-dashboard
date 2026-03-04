@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -10,16 +11,19 @@ from typing import Protocol
 
 import typer
 import yaml
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
 from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
+from adapters.etherex import EtherexAdapter, EvmRpcEtherexClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.kamino import KaminoAdapter, KaminoApiClient
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
 from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.spark import EvmRpcSparkClient, SparkAdapter
+from adapters.stakedao import EvmRpcStakedaoClient, StakedaoAdapter
+from adapters.traderjoe_lp import EvmRpcTraderJoeLpClient, TraderJoeLpAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from analytics.rollups import compute_window_rollups
@@ -41,7 +45,7 @@ from core.customer_cohort import (
     minimum_balance_raw_for_usd_threshold,
     rpc_contract_addresses,
 )
-from core.db.models import YieldDaily
+from core.db.models import Market, PositionSnapshot, YieldDaily
 from core.db.session import get_engine
 from core.debank_cloud import DebankCloudClient
 from core.debank_coverage import run_debank_coverage_audit, serialize_audit_result
@@ -236,6 +240,18 @@ def _build_runner(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    traderjoe_client = EvmRpcTraderJoeLpClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    stakedao_client = EvmRpcStakedaoClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    etherex_client = EvmRpcEtherexClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
     yield_oracle = DefiLlamaYieldOracle(
         base_url=settings.defillama_yields_base_url,
         timeout_seconds=settings.request_timeout_seconds,
@@ -266,6 +282,18 @@ def _build_runner(
     )
     euler_adapter = EulerV2Adapter(markets_config=markets_config, rpc_client=euler_client)
     dolomite_adapter = DolomiteAdapter(markets_config=markets_config, rpc_client=dolomite_client)
+    traderjoe_adapter = TraderJoeLpAdapter(
+        markets_config=markets_config,
+        rpc_client=traderjoe_client,
+    )
+    stakedao_adapter = StakedaoAdapter(
+        markets_config=markets_config,
+        rpc_client=stakedao_client,
+    )
+    etherex_adapter = EtherexAdapter(
+        markets_config=markets_config,
+        rpc_client=etherex_client,
+    )
     kamino_client = KaminoApiClient(
         base_url=settings.kamino_api_base_url,
         timeout_seconds=settings.request_timeout_seconds,
@@ -295,6 +323,7 @@ def _build_runner(
         consumer_markets_config=consumer_markets_config,
         client=silo_client,
         top_holders_limit=settings.silo_top_holders_limit,
+        include_strategy_wallets=True,
     )
 
     price_oracle = PriceOracle(
@@ -313,6 +342,9 @@ def _build_runner(
             morpho_adapter,
             euler_adapter,
             dolomite_adapter,
+            traderjoe_adapter,
+            stakedao_adapter,
+            etherex_adapter,
             kamino_adapter,
             zest_adapter,
             silo_adapter,
@@ -335,6 +367,9 @@ def _build_runner(
         morpho_client,
         euler_client,
         dolomite_client,
+        traderjoe_client,
+        stakedao_client,
+        etherex_client,
         kamino_client,
         stacks_client,
         zest_client,
@@ -926,6 +961,84 @@ def compute_boundary_check(target_date: str = DATE_OPTION) -> None:
         f" used_sod_fallback={result.used_sod_fallback}"
         f" used_eod_fallback={result.used_eod_fallback}"
     )
+
+
+@compute_app.command("capital-buckets")
+def compute_capital_buckets(as_of: str | None = AS_OF_OPTION) -> None:
+    """Summarize latest snapshot capital by bucket (strategy/ops/pending deployment)."""
+
+    session = Session(get_engine())
+    try:
+        if as_of is None:
+            as_of_ts_utc = session.scalar(select(func.max(PositionSnapshot.as_of_ts_utc)))
+            if as_of_ts_utc is None:
+                raise typer.BadParameter("position_snapshots table is empty")
+        else:
+            requested = _parse_as_of(as_of)
+            as_of_ts_utc = session.scalar(
+                select(func.max(PositionSnapshot.as_of_ts_utc)).where(
+                    PositionSnapshot.as_of_ts_utc <= requested
+                )
+            )
+            if as_of_ts_utc is None:
+                raise typer.BadParameter(
+                    f"no position snapshots found at or before {requested.isoformat()}"
+                )
+
+        rows = session.execute(
+            select(
+                PositionSnapshot.supplied_usd,
+                PositionSnapshot.borrowed_usd,
+                PositionSnapshot.equity_usd,
+                Market.metadata_json,
+            )
+            .join(Market, Market.market_id == PositionSnapshot.market_id)
+            .where(PositionSnapshot.as_of_ts_utc == as_of_ts_utc)
+        ).all()
+    finally:
+        session.close()
+
+    totals_by_bucket: dict[str, dict[str, Decimal | int]] = defaultdict(
+        lambda: {
+            "supplied_usd": Decimal("0"),
+            "borrowed_usd": Decimal("0"),
+            "equity_usd": Decimal("0"),
+            "positions": 0,
+        }
+    )
+    for supplied_usd, borrowed_usd, equity_usd, metadata_json in rows:
+        bucket = "strategy_deployed"
+        if isinstance(metadata_json, dict):
+            raw_bucket = metadata_json.get("capital_bucket")
+            if isinstance(raw_bucket, str) and raw_bucket.strip():
+                bucket = raw_bucket.strip()
+
+        bucket_totals = totals_by_bucket[bucket]
+        bucket_totals["supplied_usd"] = Decimal(bucket_totals["supplied_usd"]) + supplied_usd
+        bucket_totals["borrowed_usd"] = Decimal(bucket_totals["borrowed_usd"]) + borrowed_usd
+        bucket_totals["equity_usd"] = Decimal(bucket_totals["equity_usd"]) + equity_usd
+        bucket_totals["positions"] = int(bucket_totals["positions"]) + 1
+
+    for bucket in ("strategy_deployed", "pending_deployment", "market_stability_ops"):
+        totals_by_bucket.setdefault(
+            bucket,
+            {
+                "supplied_usd": Decimal("0"),
+                "borrowed_usd": Decimal("0"),
+                "equity_usd": Decimal("0"),
+                "positions": 0,
+            },
+        )
+
+    typer.echo(f"compute capital-buckets as_of={as_of_ts_utc.isoformat()}")
+    for bucket in sorted(totals_by_bucket):
+        bucket_totals = totals_by_bucket[bucket]
+        typer.echo(
+            f"{bucket}\tpositions={bucket_totals['positions']}"
+            f"\tsupplied_usd={Decimal(bucket_totals['supplied_usd']):.2f}"
+            f"\tborrowed_usd={Decimal(bucket_totals['borrowed_usd']):.2f}"
+            f"\tequity_usd={Decimal(bucket_totals['equity_usd']):.2f}"
+        )
 
 
 @compute_app.command("rollups")

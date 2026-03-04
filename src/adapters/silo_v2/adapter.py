@@ -438,12 +438,15 @@ class SiloV2Adapter:
         consumer_markets_config: ConsumerMarketsConfig,
         client: SiloClient,
         top_holders_limit: int = 50,
+        include_strategy_wallets: bool = False,
     ) -> None:
         self.markets_config = markets_config
         self.consumer_markets_config = consumer_markets_config
         self.client = client
         self.top_holders_limit = top_holders_limit
-        self._excluded_wallets = self._collect_excluded_wallets()
+        self._excluded_wallets = (
+            set() if include_strategy_wallets else self._collect_excluded_wallets()
+        )
 
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:

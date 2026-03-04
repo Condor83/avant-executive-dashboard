@@ -1,0 +1,1 @@
+"""Trader Joe adapter tests."""

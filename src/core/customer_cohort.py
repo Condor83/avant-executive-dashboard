@@ -144,6 +144,9 @@ def collect_strategy_wallets(
         markets_config.kamino,
         markets_config.zest,
         markets_config.wallet_balances,
+        markets_config.traderjoe_lp,
+        markets_config.stakedao,
+        markets_config.etherex,
     )
     for group in wallet_groups:
         for chain_config in group.values():

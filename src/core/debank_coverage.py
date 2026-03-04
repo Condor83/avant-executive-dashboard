@@ -47,8 +47,11 @@ PROTOCOL_ALIASES: dict[str, str] = {
     "avax_silo": "silo_v2",
     "base_aave3": "aave_v3",
     "bera_dolomite": "dolomite",
+    "avax_traderjoexyz": "traderjoe_lp",
     "bera_euler2": "euler_v2",
     "dolomite": "dolomite",
+    "etherex": "etherex",
+    "etherexfi": "etherex",
     "euler2": "euler_v2",
     "euler_v2": "euler_v2",
     "eulerv2": "euler_v2",
@@ -59,11 +62,48 @@ PROTOCOL_ALIASES: dict[str, str] = {
     "morphoblue": "morpho",
     "plasma_aave3": "aave_v3",
     "spark": "spark",
+    "stakedao": "stakedao",
+    "traderjoexyz": "traderjoe_lp",
+    "traderjoe": "traderjoe_lp",
     "silo": "silo_v2",
+    "linea_etherexfi": "etherex",
     "zest": "zest",
 }
 
 TOKEN_CANONICALIZATION_MAX_RELATIVE_DELTA = Decimal("0.05")
+NON_CONFIG_TOKEN_CANONICALIZATION_MAX_RELATIVE_DELTA = Decimal("0.60")
+TOKEN_EQUIVALENCE_MAX_RELATIVE_DELTA = Decimal("0.10")
+
+TOKEN_EQUIVALENCE_GROUPS: tuple[set[str], ...] = (
+    {"ETH", "WETH", "WEETH"},
+    {"USDE", "SUSDE"},
+    {"AVUSD", "SAVUSD"},
+    {"AVBTC", "SAVBTC"},
+    {"AVETH", "SAVETH"},
+)
+
+# Known DeBank semantic mismatches that should not be treated as open ingest gaps.
+# These are wallet/chain/protocol/leg/token specific until upstream classification is fixed.
+MANUALLY_RESOLVED_DEBANK_LEGS: set[tuple[str, str, str, str, str]] = {
+    (
+        "0x920eefbcf1f5756109952e6ff6da1cab950c64d7",
+        "ethereum",
+        "morpho",
+        "supply",
+        "PYUSD",
+    ),
+}
+
+DEBANK_EXCLUDED_REWARD_PROTOCOLS: set[str] = {
+    "avax_merkl",
+    "avax_yieldyak",
+    "arb_merkl",
+    "bsc_solv",
+    "etherfi",
+    "kingprotocol",
+    "merkl",
+    "plasma_merkl",
+}
 
 
 @dataclass(frozen=True)
@@ -249,6 +289,9 @@ def _configured_surface(markets_config: MarketsConfig) -> tuple[set[str], set[st
         markets_config.kamino,
         markets_config.zest,
         markets_config.wallet_balances,
+        markets_config.traderjoe_lp,
+        markets_config.stakedao,
+        markets_config.etherex,
     ):
         configured_chains.update(chain.lower() for chain in section.keys())
 
@@ -267,6 +310,14 @@ def _configured_surface(markets_config: MarketsConfig) -> tuple[set[str], set[st
         configured_protocols.add("kamino")
     if markets_config.zest:
         configured_protocols.add("zest")
+    # Silo v2 strategy surfaces are currently configured via consumer_markets.yaml.
+    configured_protocols.add("silo_v2")
+    if markets_config.traderjoe_lp:
+        configured_protocols.add("traderjoe_lp")
+    if markets_config.stakedao:
+        configured_protocols.add("stakedao")
+    if markets_config.etherex:
+        configured_protocols.add("etherex")
     return configured_chains, configured_protocols
 
 
@@ -320,6 +371,10 @@ def _db_leg_token_symbol(
     supplied_usd: Decimal,
     borrowed_usd: Decimal,
 ) -> str | None:
+    if protocol_code == "dolomite":
+        # Dolomite market rows may not always resolve a base token dimension; fall back to metadata.
+        return _symbol_from_metadata(metadata_json, "symbol") or base_symbol or collateral_symbol
+
     if protocol_code == "morpho":
         if leg_type == "supply":
             if borrowed_usd <= 0:
@@ -365,6 +420,16 @@ def _db_leg_token_symbol(
             or base_symbol
             or collateral_symbol
         )
+
+    if protocol_code == "traderjoe_lp":
+        if leg_type == "supply":
+            return (
+                _symbol_from_metadata(metadata_json, "token_y_symbol")
+                or base_symbol
+                or _symbol_from_metadata(metadata_json, "token_x_symbol")
+                or collateral_symbol
+            )
+        return base_symbol or collateral_symbol
 
     if leg_type == "supply":
         return _symbol_from_metadata(metadata_json, "symbol") or base_symbol or collateral_symbol
@@ -484,6 +549,8 @@ def _flatten_debank_payload_legs(
 
         protocol_id = _to_string(protocol_payload.get("id")) or "unknown"
         protocol_code = normalize_protocol_code(protocol_id)
+        if protocol_code in DEBANK_EXCLUDED_REWARD_PROTOCOLS:
+            continue
 
         portfolio_items = protocol_payload.get("portfolio_item_list")
         if not isinstance(portfolio_items, list):
@@ -587,6 +654,21 @@ def _bucket_key(key: LegKey) -> tuple[str, str, str, str]:
     )
 
 
+def _non_config_bucket_key(key: LegKey) -> tuple[str, str, str]:
+    return (
+        key.wallet_address,
+        key.chain_code,
+        key.leg_type,
+    )
+
+
+def _token_equivalents(symbol: str) -> set[str]:
+    for group in TOKEN_EQUIVALENCE_GROUPS:
+        if symbol in group:
+            return set(group)
+    return {symbol}
+
+
 def _canonicalize_debank_token_keys_to_db(
     *,
     debank_aggregated: dict[LegKey, Decimal],
@@ -639,8 +721,50 @@ def _canonicalize_debank_token_keys_to_db(
                 canonical_key, False
             ) or debank_in_scope.get(debank_key, False)
 
-        # Pass 2: remap unmatched DeBank symbols to nearest unmatched DB symbol in bucket.
+        # Pass 2: remap symbol-equivalent tokens before amount-proximity fallback.
+        remaining: list[tuple[LegKey, Decimal]] = []
         for debank_key, debank_usd in sorted(deferred, key=lambda item: item[1], reverse=True):
+            equivalent_symbols = _token_equivalents(debank_key.token_symbol)
+            equivalent_candidates = [
+                (db_key, db_usd)
+                for db_key, db_usd in db_items
+                if db_key.token_symbol in equivalent_symbols
+                and db_key.token_symbol not in used_db_symbols
+            ]
+            if not equivalent_candidates:
+                remaining.append((debank_key, debank_usd))
+                continue
+
+            best_key: LegKey | None = None
+            best_delta: Decimal | None = None
+            for candidate_key, candidate_usd in equivalent_candidates:
+                delta = abs(candidate_usd - debank_usd)
+                if best_delta is None or delta < best_delta:
+                    best_delta = delta
+                    best_key = candidate_key
+            if best_key is None or best_delta is None:
+                remaining.append((debank_key, debank_usd))
+                continue
+
+            denominator = debank_usd if debank_usd > 0 else Decimal("1")
+            relative_delta = best_delta / denominator
+            allowed_relative_delta = (
+                max_relative_delta
+                if best_key.token_symbol == debank_key.token_symbol
+                else TOKEN_EQUIVALENCE_MAX_RELATIVE_DELTA
+            )
+            if relative_delta > allowed_relative_delta:
+                remaining.append((debank_key, debank_usd))
+                continue
+
+            used_db_symbols.add(best_key.token_symbol)
+            canonicalized[best_key] += debank_usd
+            canonicalized_in_scope[best_key] = canonicalized_in_scope.get(
+                best_key, False
+            ) or debank_in_scope.get(debank_key, False)
+
+        # Pass 3: remap unmatched DeBank symbols to nearest unmatched DB symbol in bucket.
+        for debank_key, debank_usd in sorted(remaining, key=lambda item: item[1], reverse=True):
             candidates = [
                 (db_key, db_usd)
                 for db_key, db_usd in db_items
@@ -653,15 +777,15 @@ def _canonicalize_debank_token_keys_to_db(
                 ) or debank_in_scope.get(debank_key, False)
                 continue
 
-            best_key: LegKey | None = None
-            best_delta: Decimal | None = None
+            best_key_fallback: LegKey | None = None
+            best_delta_fallback: Decimal | None = None
             for candidate_key, candidate_usd in candidates:
                 delta = abs(candidate_usd - debank_usd)
-                if best_delta is None or delta < best_delta:
-                    best_delta = delta
-                    best_key = candidate_key
+                if best_delta_fallback is None or delta < best_delta_fallback:
+                    best_delta_fallback = delta
+                    best_key_fallback = candidate_key
 
-            if best_key is None or best_delta is None:
+            if best_key_fallback is None or best_delta_fallback is None:
                 canonicalized[debank_key] += debank_usd
                 canonicalized_in_scope[debank_key] = canonicalized_in_scope.get(
                     debank_key, False
@@ -669,12 +793,12 @@ def _canonicalize_debank_token_keys_to_db(
                 continue
 
             denominator = debank_usd if debank_usd > 0 else Decimal("1")
-            relative_delta = best_delta / denominator
+            relative_delta = best_delta_fallback / denominator
             if relative_delta <= max_relative_delta:
-                used_db_symbols.add(best_key.token_symbol)
-                canonicalized[best_key] += debank_usd
-                canonicalized_in_scope[best_key] = canonicalized_in_scope.get(
-                    best_key, False
+                used_db_symbols.add(best_key_fallback.token_symbol)
+                canonicalized[best_key_fallback] += debank_usd
+                canonicalized_in_scope[best_key_fallback] = canonicalized_in_scope.get(
+                    best_key_fallback, False
                 ) or debank_in_scope.get(debank_key, False)
             else:
                 canonicalized[debank_key] += debank_usd
@@ -685,10 +809,90 @@ def _canonicalize_debank_token_keys_to_db(
     return dict(canonicalized), canonicalized_in_scope
 
 
+def _canonicalize_non_config_cross_protocol(
+    *,
+    debank_canonicalized: dict[LegKey, Decimal],
+    debank_in_scope: dict[LegKey, bool],
+    db_aggregated: dict[LegKey, Decimal],
+    max_relative_delta: Decimal = NON_CONFIG_TOKEN_CANONICALIZATION_MAX_RELATIVE_DELTA,
+) -> tuple[dict[LegKey, Decimal], dict[LegKey, bool]]:
+    """Remap unmatched non-config legs across protocols with strict token equivalence."""
+
+    if max_relative_delta < 0:
+        raise ValueError("max_relative_delta must be non-negative")
+
+    db_by_bucket: dict[tuple[str, str, str], list[tuple[LegKey, Decimal]]] = defaultdict(list)
+    for db_key, db_usd in db_aggregated.items():
+        db_by_bucket[_non_config_bucket_key(db_key)].append((db_key, db_usd))
+
+    remapped: dict[LegKey, Decimal] = defaultdict(lambda: Decimal("0"))
+    remapped_in_scope: dict[LegKey, bool] = {}
+
+    used_db_keys: set[LegKey] = {key for key in debank_canonicalized if key in db_aggregated}
+
+    for debank_key, debank_usd in sorted(
+        debank_canonicalized.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    ):
+        in_scope = debank_in_scope.get(debank_key, False)
+        if in_scope or debank_key in db_aggregated:
+            remapped[debank_key] += debank_usd
+            remapped_in_scope[debank_key] = remapped_in_scope.get(debank_key, False) or in_scope
+            continue
+
+        candidates = [
+            (db_key, db_usd)
+            for db_key, db_usd in db_by_bucket.get(_non_config_bucket_key(debank_key), [])
+            if db_key not in used_db_keys
+            and db_key.token_symbol in _token_equivalents(debank_key.token_symbol)
+        ]
+        if not candidates:
+            remapped[debank_key] += debank_usd
+            remapped_in_scope[debank_key] = remapped_in_scope.get(debank_key, False) or in_scope
+            continue
+
+        best_key: LegKey | None = None
+        best_delta: Decimal | None = None
+        for candidate_key, candidate_usd in candidates:
+            delta = abs(candidate_usd - debank_usd)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_key = candidate_key
+
+        if best_key is None or best_delta is None:
+            remapped[debank_key] += debank_usd
+            remapped_in_scope[debank_key] = remapped_in_scope.get(debank_key, False) or in_scope
+            continue
+
+        denominator = debank_usd if debank_usd > 0 else Decimal("1")
+        relative_delta = best_delta / denominator
+        if relative_delta > max_relative_delta:
+            remapped[debank_key] += debank_usd
+            remapped_in_scope[debank_key] = remapped_in_scope.get(debank_key, False) or in_scope
+            continue
+
+        used_db_keys.add(best_key)
+        remapped[best_key] += debank_usd
+        remapped_in_scope[best_key] = remapped_in_scope.get(best_key, False) or in_scope
+
+    return dict(remapped), remapped_in_scope
+
+
 def _percent(numerator: Decimal, denominator: Decimal) -> Decimal:
     if denominator <= 0:
         return Decimal("0")
     return (numerator / denominator) * Decimal("100")
+
+
+def _is_manually_resolved_debank_leg(key: LegKey) -> bool:
+    return (
+        key.wallet_address,
+        key.chain_code,
+        key.protocol_code,
+        key.leg_type,
+        key.token_symbol,
+    ) in MANUALLY_RESOLVED_DEBANK_LEGS
 
 
 def _build_totals(rows: list[LegMatchRow]) -> CoverageTotals:
@@ -807,9 +1011,17 @@ def run_debank_coverage_audit(
         debank_in_scope=debank_in_scope,
         db_aggregated=db_aggregated,
     )
+    debank_canonicalized, debank_canonicalized_in_scope = _canonicalize_non_config_cross_protocol(
+        debank_canonicalized=debank_canonicalized,
+        debank_in_scope=debank_canonicalized_in_scope,
+        db_aggregated=db_aggregated,
+    )
 
     matches: list[LegMatchRow] = []
     for key, debank_usd in debank_canonicalized.items():
+        if _is_manually_resolved_debank_leg(key):
+            continue
+
         db_usd = db_aggregated.get(key)
         if db_usd is None:
             matches.append(

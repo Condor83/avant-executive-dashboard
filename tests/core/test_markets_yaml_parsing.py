@@ -19,6 +19,9 @@ def test_markets_yaml_has_expected_protocol_keys() -> None:
         "kamino",
         "zest",
         "wallet_balances",
+        "traderjoe_lp",
+        "stakedao",
+        "etherex",
     }
 
 
@@ -46,12 +49,12 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert morpho_market.loan_decimals >= 0
 
     for euler_chain in markets.euler_v2.values():
-        for vault in euler_chain.vaults:
-            assert vault.address
-            assert vault.symbol
-            assert vault.asset_address
-            assert vault.asset_symbol
-            assert vault.asset_decimals >= 0
+        for euler_vault in euler_chain.vaults:
+            assert euler_vault.address
+            assert euler_vault.symbol
+            assert euler_vault.asset_address
+            assert euler_vault.asset_symbol
+            assert euler_vault.asset_decimals >= 0
 
     for dolomite_chain in markets.dolomite.values():
         assert dolomite_chain.margin
@@ -80,3 +83,39 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert token.symbol
             assert token.address
             assert token.decimals >= 0
+
+    for traderjoe_chain in markets.traderjoe_lp.values():
+        for traderjoe_pool in traderjoe_chain.pools:
+            assert traderjoe_pool.pool_address
+            assert traderjoe_pool.pool_type
+            assert traderjoe_pool.token_x_address
+            assert traderjoe_pool.token_x_symbol
+            assert traderjoe_pool.token_x_decimals >= 0
+            assert traderjoe_pool.token_y_address
+            assert traderjoe_pool.token_y_symbol
+            assert traderjoe_pool.token_y_decimals >= 0
+            assert traderjoe_pool.bin_ids
+
+    for stakedao_chain in markets.stakedao.values():
+        for stakedao_vault in stakedao_chain.vaults:
+            assert stakedao_vault.vault_address
+            assert stakedao_vault.asset_address
+            assert stakedao_vault.asset_decimals >= 0
+            assert stakedao_vault.underlyings
+            for underlying in stakedao_vault.underlyings:
+                assert underlying.symbol
+                assert underlying.address
+                assert underlying.decimals >= 0
+                assert underlying.pool_index >= 0
+
+    for etherex_chain in markets.etherex.values():
+        for etherex_pool in etherex_chain.pools:
+            assert etherex_pool.pool_address
+            assert etherex_pool.position_manager_address
+            assert etherex_pool.token0_address
+            assert etherex_pool.token0_symbol
+            assert etherex_pool.token0_decimals >= 0
+            assert etherex_pool.token1_address
+            assert etherex_pool.token1_symbol
+            assert etherex_pool.token1_decimals >= 0
+            assert etherex_pool.fee >= 0

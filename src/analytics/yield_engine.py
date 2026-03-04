@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import delete, func, select
@@ -137,6 +138,24 @@ class RoeBreakdown:
     post_strategy_fee_roe: Decimal | None
     net_roe: Decimal | None
     avant_gop_roe: Decimal | None
+
+
+def _metadata_bool(metadata_json: object, key: str, *, default: bool) -> bool:
+    if not isinstance(metadata_json, dict):
+        return default
+    value = metadata_json.get(key)
+    if isinstance(value, bool):
+        return value
+    return default
+
+
+def _capital_bucket(metadata_json: object) -> str:
+    if not isinstance(metadata_json, dict):
+        return "strategy_deployed"
+    value = metadata_json.get("capital_bucket")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "strategy_deployed"
 
 
 def denver_business_bounds_utc(business_date: date) -> tuple[datetime, datetime]:
@@ -577,15 +596,20 @@ class YieldEngine:
                 select(WalletProductMap.wallet_id, WalletProductMap.product_id)
             ).all()
         }
-        market_to_protocol: dict[int, int] = {
-            market_id: protocol_id
-            for market_id, protocol_id in self.session.execute(
-                select(Market.market_id, Market.protocol_id)
-            ).all()
-        }
+        market_rows = self.session.execute(
+            select(Market.market_id, Market.protocol_id, Market.metadata_json)
+        ).all()
+        market_to_protocol: dict[int, int] = {}
+        market_metadata_by_id: dict[int, dict[str, Any] | None] = {}
+        for market_id, protocol_id, metadata_json in market_rows:
+            market_to_protocol[market_id] = protocol_id
+            market_metadata_by_id[market_id] = (
+                metadata_json if isinstance(metadata_json, dict) else None
+            )
 
         missing_product_wallets: set[int] = set()
         missing_protocol_markets: set[int] = set()
+        excluded_positions_by_bucket: defaultdict[str, int] = defaultdict(int)
 
         rows: list[YieldDailyRow] = []
         for position_key in sorted(set(sod_rows) | set(eod_rows)):
@@ -597,6 +621,12 @@ class YieldEngine:
 
             wallet_id = base_point.wallet_id
             market_id = base_point.market_id
+            market_metadata = market_metadata_by_id.get(market_id)
+            include_in_yield = _metadata_bool(market_metadata, "include_in_yield", default=True)
+            if not include_in_yield:
+                excluded_positions_by_bucket[_capital_bucket(market_metadata)] += 1
+                continue
+
             product_id = wallet_to_product.get(wallet_id)
             protocol_id = market_to_protocol.get(market_id)
 
@@ -678,6 +708,20 @@ class YieldEngine:
                         if sod and eod and has_distinct_boundaries
                         else PARTIAL_CONFIDENCE
                     ),
+                )
+            )
+
+        for bucket, count in sorted(excluded_positions_by_bucket.items()):
+            issues.append(
+                self._build_issue(
+                    as_of_ts_utc=business_start_utc,
+                    error_type="position_excluded_from_yield",
+                    error_message="positions excluded from yield computation by market metadata",
+                    payload_json={
+                        "business_date": business_date.isoformat(),
+                        "capital_bucket": bucket,
+                        "excluded_positions": count,
+                    },
                 )
             )
         return rows

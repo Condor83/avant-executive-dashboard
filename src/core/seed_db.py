@@ -134,6 +134,9 @@ def _collect_chain_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig
         markets.kamino,
         markets.zest,
         markets.wallet_balances,
+        markets.traderjoe_lp,
+        markets.stakedao,
+        markets.etherex,
     ):
         chains.update(section.keys())
     for market in consumer.markets:
@@ -151,6 +154,9 @@ def _collect_protocol_codes(markets: MarketsConfig, consumer: ConsumerMarketsCon
         "kamino",
         "zest",
         "wallet_balances",
+        "traderjoe_lp",
+        "stakedao",
+        "etherex",
     }
     for market in consumer.markets:
         protocols.add(market.protocol)
@@ -176,6 +182,9 @@ def _collect_wallet_rows(
         markets.kamino,
         markets.zest,
         markets.wallet_balances,
+        markets.traderjoe_lp,
+        markets.stakedao,
+        markets.etherex,
     ):
         for chain_config in chains.values():
             for wallet in chain_config.wallets:
@@ -229,13 +238,53 @@ def _collect_token_rows(
         for token in wallet_balance_chain.tokens:
             add_token(chain_code, token.address, token.symbol, token.decimals)
 
-    for chain_code, euler_chain in markets.euler_v2.items():
-        for vault in euler_chain.vaults:
+    for chain_code, traderjoe_chain in markets.traderjoe_lp.items():
+        for traderjoe_pool in traderjoe_chain.pools:
             add_token(
                 chain_code,
-                vault.asset_address,
-                vault.asset_symbol,
-                vault.asset_decimals,
+                traderjoe_pool.token_x_address,
+                traderjoe_pool.token_x_symbol,
+                traderjoe_pool.token_x_decimals,
+            )
+            add_token(
+                chain_code,
+                traderjoe_pool.token_y_address,
+                traderjoe_pool.token_y_symbol,
+                traderjoe_pool.token_y_decimals,
+            )
+
+    for chain_code, stakedao_chain in markets.stakedao.items():
+        for stakedao_vault in stakedao_chain.vaults:
+            for underlying in stakedao_vault.underlyings:
+                add_token(
+                    chain_code,
+                    underlying.address,
+                    underlying.symbol,
+                    underlying.decimals,
+                )
+
+    for chain_code, etherex_chain in markets.etherex.items():
+        for etherex_pool in etherex_chain.pools:
+            add_token(
+                chain_code,
+                etherex_pool.token0_address,
+                etherex_pool.token0_symbol,
+                etherex_pool.token0_decimals,
+            )
+            add_token(
+                chain_code,
+                etherex_pool.token1_address,
+                etherex_pool.token1_symbol,
+                etherex_pool.token1_decimals,
+            )
+
+    for chain_code, euler_chain in markets.euler_v2.items():
+        for euler_vault in euler_chain.vaults:
+            add_token(
+                chain_code,
+                euler_vault.asset_address,
+                euler_vault.asset_symbol,
+                euler_vault.asset_decimals,
             )
 
     for chain_code, kamino_chain in markets.kamino.items():
@@ -490,6 +539,89 @@ def _collect_market_rows(
                     "symbol": token.symbol,
                     "decimals": token.decimals,
                     "kind": "wallet_balance_token",
+                    "include_in_yield": False,
+                    "capital_bucket": "pending_deployment",
+                    "exposure_class": "idle_capital",
+                },
+            )
+
+    for chain_code, traderjoe_chain in markets.traderjoe_lp.items():
+        for traderjoe_pool in traderjoe_chain.pools:
+            token_x_id = token_ids.get(
+                (chain_code, _normalize_token_address(traderjoe_pool.token_x_address))
+            )
+            token_y_id = token_ids.get(
+                (chain_code, _normalize_token_address(traderjoe_pool.token_y_address))
+            )
+            add_market(
+                protocol_code="traderjoe_lp",
+                chain_code=chain_code,
+                market_address=traderjoe_pool.pool_address,
+                # Liquidity Book pools are dual-token; normalize token Y as base for leg matching.
+                base_asset_token_id=token_y_id,
+                collateral_token_id=token_x_id,
+                metadata={
+                    "kind": "liquidity_book_pool",
+                    "pool_type": traderjoe_pool.pool_type,
+                    "token_x_symbol": traderjoe_pool.token_x_symbol,
+                    "token_y_symbol": traderjoe_pool.token_y_symbol,
+                    "bin_ids": list(traderjoe_pool.bin_ids),
+                    "include_in_yield": bool(traderjoe_pool.include_in_yield),
+                    "capital_bucket": traderjoe_pool.capital_bucket,
+                    "exposure_class": "ops_buy_wall",
+                },
+            )
+
+    for chain_code, stakedao_chain in markets.stakedao.items():
+        for stakedao_vault in stakedao_chain.vaults:
+            vault_address = _normalize_token_address(stakedao_vault.vault_address)
+            for underlying in stakedao_vault.underlyings:
+                token_address = _normalize_token_address(underlying.address)
+                token_id = token_ids.get((chain_code, token_address))
+                add_market(
+                    protocol_code="stakedao",
+                    chain_code=chain_code,
+                    market_address=f"{vault_address}:{token_address}",
+                    base_asset_token_id=token_id,
+                    collateral_token_id=None,
+                    metadata={
+                        "kind": "vault_underlying",
+                        "vault_address": vault_address,
+                        "asset_address": _normalize_token_address(stakedao_vault.asset_address),
+                        "asset_decimals": stakedao_vault.asset_decimals,
+                        "pool_index": underlying.pool_index,
+                        "symbol": underlying.symbol,
+                        "include_in_yield": bool(stakedao_vault.include_in_yield),
+                        "capital_bucket": stakedao_vault.capital_bucket,
+                        "exposure_class": "structured_vault",
+                    },
+                )
+
+    for chain_code, etherex_chain in markets.etherex.items():
+        for etherex_pool in etherex_chain.pools:
+            token0_id = token_ids.get(
+                (chain_code, _normalize_token_address(etherex_pool.token0_address))
+            )
+            token1_id = token_ids.get(
+                (chain_code, _normalize_token_address(etherex_pool.token1_address))
+            )
+            add_market(
+                protocol_code="etherex",
+                chain_code=chain_code,
+                market_address=etherex_pool.pool_address,
+                base_asset_token_id=token0_id,
+                collateral_token_id=token1_id,
+                metadata={
+                    "kind": "concentrated_liquidity_pool",
+                    "position_manager_address": _normalize_token_address(
+                        etherex_pool.position_manager_address
+                    ),
+                    "token0_symbol": etherex_pool.token0_symbol,
+                    "token1_symbol": etherex_pool.token1_symbol,
+                    "fee": int(etherex_pool.fee),
+                    "include_in_yield": bool(etherex_pool.include_in_yield),
+                    "capital_bucket": etherex_pool.capital_bucket,
+                    "exposure_class": "ops_buy_wall",
                 },
             )
 

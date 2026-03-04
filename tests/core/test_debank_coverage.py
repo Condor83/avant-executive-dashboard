@@ -56,6 +56,7 @@ def _markets_config_with_spark() -> MarketsConfig:
 
 def test_normalize_token_symbol_aliases() -> None:
     assert normalize_token_symbol("WETH") == "ETH"
+    assert normalize_token_symbol("weETH") == "WEETH"
     assert normalize_token_symbol("USDC.e") == "USDC"
     assert normalize_token_symbol("USD₮0") == "USDT0"
     assert normalize_token_symbol("wbravUSDC") == "USDC"
@@ -91,6 +92,23 @@ def test_db_leg_token_symbol_prefers_euler_collateral_for_consumer_supply() -> N
     )
 
     assert symbol == "savUSD"
+
+
+def test_db_leg_token_symbol_prefers_traderjoe_token_y_for_supply() -> None:
+    symbol = debank_coverage._db_leg_token_symbol(
+        protocol_code="traderjoe_lp",
+        leg_type="supply",
+        base_symbol="AVUSD",
+        collateral_symbol="SAVUSD",
+        metadata_json={
+            "token_x_symbol": "savUSD",
+            "token_y_symbol": "avUSD",
+        },
+        supplied_usd=Decimal("100"),
+        borrowed_usd=Decimal("0"),
+    )
+
+    assert symbol == "avUSD"
 
 
 def test_flatten_payload_legs_normalizes_aliases_and_filters_rewards() -> None:
@@ -138,6 +156,33 @@ def test_flatten_payload_legs_normalizes_aliases_and_filters_rewards() -> None:
     assert legs[borrow_key] == Decimal("40")
     assert in_scope[supply_key] is True
     assert in_scope[borrow_key] is True
+
+
+def test_flatten_payload_legs_excludes_reward_protocols() -> None:
+    payload: list[dict[str, object]] = [
+        {
+            "id": "merkl",
+            "chain": "eth",
+            "portfolio_item_list": [
+                {
+                    "detail": {
+                        "supply_token_list": [{"symbol": "MORPHO", "usd_value": "123"}],
+                    }
+                }
+            ],
+        }
+    ]
+
+    legs, in_scope = debank_coverage._flatten_debank_payload_legs(
+        wallet_address="0x1111111111111111111111111111111111111111",
+        payload=payload,
+        configured_chains={"ethereum"},
+        configured_protocols={"merkl"},
+        min_leg_usd=Decimal("1"),
+    )
+
+    assert legs == {}
+    assert in_scope == {}
 
 
 def test_run_debank_coverage_audit_applies_tolerance_and_config_surface(monkeypatch) -> None:
@@ -327,7 +372,7 @@ def test_run_debank_coverage_audit_does_not_remap_when_notional_far(monkeypatch)
                 protocol_code="aave_v3",
                 leg_type="supply",
                 token_symbol="SUSDE",
-            ): Decimal("1300")
+            ): Decimal("3000")
         },
     )
 
@@ -345,3 +390,131 @@ def test_run_debank_coverage_audit_does_not_remap_when_notional_far(monkeypatch)
     assert result.totals_all.matched_legs == 0
     assert len(result.unmatched_rows) == 1
     assert result.unmatched_rows[0].key.token_symbol == "USDE"
+
+
+def test_run_debank_coverage_audit_remaps_non_config_leg_cross_protocol_by_token_equivalence(
+    monkeypatch,
+) -> None:
+    wallet = "0x4444444444444444444444444444444444444444"
+    as_of_ts = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
+
+    payload: list[dict[str, object]] = [
+        {
+            "id": "avax_avantprotocol",
+            "chain": "avax",
+            "portfolio_item_list": [
+                {
+                    "detail": {
+                        "supply_token_list": [{"symbol": "avUSD", "usd_value": "1000"}],
+                    }
+                }
+            ],
+        }
+    ]
+    client = _StubClient({wallet: payload})
+
+    monkeypatch.setattr(
+        debank_coverage,
+        "_strategy_wallets_from_db",
+        lambda session: ([wallet], [wallet]),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_resolve_snapshot_as_of",
+        lambda session, requested_as_of: as_of_ts,
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_preflight_status",
+        lambda session, as_of_ts_utc, configured_protocols: PreflightStatus(
+            missing_protocol_dimensions=[],
+            zero_snapshot_protocols=[],
+            snapshot_counts_by_protocol={"wallet_balances": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_load_db_legs",
+        lambda session, as_of_ts_utc, min_leg_usd: {
+            LegKey(
+                wallet_address=wallet,
+                chain_code="avalanche",
+                protocol_code="wallet_balances",
+                leg_type="supply",
+                token_symbol="SAVUSD",
+            ): Decimal("980")
+        },
+    )
+
+    result = run_debank_coverage_audit(
+        session=cast(Session, object()),
+        client=client,
+        markets_config=_markets_config_with_spark(),
+        as_of_ts_utc=None,
+        min_leg_usd=Decimal("1"),
+        match_tolerance_usd=Decimal("1"),
+        max_concurrency=1,
+    )
+
+    assert result.totals_all.total_legs == 1
+    assert result.totals_all.matched_legs == 1
+    assert not result.unmatched_rows
+
+
+def test_run_debank_coverage_audit_skips_manually_resolved_leg(monkeypatch) -> None:
+    wallet = "0x920eefbcf1f5756109952e6ff6da1cab950c64d7"
+    as_of_ts = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
+
+    payload: list[dict[str, object]] = [
+        {
+            "id": "morpho",
+            "chain": "eth",
+            "portfolio_item_list": [
+                {
+                    "detail": {
+                        "supply_token_list": [{"symbol": "PYUSD", "usd_value": "5000"}],
+                    }
+                }
+            ],
+        }
+    ]
+    client = _StubClient({wallet: payload})
+
+    monkeypatch.setattr(
+        debank_coverage,
+        "_strategy_wallets_from_db",
+        lambda session: ([wallet], [wallet]),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_resolve_snapshot_as_of",
+        lambda session, requested_as_of: as_of_ts,
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_preflight_status",
+        lambda session, as_of_ts_utc, configured_protocols: PreflightStatus(
+            missing_protocol_dimensions=[],
+            zero_snapshot_protocols=[],
+            snapshot_counts_by_protocol={"morpho": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_load_db_legs",
+        lambda session, as_of_ts_utc, min_leg_usd: {},
+    )
+
+    result = run_debank_coverage_audit(
+        session=cast(Session, object()),
+        client=client,
+        markets_config=_markets_config_with_spark(),
+        as_of_ts_utc=None,
+        min_leg_usd=Decimal("1"),
+        match_tolerance_usd=Decimal("1"),
+        max_concurrency=1,
+    )
+
+    assert result.totals_all.total_legs == 0
+    assert result.totals_all.matched_legs == 0
+    assert not result.unmatched_rows

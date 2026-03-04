@@ -158,6 +158,73 @@ class WalletBalanceChainConfig(ConfigModel):
     tokens: list[WalletBalanceToken]
 
 
+class TraderJoePool(ConfigModel):
+    pool_address: str
+    pool_type: Literal["joe_v2_lb", "joe_v2_pair"] = "joe_v2_lb"
+    token_x_address: str
+    token_x_symbol: str
+    token_x_decimals: int = Field(ge=0, le=36)
+    token_y_address: str
+    token_y_symbol: str
+    token_y_decimals: int = Field(ge=0, le=36)
+    bin_ids: list[int] = Field(default_factory=list)
+    include_in_yield: bool = False
+    capital_bucket: str = "market_stability_ops"
+
+    @model_validator(mode="after")
+    def validate_bin_ids(self) -> TraderJoePool:
+        if self.pool_type == "joe_v2_lb" and not self.bin_ids:
+            raise ValueError("traderjoe_lp joe_v2_lb pools require at least one bin_id")
+        if any(bin_id < 0 for bin_id in self.bin_ids):
+            raise ValueError("traderjoe_lp bin_ids must be non-negative")
+        return self
+
+
+class TraderJoeChainConfig(ConfigModel):
+    wallets: list[str]
+    pools: list[TraderJoePool]
+
+
+class StakedaoUnderlyingToken(ConfigModel):
+    symbol: str
+    address: str
+    decimals: int = Field(ge=0, le=36)
+    pool_index: int = Field(ge=0)
+
+
+class StakedaoVault(ConfigModel):
+    vault_address: str
+    asset_address: str
+    asset_decimals: int = Field(ge=0, le=36)
+    underlyings: list[StakedaoUnderlyingToken]
+    include_in_yield: bool = False
+    capital_bucket: str = "pending_deployment"
+
+
+class StakedaoChainConfig(ConfigModel):
+    wallets: list[str]
+    vaults: list[StakedaoVault]
+
+
+class EtherexPool(ConfigModel):
+    pool_address: str
+    position_manager_address: str
+    token0_address: str
+    token0_symbol: str
+    token0_decimals: int = Field(ge=0, le=36)
+    token1_address: str
+    token1_symbol: str
+    token1_decimals: int = Field(ge=0, le=36)
+    fee: int = Field(ge=0)
+    include_in_yield: bool = False
+    capital_bucket: str = "market_stability_ops"
+
+
+class EtherexChainConfig(ConfigModel):
+    wallets: list[str]
+    pools: list[EtherexPool]
+
+
 class MarketsConfig(ConfigModel):
     """Canonical strategy scope config."""
 
@@ -169,6 +236,9 @@ class MarketsConfig(ConfigModel):
     kamino: dict[str, KaminoChainConfig]
     zest: dict[str, ZestChainConfig]
     wallet_balances: dict[str, WalletBalanceChainConfig]
+    traderjoe_lp: dict[str, TraderJoeChainConfig] = Field(default_factory=dict)
+    stakedao: dict[str, StakedaoChainConfig] = Field(default_factory=dict)
+    etherex: dict[str, EtherexChainConfig] = Field(default_factory=dict)
 
 
 class WalletProductAssignment(ConfigModel):

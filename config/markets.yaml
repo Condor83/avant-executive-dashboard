@@ -467,6 +467,43 @@ zest:
       borrow_fn: 'get-borrowed-balance-user-aeusdc'
       decimals: 6
 
+stakedao:
+  ethereum:
+    wallets:
+      - '0xaA0d9205AE55dCF6321dF019da9265B12bA41a7f'
+    vaults:
+      - vault_address: '0xad1dcc6ca212673d2dfd403a905a1ec57666d910'
+        asset_address: '0x2e1776968ec75bfd13dbc5b94ae57034d7e85fb9'
+        asset_decimals: 18
+        include_in_yield: false
+        capital_bucket: strategy_deployed
+        underlyings:
+          - symbol: USDC
+            address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+            decimals: 6
+            pool_index: 0
+          - symbol: savUSD
+            address: '0xb8D89678E75a973E74698c976716308abB8a46A4'
+            decimals: 18
+            pool_index: 1
+
+etherex:
+  linea:
+    wallets:
+      - '0xFC6e0C2026da9404727d0A2231835dCB44f5155F'
+    pools:
+      - pool_address: '0x1659819f2b07a492e5efc20ecf33617e655daefb'
+        position_manager_address: '0xb56542bf1822c3fea210d920c8ab0fcaabcd1798'
+        token0_address: '0x37c44fc08e403efc0946c0623cb1164a52ce1576'
+        token0_symbol: avUSD
+        token0_decimals: 18
+        token1_address: '0x5c247948fd58bb02b6c4678d9940f5e6b9af1127'
+        token1_symbol: savUSD
+        token1_decimals: 18
+        fee: 5
+        include_in_yield: false
+        capital_bucket: market_stability_ops
+
 wallet_balances:
   ethereum:
     wallets:
@@ -506,6 +543,12 @@ wallet_balances:
       - symbol: WETH
         address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
         decimals: 18
+      - symbol: PT-savUSD-14MAY2026
+        address: '0x606b5c773dc4d6e625c411cf60565f8c30c467d2'
+        decimals: 18
+      - symbol: MORPHO
+        address: '0x58d97b57bb95320f9a05dc918aef65434969c2b2'
+        decimals: 18
   avalanche:
     wallets:
       - '0x020c5bB0d81b8cf539Ca06364Ece4a41631995b4'
@@ -520,6 +563,9 @@ wallet_balances:
       - '0xD1b366727b30d996B81018BB31eC37f64Ed8aD28'
       - '0xD2305803Ca7821e4E5C3bcAeD366AD7dE9F13739'
       - '0xD2Fb3766A7d191AFfaa8Ab5C40B6A67007Aa3A5d'
+      - '0x84e4f5e0943dfae05b5c9f2f2e397664a84ae0f0'
+      - '0xC243c882a068C436Ef4093832BAEBDd9bf9933Cd'
+      - '0xdce3D16e0be9689bb7Ec449Cc1A1A257399dCe44'
       - '0xFC6e0C2026da9404727d0A2231835dCB44f5155F'
     tokens:
       - symbol: USDC
@@ -531,6 +577,21 @@ wallet_balances:
       - symbol: BTC.b
         address: '0x152b9d0FdC40C096757F570A51E494bd4b943E50'
         decimals: 8
+      - symbol: avUSD
+        address: '0x24de8771bc5ddb3362db529fc3358f2df3a0e346'
+        decimals: 18
+      - symbol: savUSD
+        address: '0x06d47F3fb376649c3A9Dafe069B3D6E35572219E'
+        decimals: 18
+      - symbol: savBTC
+        address: '0xfd2c2a98009d0cbed715882036e43d26c4289053'
+        decimals: 18
+      - symbol: avBTC
+        address: '0x649342c6bff544d82df1b2ba3c93e0c22cdeba84'
+        decimals: 18
+      - symbol: WAVAX
+        address: '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7'
+        decimals: 18
   base:
     wallets:
       - '0x7bee8D37FBA61a6251a08b957d502C56E2A50FAb'
@@ -571,6 +632,9 @@ wallet_balances:
       - symbol: USDC
         address: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831'
         decimals: 6
+      - symbol: ARB
+        address: '0x912CE59144191C1204E64559FE8253a0e49E6548'
+        decimals: 18
   plasma:
     tokens:
       - symbol: USDe
@@ -589,6 +653,25 @@ wallet_balances:
       - symbol: USDC.e
         address: '0x549943e04f40284185054145c6E4e9568C1D3241'
         decimals: 6
+
+traderjoe_lp:
+  avalanche:
+    wallets:
+      - '0xFC6e0C2026da9404727d0A2231835dCB44f5155F'
+    pools:
+      - pool_address: '0xb768091a8e6ffcdc215767937bd9fb039cb06577'
+        pool_type: joe_v2_lb
+        token_x_address: '0x06d47F3fb376649c3A9Dafe069B3D6E35572219E'
+        token_x_symbol: savUSD
+        token_x_decimals: 18
+        token_y_address: '0x24de8771bc5ddb3362db529fc3358f2df3a0e346'
+        token_y_symbol: avUSD
+        token_y_decimals: 18
+        bin_ids:
+          - 8389980
+          - 8389981
+        include_in_yield: false
+        capital_bucket: market_stability_ops
 
 # =========================================================
 # Unsupported protocols (not yet handled by adapters)
