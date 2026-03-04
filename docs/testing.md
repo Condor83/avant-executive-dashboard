@@ -23,10 +23,31 @@ For each protocol adapter:
 
 ### 3) End-to-end smoke tests
 - `sync snapshot` writes rows to `position_snapshots`
+- `sync markets` writes rows to `market_snapshots`
 - `compute daily` writes rows to `yield_daily`
 - API endpoints return JSON with expected schema
 - `compute boundary-check --date <D>` reports `status=pass` only when exact Denver SOD/EOD snapshots exist
 - In dev/testing, `compute daily --boundary-policy latest_snapshot` may use the latest available snapshot for both SOD/EOD as an approximation; those rows should be treated as non-signoff metrics.
+
+### 4) Coverage reconciliation audits (operational test layer)
+
+These are read-only validation steps used during live QA and release checks.
+
+- Internal adapter coverage:
+  - run `sync coverage-report --as-of <ts>`
+  - this command currently evaluates configured-vs-written coverage for `spark`, `morpho`, `euler_v2`, and `dolomite`
+- External completeness check:
+  - run `sync debank-coverage-audit --as-of <ts> --output-json <path>`
+  - compare DeBank-discovered legs vs DB legs for strategy wallets
+  - treat DB/RPC as canonical for analytics; DeBank is a reconciliation surface, not a source-of-truth override
+
+Recommended reconciliation flow:
+
+1. Run `sync snapshot` and `sync markets` at the target as-of time.
+2. Run `sync coverage-report` to catch obvious ingest failures quickly.
+3. Run `sync debank-coverage-audit` and triage top unmatched USD legs.
+4. Resolve high-USD configured-surface misses first (config gaps, account ids/numbers, adapter parsing).
+5. Classify non-config mismatches (ops exposures, reward-only protocols, DeBank token-label semantics).
 
 ## External call recording
 
@@ -47,6 +68,9 @@ For each protocol adapter:
 - ROE denominator policy:
   - ROE variants are null when avg_equity_usd <= 0
   - rollup ROE uses ratio-of-sums (not average of row ROEs)
+- Reconciliation policy:
+  - DeBank-vs-DB audit logic must be deterministic for a fixed DB snapshot and DeBank payload set
+  - token canonicalization and manual override paths must be unit-tested when changed
 
 ## “Done” means tests pass in CI
 

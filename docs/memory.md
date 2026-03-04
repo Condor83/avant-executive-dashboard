@@ -94,6 +94,16 @@ Wallets are assigned to exactly one product+tranche via config (`config/wallet_p
 - The canonical mapping of strategy wallets and the protocol/chain/market surface to ingest is stored in **markets.yaml**.
 - Adapters read markets.yaml; we do not rely on dynamic discovery for correctness.
 
+## Source hierarchy (DB vs external indexers)
+
+- Canonical source for portfolio analytics is DB snapshots produced from configured adapters (`source = rpc` unless explicitly stated otherwise).
+- DeBank is used for discovery and reconciliation audits only.
+- A DeBank mismatch is not automatically a DB bug:
+  - first check config scope (`markets.yaml`, `consumer_markets.yaml`)
+  - then check adapter DQ rows
+  - then classify semantic mismatches (token labeling, protocol aliases) vs true ingest gaps
+- External sources can be used to prioritize investigation, but they must not overwrite canonical strategy numbers without adapter/config confirmation.
+
 ## Consumer scope
 
 - Consumer wallets tracked are those with **>= $50k** in Avant assets (threshold is configurable).
@@ -103,5 +113,5 @@ Wallets are assigned to exactly one product+tranche via config (`config/wallet_p
 ## Special positions (do not confuse with strategy yield)
 
 - **Idle capital**: wallet balances not deployed into tracked strategies.
-- **Stability / buy wall ops** (e.g., Trader Joe’s liquidity): should be tagged as “ops” exposure.
+- **Stability / buy wall ops** (for example Trader Joe LP, Etherex, some Stake DAO allocations): should be tagged as “ops” exposure.
   - In v1, do not include these in “strategy yield” unless explicitly modeled.

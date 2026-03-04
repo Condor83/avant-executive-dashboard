@@ -13,7 +13,17 @@ This repo is config-driven.
 
 Adapters must treat this file as the source of truth (no silent discovery in production).
 
-### Common patterns
+### Adapter inventory (current runner wiring)
+
+- Position adapters:
+  - `wallet_balances`, `aave_v3`, `spark`, `morpho`, `euler_v2`, `dolomite`,
+    `traderjoe_lp`, `stakedao`, `etherex`, `kamino`, `zest`, `silo_v2`
+- Market adapters:
+  - `aave_v3`, `spark`, `morpho`, `euler_v2`, `dolomite`, `kamino`, `zest`, `silo_v2`
+- Position-only adapters:
+  - `wallet_balances`, `traderjoe_lp`, `stakedao`, `etherex`
+
+### Protocol config patterns
 
 #### Aave v3
 - chain config includes:
@@ -35,6 +45,14 @@ Current Aave USDe/sUSDe loop policy:
 - Merkl campaign increment is modeled as `reward_apy`.
 - `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the same strategy model.
 
+#### Spark
+- Same shape as Aave v3:
+  - pool address
+  - pool data provider
+  - optional incentives controller/oracle
+  - wallets + reserve markets with decimals
+  - optional per-market `supply_apy_fallback_pool_id`
+
 #### Morpho
 - chain config includes:
   - morpho contract address
@@ -50,6 +68,7 @@ Current Morpho collateral carry policy:
 #### Euler v2
 - chain config includes:
   - wallets list
+  - `account_ids` list (default `[0]`)
   - `vaults` list with:
     - vault `address` + `symbol`
     - underlying `asset_address` + `asset_symbol` + `asset_decimals`
@@ -59,15 +78,21 @@ Euler pricing policy:
 - Adapter still reads on-chain `asset()` and decimals for validation.
 - If config asset metadata differs from on-chain reads, adapter emits `euler_asset_mismatch` data-quality issues.
 
-Current caveat:
-- Adapter currently treats each configured vault as the primary surface and reads both supply (`balanceOf`/`convertToAssets`) and borrow (`debtOf`) from that vault.
-- A follow-up product decision is still needed on whether Euler config should support explicit borrow-vault mapping for strategies that separate supply and debt across different vault addresses.
+Subaccount behavior:
+- Adapter derives Euler subaccounts from `wallet + account_id`.
+- If a subaccount has exactly one supply vault and one borrow vault and they differ, ingest synthesizes one combined position row with market ref `<supply_vault>/<borrow_vault>`.
+- If non-zero subaccounts have multiple supply/borrow legs that cannot be reduced to one pair, adapter emits `euler_subaccount_pairing_ambiguous` and keeps per-vault rows.
 
 #### Dolomite
 - chain config includes:
   - margin contract address
   - wallets list
   - markets list with numeric market ids and decimals
+  - `account_numbers` list (default `[0]`)
+
+Dolomite account policy:
+- Each configured account number is queried per wallet/market.
+- Missing account numbers are a common source of borrow-leg coverage gaps.
 
 #### Kamino (Solana)
 - chain config includes:
@@ -83,6 +108,11 @@ Kamino token normalization policy:
 - when configured, `supply_token` is seeded as `markets.collateral_token_id`
 - when configured, `borrow_token` is seeded as `markets.base_asset_token_id`
 - this keeps dual-token markets aligned with Morpho semantics for downstream reporting
+- adapter emits token-shape DQ issues when obligations diverge from configured token expectations:
+  - `kamino_multi_supply_token`
+  - `kamino_supply_token_mismatch`
+  - `kamino_multi_borrow_token`
+  - `kamino_borrow_token_mismatch`
 
 #### Zest (Stacks)
 - chain config includes:
@@ -94,6 +124,54 @@ Kamino token normalization policy:
 - per chain:
   - wallets list
   - tokens list (symbol, address, decimals)
+
+Wallet balances behavior:
+- Reads configured ERC20 balances and native balances (using token address sentinels like `native`/`eth`/`0xeeee...`).
+- Writes supply-only snapshots (`borrowed_* = 0`, APYs = 0) under protocol `wallet_balances`.
+
+#### traderjoe_lp
+- per chain:
+  - wallets list
+  - pools list with:
+    - `pool_address`
+    - `pool_type` (`joe_v2_lb` currently supported)
+    - token X/Y metadata
+    - `bin_ids` (required for `joe_v2_lb`)
+    - `include_in_yield` (default `false`)
+    - `capital_bucket` (default `market_stability_ops`)
+
+Behavior:
+- Adapter values configured bins per wallet and emits supply-only ops exposure rows.
+- Canonical amount field uses token Y units; USD uses token X + token Y notional.
+
+#### stakedao
+- per chain:
+  - wallets list
+  - vaults list with:
+    - `vault_address` (ERC4626 share token)
+    - `asset_address` (Curve LP)
+    - `asset_decimals`
+    - `underlyings` token list + `pool_index`
+    - `include_in_yield` (default `false`)
+    - `capital_bucket` (default `pending_deployment`)
+
+Behavior:
+- Adapter decomposes vault share exposure into underlying pool token balances and writes supply-only rows per underlying token.
+
+#### etherex
+- per chain:
+  - wallets list
+  - pools list with:
+    - `pool_address`
+    - `position_manager_address`
+    - token0/token1 metadata
+    - `fee`
+    - `include_in_yield` (default `false`)
+    - `capital_bucket` (default `market_stability_ops`)
+
+Behavior:
+- Adapter enumerates each wallet’s concentrated-liquidity NFTs, reconstructs token0/token1 notional from liquidity + owed tokens, and writes supply-only rows.
+- Uses symbol-aware price fallback for known equivalents (for example `AVUSD`/`SAVUSD`) when direct token price is missing.
 
 ## wallet_products.yaml (wallet → product mapping)
 
@@ -111,3 +189,19 @@ Customer incentive markets are config-driven for stability. This file enumerates
 - Silo v2 markets (market addresses)
 
 The source of truth for which incentive markets exist is the Avant Rewards “Money Markets” section; config should be updated when incentives change.
+
+Current Silo v2 behavior:
+- `consumer_markets.yaml` defines Silo market surfaces and token metadata.
+- Position ingest reads strategy-wallet positions for those Silo markets by combining:
+  - Silo market list from `consumer_markets.yaml`
+  - strategy wallet list from all protocol sections in `markets.yaml` for that chain
+- Strategy ingestion is wallet-scoped and does not require top-holder ingestion.
+
+## Runtime settings tied to config behavior
+
+- `AVANT_EVM_RPC_URLS`: chain-code to RPC URL mapping used by EVM adapters.
+- `AVANT_KAMINO_API_BASE_URL`: Kamino API base URL (default `https://api.kamino.finance`).
+- `AVANT_SILO_API_BASE_URL`: Silo API base URL (default `https://app.silo.finance`).
+- `AVANT_SILO_POINTS_API_BASE_URL`: optional Silo points API for holder endpoints.
+- `AVANT_DEFILLAMA_YIELDS_BASE_URL`: DefiLlama yields endpoint for configured APY fallback paths.
+- `AVANT_DEBANK_CLOUD_API_KEY`: required for `sync debank-coverage-audit` only.

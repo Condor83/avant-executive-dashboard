@@ -6,6 +6,8 @@ This file is intentionally short. It is a *directory* of context so agents can l
 
 - `docs/memory.md` — business invariants (fees, yield definition, time boundaries, scope)
 - `docs/architecture.md` — system design, module boundaries, data flow
+- `docs/config.md` — config contracts and protocol-specific adapter behavior
+- `docs/debank-db-audit.md` — DeBank-vs-DB reconciliation methodology and triage flow
 - `docs/tech-stack.md` — languages, libraries, and repo conventions
 - `docs/testing.md` — testing approach (golden wallets, VCR cassettes, invariants)
 - `docs/data-model.md` — canonical schemas and units

@@ -37,6 +37,50 @@ FastAPI -> Dashboard UI
 - Determinism: fixed block/slot snapshots allow replay.
 - Works across heterogeneous protocols where tx-level accounting is expensive.
 
+## Ingestion Runtime (Current)
+
+`SnapshotRunner` composes adapters into two ingest paths:
+
+- Position adapters:
+  - `wallet_balances`
+  - `aave_v3`
+  - `spark`
+  - `morpho`
+  - `euler_v2`
+  - `dolomite`
+  - `traderjoe_lp`
+  - `stakedao`
+  - `etherex`
+  - `kamino`
+  - `zest`
+  - `silo_v2`
+- Market adapters:
+  - `aave_v3`
+  - `spark`
+  - `morpho`
+  - `euler_v2`
+  - `dolomite`
+  - `kamino`
+  - `zest`
+  - `silo_v2`
+
+Notes:
+- `wallet_balances`, `traderjoe_lp`, `stakedao`, and `etherex` are position-only adapters.
+- Ops adapters (`traderjoe_lp`, `stakedao`, `etherex`) produce supply-side exposure snapshots and set APY fields to zero unless explicitly modeled in analytics policy.
+
+## Data Quality Loop
+
+Data quality is intentionally multi-layered:
+
+1) Ingest-time DQ rows  
+   Adapter failures and missing prices are written to `data_quality` during `sync snapshot` and `sync markets`.
+
+2) Internal coverage checks  
+   `sync coverage-report` compares configured expected rows vs written rows for core lending adapters (`spark`, `morpho`, `euler_v2`, `dolomite`).
+
+3) External reconciliation checks  
+   `sync debank-coverage-audit` compares DeBank-discovered legs against DB snapshot legs for strategy wallets. This is a completeness audit, not a source-of-truth override. See `docs/debank-db-audit.md`.
+
 ## Module boundaries (suggested repo layout)
 
 - `src/core/`
