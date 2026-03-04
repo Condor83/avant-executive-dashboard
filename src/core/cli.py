@@ -26,12 +26,19 @@ from adapters.stakedao import EvmRpcStakedaoClient, StakedaoAdapter
 from adapters.traderjoe_lp import EvmRpcTraderJoeLpClient, TraderJoeLpAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
+from analytics.alerts import AlertEngine
+from analytics.risk_engine import (
+    RiskEngine,
+    top_markets_by_kink_risk,
+    top_positions_by_worst_net_spread,
+)
 from analytics.rollups import compute_window_rollups
 from analytics.yield_engine import YieldEngine, select_business_day_boundaries
 from core.config import (
     canonical_address,
     load_consumer_markets_config,
     load_markets_config,
+    load_risk_thresholds_config,
     load_wallet_products_config,
 )
 from core.coverage_report import build_coverage_report
@@ -93,10 +100,15 @@ DOLOMITE_FALLBACK_PROBE_MAX_MARKET_ID_OPTION = typer.Option(
     help="Fallback max market id probe when getNumMarkets RPC fails",
 )
 DATE_OPTION = typer.Option(..., "--date", help="Business date (YYYY-MM-DD)")
+RISK_DATE_OPTION = typer.Option(None, "--date", help="Business date (YYYY-MM-DD)")
 DAILY_BOUNDARY_POLICY_OPTION = typer.Option(
     "auto",
     "--boundary-policy",
     help="Daily boundary policy: auto, in_day, or latest_snapshot",
+)
+RISK_THRESHOLDS_PATH_OPTION = typer.Option(
+    default=Path("config/risk_thresholds.yaml"),
+    help="Risk thresholds config path",
 )
 WINDOW_OPTION = typer.Option(..., "--window", help="Rollup window (7d or 30d)")
 END_DATE_OPTION = typer.Option(
@@ -960,6 +972,94 @@ def compute_boundary_check(target_date: str = DATE_OPTION) -> None:
         f" selected_eod_ts_utc={result.eod_ts_utc.isoformat() if result.eod_ts_utc else 'none'}"
         f" used_sod_fallback={result.used_sod_fallback}"
         f" used_eod_fallback={result.used_eod_fallback}"
+    )
+
+
+@compute_app.command("risk")
+def compute_risk(
+    target_date: str | None = RISK_DATE_OPTION,
+    as_of: str | None = AS_OF_OPTION,
+    thresholds_path: Path = RISK_THRESHOLDS_PATH_OPTION,
+) -> None:
+    """Compute risk signals and synchronize alerts from canonical snapshots."""
+
+    if (target_date is None) == (as_of is None):
+        raise typer.BadParameter("provide exactly one of --date or --as-of")
+
+    try:
+        thresholds = load_risk_thresholds_config(thresholds_path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--thresholds-path") from exc
+    parsed_date: date | None = None
+    requested_as_of: datetime | None = None
+
+    if target_date is not None:
+        try:
+            parsed_date = date.fromisoformat(target_date)
+        except ValueError as exc:
+            raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+    else:
+        requested_as_of = _parse_as_of(as_of)
+
+    session = Session(get_engine())
+    market_rows = 0
+    position_rows = 0
+    top_market_id: str = "none"
+    top_position_key: str = "none"
+    alerts_opened = 0
+    alerts_updated = 0
+    alerts_resolved = 0
+    open_alerts = 0
+    selected_as_of: datetime | None = None
+    try:
+        risk_engine = RiskEngine(session, thresholds=thresholds)
+        try:
+            if parsed_date is not None:
+                risk_result = risk_engine.compute_for_date(business_date=parsed_date)
+            else:
+                assert requested_as_of is not None
+                risk_result = risk_engine.compute_as_of(as_of_ts_utc=requested_as_of)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+
+        selected_as_of = risk_result.as_of_ts_utc
+        market_rows = len(risk_result.market_rows)
+        position_rows = len(risk_result.position_rows)
+
+        market_watchlist = top_markets_by_kink_risk(risk_result, limit=10)
+        if market_watchlist:
+            top_market_id = str(market_watchlist[0].market_id)
+
+        position_watchlist = top_positions_by_worst_net_spread(risk_result, limit=10)
+        if position_watchlist:
+            top_position_key = position_watchlist[0].position_key
+
+        alert_engine = AlertEngine(session, thresholds=thresholds)
+        alert_candidates = alert_engine.build_candidates(risk_result)
+        alert_summary = alert_engine.sync_candidates(
+            as_of_ts_utc=risk_result.as_of_ts_utc,
+            candidates=alert_candidates,
+        )
+
+        alerts_opened = alert_summary.opened
+        alerts_updated = alert_summary.updated
+        alerts_resolved = alert_summary.resolved
+        open_alerts = alert_summary.open_alerts
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute risk complete"
+        f" as_of_ts_utc={selected_as_of.isoformat() if selected_as_of else 'none'}"
+        f" market_rows={market_rows}"
+        f" position_rows={position_rows}"
+        f" alerts_opened={alerts_opened}"
+        f" alerts_updated={alerts_updated}"
+        f" alerts_resolved={alerts_resolved}"
+        f" open_alerts={open_alerts}"
+        f" top_market_id={top_market_id}"
+        f" top_position_key={top_position_key}"
     )
 
 

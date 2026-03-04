@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
@@ -302,6 +303,69 @@ class ConsumerMarketsConfig(ConfigModel):
     markets: list[ConsumerMarket] = Field(default_factory=list)
 
 
+class IncreasingRiskThresholds(ConfigModel):
+    """Thresholds where larger values represent higher risk."""
+
+    low: Decimal = Field(ge=0)
+    med: Decimal = Field(ge=0)
+    high: Decimal = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_ordering(self) -> IncreasingRiskThresholds:
+        if not (self.low <= self.med <= self.high):
+            raise ValueError("increasing thresholds must satisfy low <= med <= high")
+        return self
+
+
+class DecreasingRiskThresholds(ConfigModel):
+    """Thresholds where smaller values represent higher risk."""
+
+    low: Decimal = Field(ge=0)
+    med: Decimal = Field(ge=0)
+    high: Decimal = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_ordering(self) -> DecreasingRiskThresholds:
+        if not (self.high <= self.med <= self.low):
+            raise ValueError("decreasing thresholds must satisfy high <= med <= low")
+        return self
+
+
+class KinkThresholdConfig(ConfigModel):
+    utilization: IncreasingRiskThresholds
+    default_target_utilization: Decimal = Field(gt=0, le=2)
+    protocol_target_overrides: dict[str, Decimal] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_protocol_targets(self) -> KinkThresholdConfig:
+        for protocol_code, value in self.protocol_target_overrides.items():
+            if value <= 0:
+                raise ValueError(f"kink protocol target override for '{protocol_code}' must be > 0")
+        return self
+
+
+class SpreadThresholdConfig(ConfigModel):
+    net_spread_apy: DecreasingRiskThresholds
+
+
+class BorrowSpikeThresholdConfig(ConfigModel):
+    delta_apy: IncreasingRiskThresholds
+    max_lookback_hours: int = Field(ge=1, le=720, default=48)
+
+
+class LiquidityThresholdConfig(ConfigModel):
+    available_ratio: DecreasingRiskThresholds
+
+
+class RiskThresholdsConfig(ConfigModel):
+    """Risk/alert threshold policy shared by compute risk and tests."""
+
+    kink: KinkThresholdConfig
+    spread: SpreadThresholdConfig
+    borrow_spike: BorrowSpikeThresholdConfig
+    liquidity: LiquidityThresholdConfig
+
+
 LEGACY_PRODUCT_MAPPING: dict[str, tuple[str, ProductFamily, Tranche]] = {
     "savUSD": ("stablecoin_senior", "stablecoin", "senior"),
     "avUSD": ("stablecoin_senior", "stablecoin", "senior"),
@@ -394,3 +458,13 @@ def load_consumer_markets_config(path: Path | str) -> ConsumerMarketsConfig:
         return ConsumerMarketsConfig.model_validate(raw)
     except ValidationError as exc:
         raise ValueError(f"invalid consumer_markets config at {path}: {exc}") from exc
+
+
+def load_risk_thresholds_config(path: Path | str) -> RiskThresholdsConfig:
+    """Load and validate risk threshold config."""
+
+    raw = _read_yaml(path)
+    try:
+        return RiskThresholdsConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"invalid risk thresholds config at {path}: {exc}") from exc
