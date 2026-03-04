@@ -27,6 +27,14 @@ class Settings(BaseSettings):
         default="https://coins.llama.fi",
         description="DefiLlama base URL for token price requests",
     )
+    debank_cloud_base_url: str = Field(
+        default="https://pro-openapi.debank.com",
+        description="DeBank Cloud API base URL for discovery and reconciliation scans",
+    )
+    debank_cloud_api_key: str | None = Field(
+        default=None,
+        description="DeBank Cloud API key used for authenticated requests",
+    )
     defillama_yields_base_url: str = Field(
         default="https://yields.llama.fi",
         description="DefiLlama base URL for pool yield requests",

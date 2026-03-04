@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -42,6 +43,8 @@ from core.customer_cohort import (
 )
 from core.db.models import YieldDaily
 from core.db.session import get_engine
+from core.debank_cloud import DebankCloudClient
+from core.debank_coverage import run_debank_coverage_audit, serialize_audit_result
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
@@ -151,6 +154,36 @@ COHORT_OUTPUT_PATH_OPTION = typer.Option(
     Path("config/consumer_wallets_savusd_50k.yaml"),
     "--output",
     help="Output path for generated wallet cohort YAML",
+)
+DEBANK_MIN_LEG_USD_OPTION = typer.Option(
+    "1",
+    "--min-leg-usd",
+    help="Minimum absolute USD value for DeBank and DB legs to include in matching",
+)
+DEBANK_MATCH_TOLERANCE_USD_OPTION = typer.Option(
+    "1",
+    "--match-tolerance-usd",
+    help="Absolute USD tolerance used to mark a DeBank leg as matched",
+)
+DEBANK_MAX_CONCURRENCY_OPTION = typer.Option(
+    6,
+    "--max-concurrency",
+    help="Maximum concurrent DeBank wallet requests",
+)
+DEBANK_MAX_WALLETS_OPTION = typer.Option(
+    None,
+    "--max-wallets",
+    help="Optional cap on number of strategy EVM wallets to scan",
+)
+DEBANK_UNMATCHED_LIMIT_OPTION = typer.Option(
+    25,
+    "--unmatched-limit",
+    help="Maximum unmatched rows to print and include in JSON output",
+)
+DEBANK_OUTPUT_JSON_OPTION = typer.Option(
+    None,
+    "--output-json",
+    help="Optional path to write full audit output as JSON",
 )
 
 
@@ -413,6 +446,164 @@ def sync_coverage_report(
         typer.echo(report)
     finally:
         session.close()
+
+
+@sync_app.command("debank-coverage-audit")
+def sync_debank_coverage_audit(
+    as_of: str | None = AS_OF_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    min_leg_usd: str = DEBANK_MIN_LEG_USD_OPTION,
+    match_tolerance_usd: str = DEBANK_MATCH_TOLERANCE_USD_OPTION,
+    max_concurrency: int = DEBANK_MAX_CONCURRENCY_OPTION,
+    max_wallets: int | None = DEBANK_MAX_WALLETS_OPTION,
+    unmatched_limit: int = DEBANK_UNMATCHED_LIMIT_OPTION,
+    output_json: Path | None = DEBANK_OUTPUT_JSON_OPTION,
+) -> None:
+    """Audit DeBank leg coverage against strategy positions in the DB."""
+
+    try:
+        min_leg_usd_decimal = Decimal(min_leg_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("min-leg-usd must be a valid decimal") from exc
+    if min_leg_usd_decimal < 0:
+        raise typer.BadParameter("min-leg-usd must be non-negative")
+
+    try:
+        match_tolerance_usd_decimal = Decimal(match_tolerance_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("match-tolerance-usd must be a valid decimal") from exc
+    if match_tolerance_usd_decimal < 0:
+        raise typer.BadParameter("match-tolerance-usd must be non-negative")
+
+    if max_concurrency < 1:
+        raise typer.BadParameter("max-concurrency must be >= 1")
+    if max_wallets is not None and max_wallets < 1:
+        raise typer.BadParameter("max-wallets must be >= 1 when provided")
+    if unmatched_limit < 0:
+        raise typer.BadParameter("unmatched-limit must be non-negative")
+
+    settings = get_settings()
+    api_key = (settings.debank_cloud_api_key or "").strip()
+    if not api_key:
+        typer.echo("missing AVANT_DEBANK_CLOUD_API_KEY; unable to run DeBank coverage audit")
+        raise typer.Exit(code=1)
+
+    requested_as_of = _parse_as_of(as_of) if as_of is not None else None
+    markets_config = load_markets_config(markets_path)
+    session = Session(get_engine())
+    client = DebankCloudClient(
+        base_url=settings.debank_cloud_base_url,
+        api_key=api_key,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+
+    try:
+        result = run_debank_coverage_audit(
+            session=session,
+            client=client,
+            markets_config=markets_config,
+            as_of_ts_utc=requested_as_of,
+            min_leg_usd=min_leg_usd_decimal,
+            match_tolerance_usd=match_tolerance_usd_decimal,
+            max_concurrency=max_concurrency,
+            max_wallets=max_wallets,
+        )
+    finally:
+        session.close()
+        client.close()
+
+    typer.echo(f"debank coverage audit as_of={result.as_of_ts_utc.isoformat()}")
+    typer.echo(
+        "wallets:"
+        f" total_strategy={result.wallets_total}"
+        f" evm_scanned={result.wallets_scanned}"
+        f" non_evm_skipped={result.non_evm_wallets_skipped}"
+        f" wallet_errors={len(result.wallet_errors)}"
+    )
+    if result.wallet_errors:
+        for wallet_error in result.wallet_errors[: min(len(result.wallet_errors), 10)]:
+            typer.echo(
+                "warning: wallet_error"
+                f" wallet={wallet_error.wallet_address}"
+                f" error={wallet_error.error_message}"
+            )
+        if len(result.wallet_errors) > 10:
+            remaining = len(result.wallet_errors) - 10
+            typer.echo(f"warning: {remaining} additional wallet errors not shown")
+
+    if result.preflight.missing_protocol_dimensions:
+        typer.echo(
+            "warning: missing protocol dimensions: "
+            + ",".join(result.preflight.missing_protocol_dimensions)
+        )
+    if result.preflight.zero_snapshot_protocols:
+        typer.echo(
+            "warning: zero snapshot rows at as_of for protocols: "
+            + ",".join(result.preflight.zero_snapshot_protocols)
+        )
+    spark_count = result.preflight.snapshot_counts_by_protocol.get("spark", 0)
+    typer.echo(f"preflight: spark_snapshot_rows={spark_count}")
+
+    typer.echo(
+        "coverage (all debank legs):"
+        f" matched={result.totals_all.matched_legs}/{result.totals_all.total_legs}"
+        f" ({result.totals_all.coverage_pct:.2f}%)"
+        f" matched_usd={result.totals_all.matched_usd:.2f}/{result.totals_all.debank_total_usd:.2f}"
+        f" ({result.totals_all.usd_coverage_pct:.2f}%)"
+    )
+    typer.echo(
+        "coverage (configured surface only):"
+        f" matched={result.totals_configured_surface.matched_legs}/"
+        f"{result.totals_configured_surface.total_legs}"
+        f" ({result.totals_configured_surface.coverage_pct:.2f}%)"
+        f" matched_usd={result.totals_configured_surface.matched_usd:.2f}/"
+        f"{result.totals_configured_surface.debank_total_usd:.2f}"
+        f" ({result.totals_configured_surface.usd_coverage_pct:.2f}%)"
+    )
+    typer.echo(f"db_only_leg_count={result.db_only_leg_count}")
+
+    if result.protocol_rows:
+        typer.echo(
+            "protocol\tdebank_legs\tmatched_legs\tcoverage_pct\tdebank_usd\tmatched_usd\tusd_coverage_pct"
+        )
+        for protocol_row in result.protocol_rows:
+            typer.echo(
+                f"{protocol_row.protocol_code}\t"
+                f"{protocol_row.total_legs}\t"
+                f"{protocol_row.matched_legs}\t"
+                f"{protocol_row.coverage_pct:.2f}\t"
+                f"{protocol_row.debank_total_usd:.2f}\t"
+                f"{protocol_row.matched_usd:.2f}\t"
+                f"{protocol_row.usd_coverage_pct:.2f}"
+            )
+
+    if result.unmatched_rows:
+        typer.echo("top unmatched legs:")
+        typer.echo(
+            "wallet\tchain\tprotocol\tleg\ttoken\tdebank_usd\tdb_usd\tdelta_usd\tin_config_surface"
+        )
+        for unmatched_row in result.unmatched_rows[:unmatched_limit]:
+            db_usd = f"{unmatched_row.db_usd:.2f}" if unmatched_row.db_usd is not None else ""
+            delta_usd = (
+                f"{unmatched_row.delta_usd:.2f}" if unmatched_row.delta_usd is not None else ""
+            )
+            typer.echo(
+                f"{unmatched_row.key.wallet_address}\t"
+                f"{unmatched_row.key.chain_code}\t"
+                f"{unmatched_row.key.protocol_code}\t"
+                f"{unmatched_row.key.leg_type}\t"
+                f"{unmatched_row.key.token_symbol}\t"
+                f"{unmatched_row.debank_usd:.2f}\t"
+                f"{db_usd}\t"
+                f"{delta_usd}\t"
+                f"{str(unmatched_row.in_config_surface).lower()}"
+            )
+
+    if output_json is not None:
+        output_json.parent.mkdir(parents=True, exist_ok=True)
+        payload = serialize_audit_result(result, unmatched_limit=unmatched_limit)
+        output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        typer.echo(f"wrote json report: {output_json}")
 
 
 @sync_app.command("discover-dolomite-wallets")

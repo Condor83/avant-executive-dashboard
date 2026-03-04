@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -11,6 +12,8 @@ import httpx
 
 from core.config import MarketsConfig
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
+
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def _decimal_from(value: object, *, default: Decimal | None = None) -> Decimal:
@@ -108,8 +111,20 @@ class KaminoYieldOracle(Protocol):
 class KaminoApiClient:
     """HTTP client for Kamino market-state API reads."""
 
-    def __init__(self, base_url: str, timeout_seconds: float = 15.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        timeout_seconds: float = 15.0,
+        max_attempts: int = 3,
+        backoff_seconds: float = 0.5,
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be >= 1")
+        if backoff_seconds < 0:
+            raise ValueError("backoff_seconds must be >= 0")
         self.base_url = base_url.rstrip("/")
+        self.max_attempts = max_attempts
+        self.backoff_seconds = backoff_seconds
         self._client = httpx.Client(timeout=timeout_seconds)
 
     def close(self) -> None:
@@ -118,9 +133,27 @@ class KaminoApiClient:
         self._client.close()
 
     def _get_json(self, path: str) -> object:
-        response = self._client.get(f"{self.base_url}{path}")
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(1, self.max_attempts + 1):
+            try:
+                response = self._client.get(f"{self.base_url}{path}")
+                if response.status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
+                    time.sleep(self.backoff_seconds * attempt)
+                    continue
+                response.raise_for_status()
+                return response.json()
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code
+                if status_code in RETRYABLE_STATUS_CODES and attempt < self.max_attempts:
+                    time.sleep(self.backoff_seconds * attempt)
+                    continue
+                raise
+            except httpx.HTTPError:
+                if attempt < self.max_attempts:
+                    time.sleep(self.backoff_seconds * attempt)
+                    continue
+                raise
+
+        raise RuntimeError(f"kamino request failed path={path}")
 
     @staticmethod
     def _candidate_dicts(payload: object) -> list[dict[str, object]]:
@@ -199,8 +232,14 @@ class KaminoApiClient:
         utilization = total_borrow_usd / total_supply_usd if total_supply_usd > 0 else Decimal("0")
         available_liquidity_usd = max(total_supply_usd - total_borrow_usd, Decimal("0"))
 
-        metrics_history = self._get_json(f"/kamino-market/{market_pubkey}/metrics/history")
         slot: str | None = None
+        history_error: str | None = None
+        try:
+            metrics_history = self._get_json(f"/kamino-market/{market_pubkey}/metrics/history")
+        except Exception as exc:  # pragma: no cover - non-critical endpoint failure path.
+            metrics_history = None
+            history_error = str(exc)
+
         if isinstance(metrics_history, list) and metrics_history:
             last_row = metrics_history[-1]
             if isinstance(last_row, dict):
@@ -216,7 +255,7 @@ class KaminoApiClient:
             utilization=utilization,
             available_liquidity_usd=available_liquidity_usd,
             slot=slot,
-            raw_payload={"reserve_count": len(reserve_rows)},
+            raw_payload={"reserve_count": len(reserve_rows), "history_error": history_error},
             reserve_rates=reserve_rates,
         )
 
