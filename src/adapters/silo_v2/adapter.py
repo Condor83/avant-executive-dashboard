@@ -1,4 +1,4 @@
-"""Silo v2 consumer adapter for market health snapshots."""
+"""Silo v2 adapter for market health and strategy wallet snapshots."""
 
 from __future__ import annotations
 
@@ -81,6 +81,20 @@ class SiloHolderPosition:
     raw_payload: dict[str, object] | None = None
 
 
+@dataclass(frozen=True)
+class SiloWalletPosition:
+    """Wallet-scoped Silo position payload normalized to raw token units."""
+
+    wallet_address: str
+    supplied_raw: int
+    borrowed_raw: int
+    raw_payload: dict[str, object] | None = None
+
+
+class SiloTokenMappingError(RuntimeError):
+    """Raised when configured tokens cannot be mapped to Silo payload silo legs."""
+
+
 class SiloClient(Protocol):
     """Protocol for Silo market reads used by the adapter."""
 
@@ -90,6 +104,17 @@ class SiloClient(Protocol):
     def get_market_health(self, *, chain_code: str, market_ref: str) -> SiloMarketHealth:
         """Return normalized market-level health metrics."""
 
+    def get_wallet_position(
+        self,
+        *,
+        chain_code: str,
+        market_ref: str,
+        wallet_address: str,
+        collateral_token_address: str,
+        borrow_token_address: str,
+    ) -> SiloWalletPosition:
+        """Return one wallet position for a configured market."""
+
     def get_top_holders(
         self, *, chain_code: str, market_ref: str, limit: int
     ) -> list[SiloHolderPosition]:
@@ -97,7 +122,7 @@ class SiloClient(Protocol):
 
 
 class SiloApiClient:
-    """HTTP client for Silo API market-health and holders endpoints."""
+    """HTTP client for Silo API market-health and wallet position reads."""
 
     def __init__(
         self,
@@ -264,6 +289,72 @@ class SiloApiClient:
             raise RuntimeError(f"Silo market {market_ref} missing configAddress")
         return config_address
 
+    @staticmethod
+    def _int_value(value: object, *, default: int = 0) -> int:
+        if value is None:
+            return default
+        try:
+            return int(str(value))
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _find_silo_for_token(
+        market_payload: dict[str, object], token_address: str
+    ) -> dict[str, object] | None:
+        token_key = canonical_address(token_address)
+        for silo_key in ("silo0", "silo1"):
+            silo_obj = market_payload.get(silo_key)
+            if not isinstance(silo_obj, dict):
+                continue
+            silo_token_address = silo_obj.get("tokenAddress")
+            if isinstance(silo_token_address, str) and (
+                canonical_address(silo_token_address) == token_key
+            ):
+                return silo_obj
+        return None
+
+    def get_wallet_position(
+        self,
+        *,
+        chain_code: str,
+        market_ref: str,
+        wallet_address: str,
+        collateral_token_address: str,
+        borrow_token_address: str,
+    ) -> SiloWalletPosition:
+        market_payload = self._get_json(
+            f"/api/lending-market/{chain_code}/{market_ref}",
+            params={"user": wallet_address},
+            base_url=self.base_url,
+        )
+        if not isinstance(market_payload, dict):
+            raise RuntimeError(f"unexpected Silo lending market payload: {market_payload}")
+
+        collateral_silo = self._find_silo_for_token(market_payload, collateral_token_address)
+        if collateral_silo is None:
+            raise SiloTokenMappingError(
+                "configured collateral token address missing from Silo market payload"
+            )
+
+        borrow_silo = self._find_silo_for_token(market_payload, borrow_token_address)
+        if borrow_silo is None:
+            raise SiloTokenMappingError(
+                "configured borrow token address missing from Silo market payload"
+            )
+
+        supplied_raw = self._int_value(collateral_silo.get("collateralBalance")) + self._int_value(
+            collateral_silo.get("protectedBalance")
+        )
+        borrowed_raw = self._int_value(borrow_silo.get("debtBalance"))
+
+        return SiloWalletPosition(
+            wallet_address=wallet_address,
+            supplied_raw=supplied_raw,
+            borrowed_raw=borrowed_raw,
+            raw_payload=market_payload,
+        )
+
     def get_market_health(self, *, chain_code: str, market_ref: str) -> SiloMarketHealth:
         market_payload = self._get_lending_market_payload(
             chain_code=chain_code,
@@ -427,7 +518,7 @@ class SiloApiClient:
 
 
 class SiloV2Adapter:
-    """Collect canonical Silo v2 consumer market and holder snapshots."""
+    """Collect canonical Silo v2 market and strategy wallet position snapshots."""
 
     protocol_code = "silo_v2"
 
@@ -438,15 +529,13 @@ class SiloV2Adapter:
         consumer_markets_config: ConsumerMarketsConfig,
         client: SiloClient,
         top_holders_limit: int = 50,
-        include_strategy_wallets: bool = False,
+        include_strategy_wallets: bool = True,
     ) -> None:
         self.markets_config = markets_config
         self.consumer_markets_config = consumer_markets_config
         self.client = client
         self.top_holders_limit = top_holders_limit
-        self._excluded_wallets = (
-            set() if include_strategy_wallets else self._collect_excluded_wallets()
-        )
+        self.include_strategy_wallets = include_strategy_wallets
 
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
@@ -454,26 +543,28 @@ class SiloV2Adapter:
             return Decimal("0")
         return total_borrow / total_supply
 
-    def _collect_excluded_wallets(self) -> set[str]:
+    def _strategy_wallets_for_chain(self, chain_code: str) -> set[str]:
         wallets: set[str] = set()
-        for aave_chain in self.markets_config.aave_v3.values():
-            for wallet in aave_chain.wallets:
-                wallets.add(canonical_address(wallet))
-        for morpho_chain in self.markets_config.morpho.values():
-            for wallet in morpho_chain.wallets:
-                wallets.add(canonical_address(wallet))
-        for euler_chain in self.markets_config.euler_v2.values():
-            for wallet in euler_chain.wallets:
-                wallets.add(canonical_address(wallet))
-        for dolomite_chain in self.markets_config.dolomite.values():
-            for wallet in dolomite_chain.wallets:
-                wallets.add(canonical_address(wallet))
-        for zest_chain in self.markets_config.zest.values():
-            for wallet in zest_chain.wallets:
-                wallets.add(canonical_address(wallet))
-        for wallet_balance_chain in self.markets_config.wallet_balances.values():
-            for wallet in wallet_balance_chain.wallets:
-                wallets.add(canonical_address(wallet))
+        for section in (
+            self.markets_config.aave_v3,
+            self.markets_config.spark,
+            self.markets_config.morpho,
+            self.markets_config.euler_v2,
+            self.markets_config.dolomite,
+            self.markets_config.kamino,
+            self.markets_config.zest,
+            self.markets_config.wallet_balances,
+            self.markets_config.traderjoe_lp,
+            self.markets_config.stakedao,
+            self.markets_config.etherex,
+        ):
+            chain_config = section.get(chain_code)
+            if chain_config is None:
+                continue
+            for wallet in chain_config.wallets:
+                wallet_key = canonical_address(wallet)
+                if wallet_key.startswith("0x") and len(wallet_key) == 42:
+                    wallets.add(wallet_key)
         return wallets
 
     def _issue(
@@ -517,9 +608,143 @@ class SiloV2Adapter:
         as_of_ts_utc: datetime,
         prices_by_token: dict[tuple[str, str], Decimal],
     ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
-        del as_of_ts_utc, prices_by_token
-        # Consumer holder snapshots are intentionally disabled for now.
-        return [], []
+        positions: list[PositionSnapshotInput] = []
+        issues: list[DataQualityIssue] = []
+
+        if not self.include_strategy_wallets:
+            return positions, issues
+
+        for market in self._silo_markets():
+            chain_code = market.chain
+            market_ref = market.market_address
+            strategy_wallets = self._strategy_wallets_for_chain(chain_code)
+
+            if not strategy_wallets:
+                continue
+
+            market_health: SiloMarketHealth | None = None
+            try:
+                market_health = self.client.get_market_health(
+                    chain_code=chain_code,
+                    market_ref=market_ref,
+                )
+            except Exception:
+                market_health = None
+
+            collateral_price = prices_by_token.get(
+                (chain_code, canonical_address(market.collateral_token.address))
+            )
+            borrow_price = prices_by_token.get(
+                (chain_code, canonical_address(market.borrow_token.address))
+            )
+
+            if collateral_price is None:
+                collateral_price = Decimal("0")
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="price_missing",
+                        error_message="no price available for Silo collateral token",
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={"symbol": market.collateral_token.symbol},
+                    )
+                )
+            if borrow_price is None:
+                borrow_price = Decimal("0")
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="price_missing",
+                        error_message="no price available for Silo borrow token",
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={"symbol": market.borrow_token.symbol},
+                    )
+                )
+
+            supply_apy = market_health.supply_apy if market_health is not None else Decimal("0")
+            borrow_apy = market_health.borrow_apy if market_health is not None else Decimal("0")
+            block_number_or_slot = (
+                market_health.block_number_or_slot if market_health is not None else None
+            )
+
+            for wallet_address in sorted(strategy_wallets):
+                try:
+                    wallet_position = self.client.get_wallet_position(
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        wallet_address=wallet_address,
+                        collateral_token_address=market.collateral_token.address,
+                        borrow_token_address=market.borrow_token.address,
+                    )
+                except SiloTokenMappingError as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="silo_token_mapping_mismatch",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            wallet_address=wallet_address,
+                            market_ref=market_ref,
+                            payload_json={"market_name": market.name},
+                        )
+                    )
+                    continue
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="silo_wallet_position_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            wallet_address=wallet_address,
+                            market_ref=market_ref,
+                            payload_json={"market_name": market.name},
+                        )
+                    )
+                    continue
+
+                supplied_amount = normalize_raw_amount(
+                    wallet_position.supplied_raw,
+                    market.collateral_token.decimals,
+                )
+                borrowed_amount = normalize_raw_amount(
+                    wallet_position.borrowed_raw,
+                    market.borrow_token.decimals,
+                )
+                if supplied_amount == 0 and borrowed_amount == 0:
+                    continue
+
+                supplied_usd = supplied_amount * collateral_price
+                borrowed_usd = borrowed_amount * borrow_price
+
+                positions.append(
+                    PositionSnapshotInput(
+                        as_of_ts_utc=as_of_ts_utc,
+                        protocol_code=self.protocol_code,
+                        chain_code=chain_code,
+                        wallet_address=wallet_address,
+                        market_ref=market_ref,
+                        position_key=self._position_key(chain_code, wallet_address, market_ref),
+                        supplied_amount=supplied_amount,
+                        supplied_usd=supplied_usd,
+                        borrowed_amount=borrowed_amount,
+                        borrowed_usd=borrowed_usd,
+                        supply_apy=supply_apy,
+                        borrow_apy=borrow_apy,
+                        reward_apy=Decimal("0"),
+                        equity_usd=supplied_usd - borrowed_usd,
+                        source="rpc",
+                        block_number_or_slot=block_number_or_slot,
+                    )
+                )
+
+        return positions, issues
 
     def collect_markets(
         self,
