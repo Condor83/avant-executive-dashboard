@@ -1,0 +1,28 @@
+kink:
+  utilization:
+    low: 0.80
+    med: 0.85
+    high: 0.90
+  default_target_utilization: 0.85
+  protocol_target_overrides:
+    aave_v3: 0.80
+    spark: 0.80
+
+spread:
+  net_spread_apy:
+    low: 0.015
+    med: 0.010
+    high: 0.005
+
+borrow_spike:
+  delta_apy:
+    low: 0.02
+    med: 0.03
+    high: 0.05
+  max_lookback_hours: 48
+
+liquidity:
+  available_ratio:
+    low: 0.20
+    med: 0.15
+    high: 0.10

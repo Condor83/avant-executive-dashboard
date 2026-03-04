@@ -272,6 +272,32 @@ class YieldDaily(Base):
     market: Mapped[Market | None] = relationship()
 
 
+class Alert(Base):
+    """Derived risk alert records for market/position monitoring."""
+
+    __tablename__ = "alerts"
+
+    alert_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    alert_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    severity: Mapped[str] = mapped_column(
+        Enum("low", "med", "high", name="alert_severity_enum", native_enum=False),
+        nullable=False,
+    )
+    entity_type: Mapped[str] = mapped_column(
+        Enum("market", "position", "wallet", name="alert_entity_type_enum", native_enum=False),
+        nullable=False,
+    )
+    entity_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum("open", "ack", "resolved", name="alert_status_enum", native_enum=False),
+        nullable=False,
+        index=True,
+        default="open",
+    )
+
+
 class DataQuality(Base):
     """Ingestion failure records keyed by as-of timestamp and entity context."""
 
