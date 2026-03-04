@@ -32,7 +32,8 @@ def expected_coverage_from_config(markets_config: MarketsConfig) -> dict[str, Ex
     morpho_markets = sum(len(chain.markets) for chain in markets_config.morpho.values())
 
     euler_pairs = sum(
-        len(chain.wallets) * len(chain.vaults) for chain in markets_config.euler_v2.values()
+        len(chain.wallets) * len(chain.vaults) * len(chain.account_ids)
+        for chain in markets_config.euler_v2.values()
     )
     euler_markets = sum(len(chain.vaults) for chain in markets_config.euler_v2.values())
 

@@ -105,6 +105,10 @@ def _minimal_euler_config() -> tuple[MarketsConfig, list[str], list[str]]:
     return cfg, wallets, vault_addresses
 
 
+def _subaccount_address(wallet: str, account_id: int) -> str:
+    return f"0x{(int(wallet, 16) ^ account_id):040x}"
+
+
 def test_euler_golden_wallets_returns_positions_and_market_snapshots() -> None:
     cfg, wallets, vaults = _minimal_euler_config()
 
@@ -183,3 +187,104 @@ def test_euler_golden_wallets_returns_positions_and_market_snapshots() -> None:
         assert row.supply_apy >= Decimal("0")
         assert row.borrow_apy >= Decimal("0")
         assert row.reward_apy == Decimal("0")
+
+
+def test_euler_subaccount_single_pair_synthesizes_consumer_market() -> None:
+    wallet = "0xd1b366727b30d996b81018bb31ec37f64ed8ad28"
+    vault_supply = "0xbac3983342b805e66f8756e265b3b0ddf4b685fc"
+    vault_borrow = "0x37ca03ad51b8ff79aad35fadacba4cedf0c3e74e"
+    usdc = "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
+    savusd = "0x00000000efe302beaa2b3e6e1b18d08d69a9012a"
+
+    cfg = MarketsConfig.model_validate(
+        {
+            "aave_v3": {},
+            "morpho": {},
+            "euler_v2": {
+                "avalanche": {
+                    "wallets": [wallet],
+                    "account_ids": [2],
+                    "vaults": [
+                        {
+                            "address": vault_supply,
+                            "symbol": "eava9savUSD",
+                            "asset_address": savusd,
+                            "asset_symbol": "savUSD",
+                            "asset_decimals": 6,
+                        },
+                        {
+                            "address": vault_borrow,
+                            "symbol": "eava9USDC",
+                            "asset_address": usdc,
+                            "asset_symbol": "USDC",
+                            "asset_decimals": 6,
+                        },
+                    ],
+                }
+            },
+            "dolomite": {},
+            "kamino": {},
+            "zest": {},
+            "wallet_balances": {},
+        }
+    )
+
+    subaccount = _subaccount_address(wallet, 2)
+
+    client = FakeEulerClient(
+        vault_assets={
+            vault_supply: savusd,
+            vault_borrow: usdc,
+        },
+        asset_decimals={
+            savusd: 6,
+            usdc: 6,
+        },
+        total_assets={
+            vault_supply: 2_000_000_000,
+            vault_borrow: 1_500_000_000,
+        },
+        total_borrows={
+            vault_supply: 100_000_000,
+            vault_borrow: 900_000_000,
+        },
+        interest_rates={
+            vault_supply: 1_100_000_000,
+            vault_borrow: 1_800_000_000,
+        },
+        interest_fees={
+            vault_supply: 500,
+            vault_borrow: 500,
+        },
+        share_balances={
+            (vault_supply, subaccount): 400_000_000,
+            (vault_borrow, subaccount): 0,
+        },
+        converted_assets={
+            (vault_supply, 400_000_000): 410_000_000,
+            (vault_borrow, 0): 0,
+        },
+        debts={
+            (vault_supply, subaccount): 0,
+            (vault_borrow, subaccount): 120_000_000,
+        },
+    )
+    adapter = EulerV2Adapter(markets_config=cfg, rpc_client=client)
+
+    as_of = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+    prices = {
+        ("avalanche", usdc): Decimal("1"),
+        ("avalanche", savusd): Decimal("1"),
+    }
+
+    position_rows, position_issues = adapter.collect_positions(
+        as_of_ts_utc=as_of, prices_by_token=prices
+    )
+
+    assert len(position_rows) == 1
+    assert not position_issues
+    row = position_rows[0]
+    assert row.market_ref == f"{vault_supply}/{vault_borrow}"
+    assert row.position_key.endswith(":acct2")
+    assert row.supplied_usd == Decimal("410")
+    assert row.borrowed_usd == Decimal("120")

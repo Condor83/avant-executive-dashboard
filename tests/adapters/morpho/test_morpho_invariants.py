@@ -66,6 +66,15 @@ class FakeMorphoClient:
     def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
         return 6
 
+    def get_erc20_balance(self, chain_code: str, token_address: str, wallet_address: str) -> int:
+        return 0
+
+    def get_vault_asset(self, chain_code: str, vault_address: str) -> str:
+        return "0x0000000000000000000000000000000000000000"
+
+    def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
+        return shares
+
 
 def _config() -> MarketsConfig:
     market_id = "0x729badf297ee9f2f6b3f717b96fd355fc6ec00422284ce1968e76647b258cf44"

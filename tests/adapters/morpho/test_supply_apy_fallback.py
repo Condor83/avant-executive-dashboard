@@ -74,6 +74,18 @@ class _StubRpc:
         del chain_code, token_address
         return 6
 
+    def get_erc20_balance(self, chain_code: str, token_address: str, wallet_address: str) -> int:
+        del chain_code, token_address, wallet_address
+        return 0
+
+    def get_vault_asset(self, chain_code: str, vault_address: str) -> str:
+        del chain_code, vault_address
+        return "0x0000000000000000000000000000000000000000"
+
+    def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
+        del chain_code, vault_address
+        return shares
+
 
 class _StubYieldOracle:
     def __init__(self, apy: Decimal | None) -> None:

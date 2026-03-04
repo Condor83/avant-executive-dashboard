@@ -210,6 +210,21 @@ def _collect_token_rows(
         for spark_market in spark_chain.markets:
             add_token(chain_code, spark_market.asset, spark_market.symbol, spark_market.decimals)
 
+    for chain_code, morpho_chain in markets.morpho.items():
+        for morpho_vault in morpho_chain.vaults:
+            if (
+                morpho_vault.asset_address is None
+                or morpho_vault.asset_symbol is None
+                or morpho_vault.asset_decimals is None
+            ):
+                continue
+            add_token(
+                chain_code,
+                morpho_vault.asset_address,
+                morpho_vault.asset_symbol,
+                morpho_vault.asset_decimals,
+            )
+
     for chain_code, wallet_balance_chain in markets.wallet_balances.items():
         for token in wallet_balance_chain.tokens:
             add_token(chain_code, token.address, token.symbol, token.decimals)
@@ -346,13 +361,28 @@ def _collect_market_rows(
                 },
             )
         for morpho_vault in morpho_chain.vaults:
+            base_asset_token_id: int | None = None
+            if morpho_vault.asset_address is not None:
+                base_asset_token_id = token_ids.get(
+                    (chain_code, _normalize_token_address(morpho_vault.asset_address))
+                )
             add_market(
                 protocol_code="morpho",
                 chain_code=chain_code,
                 market_address=morpho_vault.address,
-                base_asset_token_id=None,
+                base_asset_token_id=base_asset_token_id,
                 collateral_token_id=None,
-                metadata={"kind": "vault", "note": morpho_vault.note},
+                metadata={
+                    "kind": "vault",
+                    "note": morpho_vault.note,
+                    "asset_symbol": morpho_vault.asset_symbol,
+                    "asset_address": (
+                        _normalize_token_address(morpho_vault.asset_address)
+                        if morpho_vault.asset_address is not None
+                        else None
+                    ),
+                    "asset_decimals": morpho_vault.asset_decimals,
+                },
             )
 
     for chain_code, euler_chain in markets.euler_v2.items():
@@ -479,7 +509,12 @@ def _collect_market_rows(
             market_address=consumer_market.market_address,
             base_asset_token_id=base_token_id,
             collateral_token_id=collateral_token_id,
-            metadata={"name": consumer_market.name, "kind": "consumer_market"},
+            metadata={
+                "name": consumer_market.name,
+                "kind": "consumer_market",
+                "borrow_token_symbol": consumer_market.borrow_token.symbol,
+                "collateral_token_symbol": consumer_market.collateral_token.symbol,
+            },
         )
 
     return _dedupe(market_rows, keys=("chain_id", "protocol_id", "market_address"))

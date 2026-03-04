@@ -94,10 +94,21 @@ class _EulerVaultRuntime:
     config: EulerVault
     market_ref: str
     state: EulerVaultState
+    debt_supported: bool
     borrow_rate_per_second: Decimal
     supply_rate_per_second: Decimal
     borrow_apy: Decimal
     supply_apy: Decimal
+
+
+@dataclass(frozen=True)
+class _EulerAccountExposure:
+    market_ref: str
+    supplied_amount: Decimal
+    supplied_usd: Decimal
+    borrowed_amount: Decimal
+    borrowed_usd: Decimal
+    runtime: _EulerVaultRuntime
 
 
 class EulerV2RpcClient(Protocol):
@@ -256,6 +267,29 @@ class EulerV2Adapter:
     def _position_key(chain_code: str, wallet_address: str, market_ref: str) -> str:
         return f"euler_v2:{chain_code}:{wallet_address}:{market_ref}"
 
+    @classmethod
+    def _position_key_for_account(
+        cls,
+        *,
+        chain_code: str,
+        wallet_address: str,
+        market_ref: str,
+        account_id: int,
+    ) -> str:
+        base_key = cls._position_key(chain_code, wallet_address, market_ref)
+        if account_id == 0:
+            return base_key
+        return f"{base_key}:acct{account_id}"
+
+    @staticmethod
+    def _subaccount_address(wallet_address: str, account_id: int) -> str:
+        """Derive Euler subaccount address (owner XOR account_id)."""
+
+        if account_id < 0:
+            raise ValueError("account_id must be non-negative")
+        owner = int(canonical_address(wallet_address), 16)
+        return f"0x{(owner ^ account_id):040x}"
+
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
         if total_supply <= 0:
@@ -319,6 +353,153 @@ class EulerV2Adapter:
             payload_json=payload_json,
         )
 
+    def _build_position_input(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        chain_code: str,
+        wallet_address: str,
+        account_id: int,
+        market_ref: str,
+        block_number_or_slot: str | None,
+        supplied_amount: Decimal,
+        supplied_usd: Decimal,
+        borrowed_amount: Decimal,
+        borrowed_usd: Decimal,
+        supply_apy: Decimal,
+        borrow_apy: Decimal,
+    ) -> PositionSnapshotInput:
+        equity_usd = supplied_usd - borrowed_usd
+        ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
+        return PositionSnapshotInput(
+            as_of_ts_utc=as_of_ts_utc,
+            protocol_code=self.protocol_code,
+            chain_code=chain_code,
+            wallet_address=wallet_address,
+            market_ref=market_ref,
+            position_key=self._position_key_for_account(
+                chain_code=chain_code,
+                wallet_address=wallet_address,
+                market_ref=market_ref,
+                account_id=account_id,
+            ),
+            supplied_amount=supplied_amount,
+            supplied_usd=supplied_usd,
+            borrowed_amount=borrowed_amount,
+            borrowed_usd=borrowed_usd,
+            supply_apy=supply_apy,
+            borrow_apy=borrow_apy,
+            reward_apy=Decimal("0"),
+            equity_usd=equity_usd,
+            ltv=ltv,
+            source="rpc",
+            block_number_or_slot=block_number_or_slot,
+        )
+
+    def _collect_wallet_account_exposures(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        chain_code: str,
+        wallet_address: str,
+        subaccount_address: str,
+        runtimes: dict[str, _EulerVaultRuntime],
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[_EulerAccountExposure], list[DataQualityIssue]]:
+        exposures: list[_EulerAccountExposure] = []
+        issues: list[DataQualityIssue] = []
+
+        for market_ref, runtime in runtimes.items():
+            try:
+                shares = self.rpc_client.get_balance_of(chain_code, market_ref, subaccount_address)
+                supplied_raw = self.rpc_client.convert_to_assets(chain_code, market_ref, shares)
+            except Exception as exc:
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="euler_position_read_failed",
+                        error_message=str(exc),
+                        chain_code=chain_code,
+                        wallet_address=wallet_address,
+                        market_ref=market_ref,
+                        payload_json={
+                            "symbol": runtime.config.symbol,
+                            "subaccount": subaccount_address,
+                        },
+                    )
+                )
+                continue
+
+            borrowed_raw = 0
+            if runtime.debt_supported:
+                try:
+                    borrowed_raw = self.rpc_client.get_debt_of(
+                        chain_code, market_ref, subaccount_address
+                    )
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="euler_debt_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            wallet_address=wallet_address,
+                            market_ref=market_ref,
+                            payload_json={
+                                "symbol": runtime.config.symbol,
+                                "subaccount": subaccount_address,
+                            },
+                        )
+                    )
+
+            supplied_amount = normalize_raw_amount(supplied_raw, runtime.state.asset_decimals)
+            borrowed_amount = normalize_raw_amount(borrowed_raw, runtime.state.asset_decimals)
+            if supplied_amount == 0 and borrowed_amount == 0:
+                continue
+
+            asset_price = self._price_from_map(
+                prices_by_token,
+                chain_code=chain_code,
+                token_address=runtime.config.asset_address,
+                asset_symbol=runtime.config.asset_symbol,
+                vault_symbol=runtime.config.symbol,
+            )
+            if asset_price is None:
+                asset_price = Decimal("0")
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="price_missing",
+                        error_message="no price available for Euler vault underlying token",
+                        chain_code=chain_code,
+                        wallet_address=wallet_address,
+                        market_ref=market_ref,
+                        payload_json={
+                            "symbol": runtime.config.symbol,
+                            "asset": canonical_address(runtime.config.asset_address),
+                            "subaccount": subaccount_address,
+                        },
+                    )
+                )
+
+            supplied_usd = supplied_amount * asset_price
+            borrowed_usd = borrowed_amount * asset_price
+            exposures.append(
+                _EulerAccountExposure(
+                    market_ref=market_ref,
+                    supplied_amount=supplied_amount,
+                    supplied_usd=supplied_usd,
+                    borrowed_amount=borrowed_amount,
+                    borrowed_usd=borrowed_usd,
+                    runtime=runtime,
+                )
+            )
+
+        return exposures, issues
+
     def _collect_chain_runtime(
         self,
         *,
@@ -354,8 +535,6 @@ class EulerV2Adapter:
                     chain_code, observed_asset_address
                 )
                 total_assets = self.rpc_client.get_total_assets(chain_code, market_ref)
-                total_borrows = self.rpc_client.get_total_borrows(chain_code, market_ref)
-                interest_rate = self.rpc_client.get_interest_rate(chain_code, market_ref)
                 interest_fee = self.rpc_client.get_interest_fee(chain_code, market_ref)
             except Exception as exc:
                 issues.append(
@@ -370,6 +549,41 @@ class EulerV2Adapter:
                     )
                 )
                 continue
+
+            debt_supported = True
+            try:
+                total_borrows = self.rpc_client.get_total_borrows(chain_code, market_ref)
+            except Exception as exc:
+                debt_supported = False
+                total_borrows = 0
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage=stage,
+                        error_type="euler_total_borrows_read_failed",
+                        error_message=str(exc),
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={"symbol": vault.symbol},
+                    )
+                )
+
+            interest_rate = 0
+            if debt_supported:
+                try:
+                    interest_rate = self.rpc_client.get_interest_rate(chain_code, market_ref)
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage=stage,
+                            error_type="euler_interest_rate_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            market_ref=market_ref,
+                            payload_json={"symbol": vault.symbol},
+                        )
+                    )
 
             configured_asset_address = canonical_address(vault.asset_address)
             configured_asset_decimals = int(vault.asset_decimals)
@@ -428,6 +642,7 @@ class EulerV2Adapter:
                 config=vault,
                 market_ref=market_ref,
                 state=state,
+                debt_supported=debt_supported,
                 borrow_rate_per_second=borrow_rate_per_second,
                 supply_rate_per_second=supply_rate_per_second,
                 borrow_apy=_safe_apy_from_per_second(borrow_rate_per_second),
@@ -456,92 +671,108 @@ class EulerV2Adapter:
 
             for wallet in chain_config.wallets:
                 wallet_address = canonical_address(wallet)
-                for market_ref, runtime in runtimes.items():
-                    try:
-                        shares = self.rpc_client.get_balance_of(
-                            chain_code, market_ref, wallet_address
+                for account_id in list(dict.fromkeys(chain_config.account_ids)):
+                    subaccount_address = self._subaccount_address(wallet_address, account_id)
+                    account_exposures, account_issues = self._collect_wallet_account_exposures(
+                        as_of_ts_utc=as_of_ts_utc,
+                        chain_code=chain_code,
+                        wallet_address=wallet_address,
+                        subaccount_address=subaccount_address,
+                        runtimes=runtimes,
+                        prices_by_token=prices_by_token,
+                    )
+                    issues.extend(account_issues)
+                    if not account_exposures:
+                        continue
+
+                    supply_exposures = [
+                        exposure
+                        for exposure in account_exposures
+                        if exposure.supplied_amount > 0 and exposure.supplied_usd > 0
+                    ]
+                    borrow_exposures = [
+                        exposure
+                        for exposure in account_exposures
+                        if exposure.borrowed_amount > 0 and exposure.borrowed_usd > 0
+                    ]
+
+                    can_synthesize_market = (
+                        len(supply_exposures) == 1
+                        and len(borrow_exposures) == 1
+                        and supply_exposures[0].market_ref != borrow_exposures[0].market_ref
+                    )
+                    if can_synthesize_market:
+                        supply_exposure = supply_exposures[0]
+                        borrow_exposure = borrow_exposures[0]
+                        synthetic_market_ref = (
+                            f"{supply_exposure.market_ref}/{borrow_exposure.market_ref}"
                         )
-                        supplied_raw = self.rpc_client.convert_to_assets(
-                            chain_code, market_ref, shares
-                        )
-                        borrowed_raw = self.rpc_client.get_debt_of(
-                            chain_code, market_ref, wallet_address
-                        )
-                    except Exception as exc:
-                        issues.append(
-                            self._issue(
+                        positions.append(
+                            self._build_position_input(
                                 as_of_ts_utc=as_of_ts_utc,
-                                stage="sync_snapshot",
-                                error_type="euler_position_read_failed",
-                                error_message=str(exc),
                                 chain_code=chain_code,
                                 wallet_address=wallet_address,
-                                market_ref=market_ref,
-                                payload_json={"symbol": runtime.config.symbol},
+                                account_id=account_id,
+                                market_ref=synthetic_market_ref,
+                                block_number_or_slot=block_number_or_slot,
+                                supplied_amount=supply_exposure.supplied_amount,
+                                supplied_usd=supply_exposure.supplied_usd,
+                                borrowed_amount=borrow_exposure.borrowed_amount,
+                                borrowed_usd=borrow_exposure.borrowed_usd,
+                                supply_apy=supply_exposure.runtime.supply_apy,
+                                borrow_apy=borrow_exposure.runtime.borrow_apy,
                             )
                         )
                         continue
 
-                    supplied_amount = normalize_raw_amount(
-                        supplied_raw, runtime.state.asset_decimals
+                    has_supply_and_borrow = bool(supply_exposures and borrow_exposures)
+                    should_flag_ambiguous_subaccount = (
+                        account_id != 0
+                        and has_supply_and_borrow
+                        and (len(supply_exposures) > 1 or len(borrow_exposures) > 1)
                     )
-                    borrowed_amount = normalize_raw_amount(
-                        borrowed_raw, runtime.state.asset_decimals
-                    )
-                    if supplied_amount == 0 and borrowed_amount == 0:
-                        continue
-
-                    asset_price = self._price_from_map(
-                        prices_by_token,
-                        chain_code=chain_code,
-                        token_address=runtime.config.asset_address,
-                        asset_symbol=runtime.config.asset_symbol,
-                        vault_symbol=runtime.config.symbol,
-                    )
-                    if asset_price is None:
-                        asset_price = Decimal("0")
+                    if should_flag_ambiguous_subaccount:
                         issues.append(
                             self._issue(
                                 as_of_ts_utc=as_of_ts_utc,
                                 stage="sync_snapshot",
-                                error_type="price_missing",
-                                error_message="no price available for Euler vault underlying token",
+                                error_type="euler_subaccount_pairing_ambiguous",
+                                error_message=(
+                                    "unable to reduce subaccount exposures to one supply/borrow "
+                                    "pair"
+                                ),
                                 chain_code=chain_code,
                                 wallet_address=wallet_address,
-                                market_ref=market_ref,
                                 payload_json={
-                                    "symbol": runtime.config.symbol,
-                                    "asset": canonical_address(runtime.config.asset_address),
+                                    "account_id": account_id,
+                                    "subaccount": subaccount_address,
+                                    "supply_markets": sorted(
+                                        {exposure.market_ref for exposure in supply_exposures}
+                                    ),
+                                    "borrow_markets": sorted(
+                                        {exposure.market_ref for exposure in borrow_exposures}
+                                    ),
                                 },
                             )
                         )
 
-                    supplied_usd = supplied_amount * asset_price
-                    borrowed_usd = borrowed_amount * asset_price
-                    equity_usd = supplied_usd - borrowed_usd
-                    ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
-
-                    positions.append(
-                        PositionSnapshotInput(
-                            as_of_ts_utc=as_of_ts_utc,
-                            protocol_code=self.protocol_code,
-                            chain_code=chain_code,
-                            wallet_address=wallet_address,
-                            market_ref=market_ref,
-                            position_key=self._position_key(chain_code, wallet_address, market_ref),
-                            supplied_amount=supplied_amount,
-                            supplied_usd=supplied_usd,
-                            borrowed_amount=borrowed_amount,
-                            borrowed_usd=borrowed_usd,
-                            supply_apy=runtime.supply_apy,
-                            borrow_apy=runtime.borrow_apy,
-                            reward_apy=Decimal("0"),
-                            equity_usd=equity_usd,
-                            ltv=ltv,
-                            source="rpc",
-                            block_number_or_slot=block_number_or_slot,
+                    for exposure in account_exposures:
+                        positions.append(
+                            self._build_position_input(
+                                as_of_ts_utc=as_of_ts_utc,
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                account_id=account_id,
+                                market_ref=exposure.market_ref,
+                                block_number_or_slot=block_number_or_slot,
+                                supplied_amount=exposure.supplied_amount,
+                                supplied_usd=exposure.supplied_usd,
+                                borrowed_amount=exposure.borrowed_amount,
+                                borrowed_usd=exposure.borrowed_usd,
+                                supply_apy=exposure.runtime.supply_apy,
+                                borrow_apy=exposure.runtime.borrow_apy,
+                            )
                         )
-                    )
 
         return positions, issues
 

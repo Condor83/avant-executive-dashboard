@@ -222,6 +222,8 @@ def normalize_token_symbol(symbol: str) -> str:
         return "ETH"
     if normalized in {"USDC.E", "USDCE"} or compact == "USDCE":
         return "USDC"
+    if compact in {"WBRAVUSDC", "BRAVUSDC"}:
+        return "USDC"
     if compact == "USDT0":
         return "USDT0"
     return normalized
@@ -315,9 +317,18 @@ def _db_leg_token_symbol(
     base_symbol: str | None,
     collateral_symbol: str | None,
     metadata_json: object,
+    supplied_usd: Decimal,
+    borrowed_usd: Decimal,
 ) -> str | None:
     if protocol_code == "morpho":
         if leg_type == "supply":
+            if borrowed_usd <= 0:
+                return (
+                    _symbol_from_metadata(metadata_json, "loan_token")
+                    or base_symbol
+                    or _symbol_from_metadata(metadata_json, "collateral_token")
+                    or collateral_symbol
+                )
             return (
                 _symbol_from_metadata(metadata_json, "collateral_token")
                 or collateral_symbol
@@ -332,6 +343,21 @@ def _db_leg_token_symbol(
             return (
                 _symbol_from_metadata(metadata_json, "supply_token_symbol")
                 or collateral_symbol
+                or base_symbol
+            )
+        return (
+            _symbol_from_metadata(metadata_json, "borrow_token_symbol")
+            or base_symbol
+            or collateral_symbol
+        )
+
+    if protocol_code == "euler_v2":
+        if leg_type == "supply":
+            # Consumer-market synthetic rows encode supply token as collateral.
+            return (
+                _symbol_from_metadata(metadata_json, "collateral_token_symbol")
+                or collateral_symbol
+                or _symbol_from_metadata(metadata_json, "asset_symbol")
                 or base_symbol
             )
         return (
@@ -395,6 +421,7 @@ def _load_db_legs(
         protocol = protocol_code.lower()
 
         supplied = abs(Decimal(supplied_usd))
+        borrowed = abs(Decimal(borrowed_usd))
         if supplied >= min_leg_usd:
             symbol = _db_leg_token_symbol(
                 protocol_code=protocol,
@@ -402,6 +429,8 @@ def _load_db_legs(
                 base_symbol=base_symbol,
                 collateral_symbol=collateral_symbol,
                 metadata_json=metadata_json,
+                supplied_usd=supplied,
+                borrowed_usd=borrowed,
             )
             if symbol:
                 key = LegKey(
@@ -413,7 +442,6 @@ def _load_db_legs(
                 )
                 aggregated[key] += supplied
 
-        borrowed = abs(Decimal(borrowed_usd))
         if borrowed >= min_leg_usd:
             symbol = _db_leg_token_symbol(
                 protocol_code=protocol,
@@ -421,6 +449,8 @@ def _load_db_legs(
                 base_symbol=base_symbol,
                 collateral_symbol=collateral_symbol,
                 metadata_json=metadata_json,
+                supplied_usd=supplied,
+                borrowed_usd=borrowed,
             )
             if symbol:
                 key = LegKey(

@@ -10,7 +10,13 @@ from typing import Protocol
 
 import httpx
 
-from core.config import MarketsConfig, MorphoChainConfig, MorphoMarket, canonical_address
+from core.config import (
+    MarketsConfig,
+    MorphoChainConfig,
+    MorphoMarket,
+    MorphoVault,
+    canonical_address,
+)
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
 from core.yields import DefiLlamaYieldOracle
 
@@ -19,6 +25,9 @@ MORPHO_MARKET_SELECTOR = "0x5c60e39a"
 MORPHO_MARKET_PARAMS_SELECTOR = "0x2c3c9157"
 MORPHO_BORROW_RATE_VIEW_SELECTOR = "0x8c00bf6b"
 ERC20_DECIMALS_SELECTOR = "0x313ce567"
+ERC20_BALANCE_OF_SELECTOR = "0x70a08231"
+ERC4626_ASSET_SELECTOR = "0x38d52e0f"
+ERC4626_CONVERT_TO_ASSETS_SELECTOR = "0x07a2d13a"
 
 WAD = Decimal("1e18")
 BPS = Decimal("1e4")
@@ -121,6 +130,15 @@ class _MorphoMarketRuntime:
     supply_apy: Decimal
 
 
+@dataclass(frozen=True)
+class _MorphoVaultRuntime:
+    config: MorphoVault
+    market_ref: str
+    asset_address: str
+    asset_symbol: str
+    asset_decimals: int
+
+
 class MorphoRpcClient(Protocol):
     """Protocol for Morpho Blue reads used by the adapter."""
 
@@ -159,6 +177,15 @@ class MorphoRpcClient(Protocol):
 
     def get_erc20_decimals(self, chain_code: str, token_address: str) -> int:
         """Return ERC20 decimals for a token."""
+
+    def get_erc20_balance(self, chain_code: str, token_address: str, wallet_address: str) -> int:
+        """Return ERC20 balance for wallet/token."""
+
+    def get_vault_asset(self, chain_code: str, vault_address: str) -> str:
+        """Return ERC4626 underlying asset address for a vault."""
+
+    def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
+        """Convert ERC4626 vault shares into underlying assets."""
 
 
 class EvmRpcMorphoClient:
@@ -286,6 +313,26 @@ class EvmRpcMorphoClient:
         words = self._eth_call_words(chain_code, token_address, ERC20_DECIMALS_SELECTOR)
         if not words:
             raise RuntimeError("ERC20 decimals call returned empty response")
+        return int(words[0])
+
+    def get_erc20_balance(self, chain_code: str, token_address: str, wallet_address: str) -> int:
+        data = f"{ERC20_BALANCE_OF_SELECTOR}{_encode_address(wallet_address)}"
+        words = self._eth_call_words(chain_code, token_address, data)
+        if not words:
+            return 0
+        return int(words[0])
+
+    def get_vault_asset(self, chain_code: str, vault_address: str) -> str:
+        words = self._eth_call_words(chain_code, vault_address, ERC4626_ASSET_SELECTOR)
+        if not words:
+            raise RuntimeError("ERC4626 asset() returned empty response")
+        return _decode_address_word(words[0])
+
+    def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
+        data = f"{ERC4626_CONVERT_TO_ASSETS_SELECTOR}{_encode_uint(shares)}"
+        words = self._eth_call_words(chain_code, vault_address, data)
+        if not words:
+            raise RuntimeError("ERC4626 convertToAssets() returned empty response")
         return int(words[0])
 
 
@@ -472,6 +519,74 @@ class MorphoAdapter:
 
         return runtimes, issues, block_number_or_slot
 
+    def _collect_chain_vault_runtime(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        chain_code: str,
+        chain_config: MorphoChainConfig,
+    ) -> tuple[dict[str, _MorphoVaultRuntime], list[DataQualityIssue]]:
+        runtimes: dict[str, _MorphoVaultRuntime] = {}
+        issues: list[DataQualityIssue] = []
+
+        for vault in chain_config.vaults:
+            market_ref = canonical_address(vault.address)
+
+            asset_address = (
+                canonical_address(vault.asset_address) if vault.asset_address is not None else None
+            )
+            if asset_address is None:
+                try:
+                    asset_address = canonical_address(
+                        self.rpc_client.get_vault_asset(chain_code, market_ref)
+                    )
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="morpho_vault_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            market_ref=market_ref,
+                            payload_json={"field": "asset_address"},
+                        )
+                    )
+                    continue
+
+            asset_decimals = vault.asset_decimals
+            if asset_decimals is None:
+                try:
+                    asset_decimals = self.rpc_client.get_erc20_decimals(chain_code, asset_address)
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="morpho_vault_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            market_ref=market_ref,
+                            payload_json={
+                                "field": "asset_decimals",
+                                "asset_address": asset_address,
+                            },
+                        )
+                    )
+                    continue
+
+            asset_symbol = (vault.asset_symbol or "").strip().upper() or "UNKNOWN"
+
+            runtimes[market_ref] = _MorphoVaultRuntime(
+                config=vault,
+                market_ref=market_ref,
+                asset_address=asset_address,
+                asset_symbol=asset_symbol,
+                asset_decimals=int(asset_decimals),
+            )
+
+        return runtimes, issues
+
     def collect_positions(
         self,
         *,
@@ -489,6 +604,12 @@ class MorphoAdapter:
                 chain_config=chain_config,
             )
             issues.extend(runtime_issues)
+            vault_runtimes, vault_issues = self._collect_chain_vault_runtime(
+                as_of_ts_utc=as_of_ts_utc,
+                chain_code=chain_code,
+                chain_config=chain_config,
+            )
+            issues.extend(vault_issues)
 
             morpho_address = canonical_address(chain_config.morpho)
             for wallet in chain_config.wallets:
@@ -643,6 +764,90 @@ class MorphoAdapter:
                             reward_apy=Decimal("0"),
                             equity_usd=equity_usd,
                             ltv=ltv,
+                            source="rpc",
+                            block_number_or_slot=block_number_or_slot,
+                        )
+                    )
+
+                for market_ref, vault_runtime in vault_runtimes.items():
+                    try:
+                        shares = self.rpc_client.get_erc20_balance(
+                            chain_code,
+                            market_ref,
+                            wallet_address,
+                        )
+                        assets_raw = (
+                            self.rpc_client.convert_to_assets(chain_code, market_ref, shares)
+                            if shares > 0
+                            else 0
+                        )
+                    except Exception as exc:
+                        issues.append(
+                            self._issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="morpho_vault_read_failed",
+                                error_message=str(exc),
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                market_ref=market_ref,
+                                payload_json={"field": "balance_or_convert_to_assets"},
+                            )
+                        )
+                        continue
+
+                    if assets_raw <= 0:
+                        continue
+
+                    supplied_amount = normalize_raw_amount(assets_raw, vault_runtime.asset_decimals)
+                    if supplied_amount <= 0:
+                        continue
+
+                    asset_price = self._price_from_map(
+                        prices_by_token,
+                        chain_code=chain_code,
+                        token_address=vault_runtime.asset_address,
+                        symbol=vault_runtime.asset_symbol,
+                    )
+                    if asset_price is None:
+                        asset_price = Decimal("0")
+                        issues.append(
+                            self._issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="price_missing",
+                                error_message=(
+                                    "no price available for Morpho vault underlying token"
+                                ),
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                market_ref=market_ref,
+                                payload_json={
+                                    "symbol": vault_runtime.asset_symbol,
+                                    "asset_address": vault_runtime.asset_address,
+                                },
+                            )
+                        )
+
+                    supplied_usd = supplied_amount * asset_price
+
+                    positions.append(
+                        PositionSnapshotInput(
+                            as_of_ts_utc=as_of_ts_utc,
+                            protocol_code=self.protocol_code,
+                            chain_code=chain_code,
+                            wallet_address=wallet_address,
+                            market_ref=market_ref,
+                            position_key=self._position_key(chain_code, wallet_address, market_ref),
+                            supplied_amount=supplied_amount,
+                            supplied_usd=supplied_usd,
+                            borrowed_amount=Decimal("0"),
+                            borrowed_usd=Decimal("0"),
+                            supply_apy=Decimal("0"),
+                            borrow_apy=Decimal("0"),
+                            reward_apy=Decimal("0"),
+                            equity_usd=supplied_usd,
+                            ltv=None,
                             source="rpc",
                             block_number_or_slot=block_number_or_slot,
                         )

@@ -44,6 +44,17 @@ class FakeEulerClient:
         return 60_000_000
 
 
+class FakeSupplyOnlyEulerClient(FakeEulerClient):
+    def get_total_borrows(self, chain_code: str, vault_address: str) -> int:
+        raise RuntimeError("execution reverted")
+
+    def get_interest_rate(self, chain_code: str, vault_address: str) -> int:
+        raise RuntimeError("execution reverted")
+
+    def get_debt_of(self, chain_code: str, vault_address: str, wallet_address: str) -> int:
+        raise RuntimeError("execution reverted")
+
+
 def _config() -> MarketsConfig:
     return MarketsConfig.model_validate(
         {
@@ -128,3 +139,26 @@ def test_euler_asset_mismatch_uses_configured_pricing_surface() -> None:
     assert any(issue.error_type == "euler_asset_mismatch" for issue in market_issues)
     assert not any(issue.error_type == "price_missing" for issue in position_issues)
     assert not any(issue.error_type == "price_missing" for issue in market_issues)
+
+
+def test_euler_supply_only_vault_gracefully_falls_back_when_debt_calls_revert() -> None:
+    adapter = EulerV2Adapter(markets_config=_config(), rpc_client=FakeSupplyOnlyEulerClient())
+    as_of = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+    prices = {("avalanche", "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"): Decimal("1")}
+
+    positions, position_issues = adapter.collect_positions(
+        as_of_ts_utc=as_of, prices_by_token=prices
+    )
+    markets, market_issues = adapter.collect_markets(as_of_ts_utc=as_of, prices_by_token=prices)
+
+    assert positions
+    assert markets
+    assert all(row.borrowed_usd == Decimal("0") for row in positions)
+
+    error_types = {issue.error_type for issue in position_issues}
+    assert "euler_total_borrows_read_failed" in error_types
+    assert "euler_vault_read_failed" not in error_types
+    assert "euler_position_read_failed" not in error_types
+
+    market_error_types = {issue.error_type for issue in market_issues}
+    assert "euler_total_borrows_read_failed" in market_error_types

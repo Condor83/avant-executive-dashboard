@@ -58,6 +58,39 @@ def test_normalize_token_symbol_aliases() -> None:
     assert normalize_token_symbol("WETH") == "ETH"
     assert normalize_token_symbol("USDC.e") == "USDC"
     assert normalize_token_symbol("USD₮0") == "USDT0"
+    assert normalize_token_symbol("wbravUSDC") == "USDC"
+
+
+def test_db_leg_token_symbol_prefers_morpho_loan_token_for_no_debt_supply() -> None:
+    symbol = debank_coverage._db_leg_token_symbol(
+        protocol_code="morpho",
+        leg_type="supply",
+        base_symbol="FRXUSD",
+        collateral_symbol="SAVUSD",
+        metadata_json={"loan_token": "frxUSD", "collateral_token": "savUSD"},
+        supplied_usd=Decimal("100"),
+        borrowed_usd=Decimal("0"),
+    )
+
+    assert symbol == "frxUSD"
+
+
+def test_db_leg_token_symbol_prefers_euler_collateral_for_consumer_supply() -> None:
+    symbol = debank_coverage._db_leg_token_symbol(
+        protocol_code="euler_v2",
+        leg_type="supply",
+        base_symbol="USDC",
+        collateral_symbol="savUSD",
+        metadata_json={
+            "kind": "consumer_market",
+            "borrow_token_symbol": "USDC",
+            "collateral_token_symbol": "savUSD",
+        },
+        supplied_usd=Decimal("100"),
+        borrowed_usd=Decimal("50"),
+    )
+
+    assert symbol == "savUSD"
 
 
 def test_flatten_payload_legs_normalizes_aliases_and_filters_rewards() -> None:

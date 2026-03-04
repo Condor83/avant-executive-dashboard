@@ -78,6 +78,22 @@ class FakeMorphoClient:
         assert chain_code == "ethereum"
         return self.collateral_decimals[token_address]
 
+    def get_erc20_balance(self, chain_code: str, token_address: str, wallet_address: str) -> int:
+        assert chain_code == "ethereum"
+        assert token_address
+        assert wallet_address
+        return 0
+
+    def get_vault_asset(self, chain_code: str, vault_address: str) -> str:
+        assert chain_code == "ethereum"
+        assert vault_address
+        return "0x0000000000000000000000000000000000000000"
+
+    def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
+        assert chain_code == "ethereum"
+        assert vault_address
+        return shares
+
 
 def _minimal_morpho_config() -> tuple[MarketsConfig, list[str], list[str], list[str | None]]:
     full = load_markets_config(Path("config/markets.yaml"))

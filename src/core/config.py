@@ -59,6 +59,9 @@ class MorphoMarket(ConfigModel):
 class MorphoVault(ConfigModel):
     address: str
     note: str | None = None
+    asset_address: str | None = None
+    asset_symbol: str | None = None
+    asset_decimals: int | None = Field(default=None, ge=0, le=36)
 
 
 class MorphoChainConfig(ConfigModel):
@@ -79,6 +82,15 @@ class EulerVault(ConfigModel):
 class EulerChainConfig(ConfigModel):
     wallets: list[str]
     vaults: list[EulerVault]
+    account_ids: list[int] = Field(default_factory=lambda: [0])
+
+    @model_validator(mode="after")
+    def validate_account_ids(self) -> EulerChainConfig:
+        if not self.account_ids:
+            raise ValueError("euler_v2 account_ids must not be empty")
+        if any(account_id < 0 for account_id in self.account_ids):
+            raise ValueError("euler_v2 account_ids must be non-negative")
+        return self
 
 
 class DolomiteMarket(ConfigModel):

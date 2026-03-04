@@ -182,6 +182,7 @@ morpho:
       - '0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD'
       - '0x7bee8D37FBA61a6251a08b957d502C56E2A50FAb'
       - '0x887fD380C1e4Cc28e119917015fE7fb0062c5d67'
+      - '0x920EefBCf1f5756109952E6Ff6dA1Cab950C64d7'
       - '0x95d78eE506c616e88aDb7b6e4517F40c888D6B78'
       - '0xaA0d9205AE55dCF6321dF019da9265B12bA41a7f'
     markets:
@@ -198,6 +199,10 @@ morpho:
     - id: '0xf08d3de5dada3388281eda38fe364cb1a04867a61124d74d1cf1215b5b01b577'
       loan_token: PYUSD
       collateral_token: USDe
+      loan_decimals: 6
+    - id: '0x90ef0c5a0dc7c4de4ad4585002d44e9d411d212d2f6258e94948beecf8b4c0d5'
+      loan_token: PYUSD
+      collateral_token: sUSDe
       loan_decimals: 6
     - id: '0xed808d36371491748eaa28b16533cafc270e705139e3ff807ea17ce60d6938c9'
       loan_token: frxUSD
@@ -235,6 +240,14 @@ morpho:
       loan_token: USDC
       collateral_token: WBTC
       loan_decimals: 6
+    - id: '0x66c19b7c49ce674e964eb917d117d987b693f508f2c1e3f71ac914454ed42e13'
+      loan_token: WETH
+      collateral_token: savETH
+      loan_decimals: 18
+    - id: '0xd98cd88ae5b336086b39fb1d62ba6171282e946105b010143f0e89f8fe7cff36'
+      loan_token: WETH
+      collateral_token: savETH
+      loan_decimals: 18
     - id: '0x6b50b52c8221565d68441a2e5daa3fce8077cdf2e34ff69ef9716c22b4a8b138'
       loan_token: USDC
       collateral_token: USDC
@@ -264,6 +277,9 @@ morpho:
     vaults:
     - address: '0x951a9f4A2cE19B9DeA6B37e691d076A345b6c0F8'
       note: MetaMorpho vault
+      asset_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      asset_symbol: USDC
+      asset_decimals: 6
 euler_v2:
   avalanche:
     wallets:
@@ -272,6 +288,10 @@ euler_v2:
       - '0x95d78eE506c616e88aDb7b6e4517F40c888D6B78'
       - '0x9d272E3b0EafBc171C75dEF5fE3952858F7E06Aa'
       - '0xD1b366727b30d996B81018BB31eC37f64Ed8aD28'
+    account_ids:
+      - 0
+      - 1
+      - 2
     vaults:
     - address: '0x37ca03aD51B8ff79aAD35FadaCBA4CEDF0C3e74e'
       symbol: eUSDC
@@ -288,6 +308,11 @@ euler_v2:
       asset_address: '0x06d47F3fb376649c3A9Dafe069B3D6E35572219E'
       asset_symbol: savUSD
       asset_decimals: 18
+    - address: '0x4af3abe954259fb70b97c57ebd7ac1eb822028ef'
+      symbol: eava9SUSDC
+      asset_address: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E'
+      asset_symbol: USDC
+      asset_decimals: 6
   bera:
     wallets:
       - '0xC1d023141ad6935F81E5286E577768b75C9Ff8EB'
