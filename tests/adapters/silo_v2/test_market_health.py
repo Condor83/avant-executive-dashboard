@@ -1,4 +1,4 @@
-"""Silo v2 adapter market health and top-holder tests."""
+"""Silo v2 adapter market health tests."""
 
 from __future__ import annotations
 
@@ -53,28 +53,9 @@ class FixtureSiloClient(SiloClient):
     def get_top_holders(
         self, *, chain_code: str, market_ref: str, limit: int
     ) -> list[SiloHolderPosition]:
-        assert chain_code == "avalanche"
-        assert limit == 50
-        if market_ref == "142":
-            return [
-                SiloHolderPosition(
-                    wallet_address="0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD",  # Avant
-                    supplied_raw=400_000 * 10**18,
-                    borrowed_raw=120_000 * 10**6,
-                ),
-                SiloHolderPosition(
-                    wallet_address="0x1111111111111111111111111111111111111111",
-                    supplied_raw=250_000 * 10**18,
-                    borrowed_raw=50_000 * 10**6,
-                ),
-            ]
-        return [
-            SiloHolderPosition(
-                wallet_address="0x2222222222222222222222222222222222222222",
-                supplied_raw=3 * 10**18,
-                borrowed_raw=10_000_000,
-            )
-        ]
+        raise AssertionError(
+            f"holder reads should be disabled; got {chain_code=} {market_ref=} {limit=}"
+        )
 
 
 def _price_map(consumer_markets: ConsumerMarketsConfig) -> dict[tuple[str, str], Decimal]:
@@ -121,7 +102,7 @@ def test_silo_market_health_utilization_identity() -> None:
         assert Decimal("0") <= snapshot.utilization <= Decimal("1.5")
 
 
-def test_silo_positions_are_normalized_and_filtered() -> None:
+def test_silo_positions_are_disabled() -> None:
     markets_config: MarketsConfig = load_markets_config("config/markets.yaml")
     consumer_markets = load_consumer_markets_config("config/consumer_markets.yaml")
     adapter = SiloV2Adapter(
@@ -137,19 +118,4 @@ def test_silo_positions_are_normalized_and_filtered() -> None:
     )
 
     assert not issues
-    assert positions
-
-    # Avant strategy wallet is excluded from consumer top-holder output.
-    assert all(
-        canonical_address(position.wallet_address)
-        != canonical_address("0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD")
-        for position in positions
-    )
-
-    for position in positions:
-        assert position.protocol_code == "silo_v2"
-        assert position.supplied_usd >= Decimal("0")
-        assert position.borrowed_usd >= Decimal("0")
-        assert position.equity_usd == position.supplied_usd - position.borrowed_usd
-        assert Decimal("0") <= position.supply_apy <= Decimal("1")
-        assert Decimal("0") <= position.borrow_apy <= Decimal("1")
+    assert positions == []

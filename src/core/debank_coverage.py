@@ -310,8 +310,6 @@ def _configured_surface(markets_config: MarketsConfig) -> tuple[set[str], set[st
         configured_protocols.add("kamino")
     if markets_config.zest:
         configured_protocols.add("zest")
-    # Silo v2 strategy surfaces are currently configured via consumer_markets.yaml.
-    configured_protocols.add("silo_v2")
     if markets_config.traderjoe_lp:
         configured_protocols.add("traderjoe_lp")
     if markets_config.stakedao:
