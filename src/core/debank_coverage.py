@@ -63,6 +63,8 @@ PROTOCOL_ALIASES: dict[str, str] = {
     "zest": "zest",
 }
 
+TOKEN_CANONICALIZATION_MAX_RELATIVE_DELTA = Decimal("0.05")
+
 
 @dataclass(frozen=True)
 class LegKey:
@@ -546,6 +548,113 @@ def _preflight_status(
     )
 
 
+def _bucket_key(key: LegKey) -> tuple[str, str, str, str]:
+    return (
+        key.wallet_address,
+        key.chain_code,
+        key.protocol_code,
+        key.leg_type,
+    )
+
+
+def _canonicalize_debank_token_keys_to_db(
+    *,
+    debank_aggregated: dict[LegKey, Decimal],
+    debank_in_scope: dict[LegKey, bool],
+    db_aggregated: dict[LegKey, Decimal],
+    max_relative_delta: Decimal = TOKEN_CANONICALIZATION_MAX_RELATIVE_DELTA,
+) -> tuple[dict[LegKey, Decimal], dict[LegKey, bool]]:
+    """Remap DeBank token symbols to DB token symbols by bucketed notional proximity.
+
+    DB/RPC symbols are treated as canonical. DeBank symbol keys are remapped only when:
+    - token symbol already matches DB exactly, or
+    - nearest unmatched DB token in same bucket is within `max_relative_delta`.
+    """
+
+    if max_relative_delta < 0:
+        raise ValueError("max_relative_delta must be non-negative")
+
+    db_by_bucket: dict[tuple[str, str, str, str], list[tuple[LegKey, Decimal]]] = defaultdict(list)
+    for db_key, db_usd in db_aggregated.items():
+        db_by_bucket[_bucket_key(db_key)].append((db_key, db_usd))
+
+    debank_by_bucket: dict[tuple[str, str, str, str], list[tuple[LegKey, Decimal]]] = defaultdict(
+        list
+    )
+    for debank_key, debank_usd in debank_aggregated.items():
+        debank_by_bucket[_bucket_key(debank_key)].append((debank_key, debank_usd))
+
+    canonicalized: dict[LegKey, Decimal] = defaultdict(lambda: Decimal("0"))
+    canonicalized_in_scope: dict[LegKey, bool] = {}
+
+    for bucket, debank_items in debank_by_bucket.items():
+        db_items = db_by_bucket.get(bucket, [])
+        db_exact_by_symbol: dict[str, tuple[LegKey, Decimal]] = {
+            db_key.token_symbol: (db_key, db_usd) for db_key, db_usd in db_items
+        }
+        used_db_symbols: set[str] = set()
+        deferred: list[tuple[LegKey, Decimal]] = []
+
+        # Pass 1: exact symbol matches to preserve deterministic canonical keys.
+        for debank_key, debank_usd in sorted(debank_items, key=lambda item: item[1], reverse=True):
+            exact = db_exact_by_symbol.get(debank_key.token_symbol)
+            if exact is None:
+                deferred.append((debank_key, debank_usd))
+                continue
+
+            canonical_key, _db_usd = exact
+            used_db_symbols.add(canonical_key.token_symbol)
+            canonicalized[canonical_key] += debank_usd
+            canonicalized_in_scope[canonical_key] = canonicalized_in_scope.get(
+                canonical_key, False
+            ) or debank_in_scope.get(debank_key, False)
+
+        # Pass 2: remap unmatched DeBank symbols to nearest unmatched DB symbol in bucket.
+        for debank_key, debank_usd in sorted(deferred, key=lambda item: item[1], reverse=True):
+            candidates = [
+                (db_key, db_usd)
+                for db_key, db_usd in db_items
+                if db_key.token_symbol not in used_db_symbols
+            ]
+            if not candidates:
+                canonicalized[debank_key] += debank_usd
+                canonicalized_in_scope[debank_key] = canonicalized_in_scope.get(
+                    debank_key, False
+                ) or debank_in_scope.get(debank_key, False)
+                continue
+
+            best_key: LegKey | None = None
+            best_delta: Decimal | None = None
+            for candidate_key, candidate_usd in candidates:
+                delta = abs(candidate_usd - debank_usd)
+                if best_delta is None or delta < best_delta:
+                    best_delta = delta
+                    best_key = candidate_key
+
+            if best_key is None or best_delta is None:
+                canonicalized[debank_key] += debank_usd
+                canonicalized_in_scope[debank_key] = canonicalized_in_scope.get(
+                    debank_key, False
+                ) or debank_in_scope.get(debank_key, False)
+                continue
+
+            denominator = debank_usd if debank_usd > 0 else Decimal("1")
+            relative_delta = best_delta / denominator
+            if relative_delta <= max_relative_delta:
+                used_db_symbols.add(best_key.token_symbol)
+                canonicalized[best_key] += debank_usd
+                canonicalized_in_scope[best_key] = canonicalized_in_scope.get(
+                    best_key, False
+                ) or debank_in_scope.get(debank_key, False)
+            else:
+                canonicalized[debank_key] += debank_usd
+                canonicalized_in_scope[debank_key] = canonicalized_in_scope.get(
+                    debank_key, False
+                ) or debank_in_scope.get(debank_key, False)
+
+    return dict(canonicalized), canonicalized_in_scope
+
+
 def _percent(numerator: Decimal, denominator: Decimal) -> Decimal:
     if denominator <= 0:
         return Decimal("0")
@@ -663,9 +772,14 @@ def run_debank_coverage_audit(
         as_of_ts_utc=resolved_as_of,
         min_leg_usd=min_leg_usd,
     )
+    debank_canonicalized, debank_canonicalized_in_scope = _canonicalize_debank_token_keys_to_db(
+        debank_aggregated=debank_aggregated,
+        debank_in_scope=debank_in_scope,
+        db_aggregated=db_aggregated,
+    )
 
     matches: list[LegMatchRow] = []
-    for key, debank_usd in debank_aggregated.items():
+    for key, debank_usd in debank_canonicalized.items():
         db_usd = db_aggregated.get(key)
         if db_usd is None:
             matches.append(
@@ -676,7 +790,7 @@ def run_debank_coverage_audit(
                     matched=False,
                     within_tolerance=None,
                     delta_usd=None,
-                    in_config_surface=debank_in_scope.get(key, False),
+                    in_config_surface=debank_canonicalized_in_scope.get(key, False),
                 )
             )
             continue
@@ -690,7 +804,7 @@ def run_debank_coverage_audit(
                 matched=True,
                 within_tolerance=delta <= match_tolerance_usd,
                 delta_usd=delta,
-                in_config_surface=debank_in_scope.get(key, False),
+                in_config_surface=debank_canonicalized_in_scope.get(key, False),
             )
         )
 
@@ -712,7 +826,7 @@ def run_debank_coverage_audit(
     unmatched_rows = sorted(matches, key=lambda row: row.debank_usd, reverse=True)
     unmatched_rows = [row for row in unmatched_rows if not row.matched]
 
-    db_only_leg_count = sum(1 for key in db_aggregated if key not in debank_aggregated)
+    db_only_leg_count = sum(1 for key in db_aggregated if key not in debank_canonicalized)
 
     wallet_errors.sort(key=lambda row: row.wallet_address)
     return DebankCoverageAuditResult(

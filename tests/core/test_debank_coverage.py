@@ -175,3 +175,140 @@ def test_run_debank_coverage_audit_applies_tolerance_and_config_surface(monkeypa
     assert result.totals_all.coverage_pct == Decimal("100")
     assert result.totals_configured_surface.total_legs == 1
     assert not result.unmatched_rows
+
+
+def test_run_debank_coverage_audit_remaps_debank_symbol_to_db_canonical_when_close(
+    monkeypatch,
+) -> None:
+    wallet = "0x2222222222222222222222222222222222222222"
+    as_of_ts = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
+
+    payload: list[dict[str, object]] = [
+        {
+            "id": "aave_v3",
+            "chain": "eth",
+            "portfolio_item_list": [
+                {
+                    "detail": {
+                        "supply_token_list": [{"symbol": "USDE", "usd_value": "1000"}],
+                    }
+                }
+            ],
+        }
+    ]
+    client = _StubClient({wallet: payload})
+
+    monkeypatch.setattr(
+        debank_coverage,
+        "_strategy_wallets_from_db",
+        lambda session: ([wallet], [wallet]),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_resolve_snapshot_as_of",
+        lambda session, requested_as_of: as_of_ts,
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_preflight_status",
+        lambda session, as_of_ts_utc, configured_protocols: PreflightStatus(
+            missing_protocol_dimensions=[],
+            zero_snapshot_protocols=[],
+            snapshot_counts_by_protocol={"aave_v3": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_load_db_legs",
+        lambda session, as_of_ts_utc, min_leg_usd: {
+            LegKey(
+                wallet_address=wallet,
+                chain_code="ethereum",
+                protocol_code="aave_v3",
+                leg_type="supply",
+                token_symbol="SUSDE",
+            ): Decimal("1000.5")
+        },
+    )
+
+    result = run_debank_coverage_audit(
+        session=cast(Session, object()),
+        client=client,
+        markets_config=_markets_config_with_spark(),
+        as_of_ts_utc=None,
+        min_leg_usd=Decimal("1"),
+        match_tolerance_usd=Decimal("1"),
+        max_concurrency=1,
+    )
+
+    assert result.totals_all.total_legs == 1
+    assert result.totals_all.matched_legs == 1
+    assert not result.unmatched_rows
+
+
+def test_run_debank_coverage_audit_does_not_remap_when_notional_far(monkeypatch) -> None:
+    wallet = "0x3333333333333333333333333333333333333333"
+    as_of_ts = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
+
+    payload: list[dict[str, object]] = [
+        {
+            "id": "aave_v3",
+            "chain": "eth",
+            "portfolio_item_list": [
+                {
+                    "detail": {
+                        "supply_token_list": [{"symbol": "USDE", "usd_value": "1000"}],
+                    }
+                }
+            ],
+        }
+    ]
+    client = _StubClient({wallet: payload})
+
+    monkeypatch.setattr(
+        debank_coverage,
+        "_strategy_wallets_from_db",
+        lambda session: ([wallet], [wallet]),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_resolve_snapshot_as_of",
+        lambda session, requested_as_of: as_of_ts,
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_preflight_status",
+        lambda session, as_of_ts_utc, configured_protocols: PreflightStatus(
+            missing_protocol_dimensions=[],
+            zero_snapshot_protocols=[],
+            snapshot_counts_by_protocol={"aave_v3": 1},
+        ),
+    )
+    monkeypatch.setattr(
+        debank_coverage,
+        "_load_db_legs",
+        lambda session, as_of_ts_utc, min_leg_usd: {
+            LegKey(
+                wallet_address=wallet,
+                chain_code="ethereum",
+                protocol_code="aave_v3",
+                leg_type="supply",
+                token_symbol="SUSDE",
+            ): Decimal("1300")
+        },
+    )
+
+    result = run_debank_coverage_audit(
+        session=cast(Session, object()),
+        client=client,
+        markets_config=_markets_config_with_spark(),
+        as_of_ts_utc=None,
+        min_leg_usd=Decimal("1"),
+        match_tolerance_usd=Decimal("1"),
+        max_concurrency=1,
+    )
+
+    assert result.totals_all.total_legs == 1
+    assert result.totals_all.matched_legs == 0
+    assert len(result.unmatched_rows) == 1
+    assert result.unmatched_rows[0].key.token_symbol == "USDE"
