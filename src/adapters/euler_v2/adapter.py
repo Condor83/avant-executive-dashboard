@@ -550,23 +550,24 @@ class EulerV2Adapter:
                 )
                 continue
 
-            debt_supported = True
-            try:
-                total_borrows = self.rpc_client.get_total_borrows(chain_code, market_ref)
-            except Exception as exc:
-                debt_supported = False
-                total_borrows = 0
-                issues.append(
-                    self._issue(
-                        as_of_ts_utc=as_of_ts_utc,
-                        stage=stage,
-                        error_type="euler_total_borrows_read_failed",
-                        error_message=str(exc),
-                        chain_code=chain_code,
-                        market_ref=market_ref,
-                        payload_json={"symbol": vault.symbol},
+            debt_supported = bool(vault.debt_supported)
+            total_borrows = 0
+            if debt_supported:
+                try:
+                    total_borrows = self.rpc_client.get_total_borrows(chain_code, market_ref)
+                except Exception as exc:
+                    debt_supported = False
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage=stage,
+                            error_type="euler_total_borrows_read_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            market_ref=market_ref,
+                            payload_json={"symbol": vault.symbol},
+                        )
                     )
-                )
 
             interest_rate = 0
             if debt_supported:

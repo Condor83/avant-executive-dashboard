@@ -26,6 +26,23 @@ CHAIN_TO_DEFILLAMA: dict[str, str] = {
     "sonic": "sonic",
 }
 
+# Targeted pricing controls for tokens missing direct DefiLlama coverage.
+MANUAL_PRICE_OVERRIDES_USD: dict[tuple[str, str], Decimal] = {
+    # Linea avUSD
+    ("linea", "0x37c44fc08e403efc0946c0623cb1164a52ce1576"): Decimal("1"),
+}
+
+PRICE_ALIAS_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
+    # Linea savUSD -> Avalanche savUSD
+    (
+        "linea",
+        "0x5c247948fd58bb02b6c4678d9940f5e6b9af1127",
+    ): (
+        "avalanche",
+        "0x06d47f3fb376649c3a9dafe069b3d6e35572219e",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class PriceFetchResult:
@@ -96,10 +113,38 @@ class PriceOracle:
         issues: list[DataQualityIssue] = []
         quotes: list[PriceQuote] = []
 
-        request_by_coin: dict[str, list[PriceRequest]] = {}
+        request_by_coin: dict[str, list[tuple[PriceRequest, tuple[str, str] | None]]] = {}
         for request in requests:
-            coin_id = self.coin_id_for(request.chain_code, request.address_or_mint)
+            normalized_address = self._normalize_address(request.address_or_mint)
+            token_key = (request.chain_code, normalized_address)
+
+            overridden_price = MANUAL_PRICE_OVERRIDES_USD.get(token_key)
+            if overridden_price is not None:
+                quotes.append(
+                    PriceQuote(
+                        token_id=request.token_id,
+                        chain_code=request.chain_code,
+                        address_or_mint=normalized_address,
+                        price_usd=overridden_price,
+                    )
+                )
+                continue
+
+            alias_target = PRICE_ALIAS_TARGETS.get(token_key)
+            if alias_target is not None:
+                alias_chain_code, alias_address = alias_target
+                coin_id = self.coin_id_for(alias_chain_code, alias_address)
+            else:
+                coin_id = self.coin_id_for(request.chain_code, request.address_or_mint)
+
             if coin_id is None:
+                payload_json: dict[str, object] = {
+                    "token_id": request.token_id,
+                    "symbol": request.symbol,
+                }
+                if alias_target is not None:
+                    payload_json["alias_target_chain"] = alias_target[0]
+                    payload_json["alias_target_address"] = alias_target[1]
                 issues.append(
                     DataQualityIssue(
                         as_of_ts_utc=as_of_ts_utc,
@@ -111,11 +156,11 @@ class PriceOracle:
                         protocol_code=None,
                         chain_code=request.chain_code,
                         market_ref=request.address_or_mint,
-                        payload_json={"token_id": request.token_id, "symbol": request.symbol},
+                        payload_json=payload_json,
                     )
                 )
                 continue
-            request_by_coin.setdefault(coin_id, []).append(request)
+            request_by_coin.setdefault(coin_id, []).append((request, alias_target))
 
         if not request_by_coin:
             return PriceFetchResult(quotes=quotes, issues=issues)
@@ -130,7 +175,14 @@ class PriceOracle:
                 payload = response.json()
             except Exception as exc:  # pragma: no cover - network failure path
                 for coin_id in chunk:
-                    for request in request_by_coin[coin_id]:
+                    for request, alias_target in request_by_coin[coin_id]:
+                        payload_json = {
+                            "token_id": request.token_id,
+                            "symbol": request.symbol,
+                        }
+                        if alias_target is not None:
+                            payload_json["alias_target_chain"] = alias_target[0]
+                            payload_json["alias_target_address"] = alias_target[1]
                         issues.append(
                             DataQualityIssue(
                                 as_of_ts_utc=as_of_ts_utc,
@@ -139,10 +191,7 @@ class PriceOracle:
                                 error_message=str(exc),
                                 chain_code=request.chain_code,
                                 market_ref=request.address_or_mint,
-                                payload_json={
-                                    "token_id": request.token_id,
-                                    "symbol": request.symbol,
-                                },
+                                payload_json=payload_json,
                             )
                         )
                 continue
@@ -157,7 +206,14 @@ class PriceOracle:
         for coin_id, requests_for_coin in request_by_coin.items():
             price_usd = self._cache.get(coin_id)
             if price_usd is None:
-                for request in requests_for_coin:
+                for request, alias_target in requests_for_coin:
+                    payload_json = {
+                        "token_id": request.token_id,
+                        "symbol": request.symbol,
+                    }
+                    if alias_target is not None:
+                        payload_json["alias_target_chain"] = alias_target[0]
+                        payload_json["alias_target_address"] = alias_target[1]
                     issues.append(
                         DataQualityIssue(
                             as_of_ts_utc=as_of_ts_utc,
@@ -166,12 +222,12 @@ class PriceOracle:
                             error_message="DefiLlama response did not include a price for token",
                             chain_code=request.chain_code,
                             market_ref=request.address_or_mint,
-                            payload_json={"token_id": request.token_id, "symbol": request.symbol},
+                            payload_json=payload_json,
                         )
                     )
                 continue
 
-            for request in requests_for_coin:
+            for request, _alias_target in requests_for_coin:
                 quotes.append(
                     PriceQuote(
                         token_id=request.token_id,

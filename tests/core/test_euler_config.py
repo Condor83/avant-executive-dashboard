@@ -39,6 +39,7 @@ def _base_payload() -> dict[str, Any]:
 def test_euler_account_ids_default_to_zero() -> None:
     parsed = MarketsConfig.model_validate(_base_payload())
     assert parsed.euler_v2["avalanche"].account_ids == [0]
+    assert parsed.euler_v2["avalanche"].vaults[0].debt_supported is True
 
 
 def test_euler_account_ids_reject_negative_values() -> None:
@@ -47,3 +48,10 @@ def test_euler_account_ids_reject_negative_values() -> None:
 
     with pytest.raises(ValidationError):
         MarketsConfig.model_validate(payload)
+
+
+def test_euler_vault_debt_supported_can_be_disabled() -> None:
+    payload = _base_payload()
+    payload["euler_v2"]["avalanche"]["vaults"][0]["debt_supported"] = False
+    parsed = MarketsConfig.model_validate(payload)
+    assert parsed.euler_v2["avalanche"].vaults[0].debt_supported is False

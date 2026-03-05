@@ -660,6 +660,7 @@ def truncate_dimension_tables(session: Session, dry_run: bool = False) -> None:
       wallet_product_map,
       markets,
       prices,
+      market_overview_daily,
       market_snapshots,
       position_snapshots,
       tokens,

@@ -27,6 +27,7 @@ from adapters.traderjoe_lp import EvmRpcTraderJoeLpClient, TraderJoeLpAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from analytics.alerts import AlertEngine
+from analytics.market_engine import MarketEngine
 from analytics.risk_engine import (
     RiskEngine,
     top_markets_by_kink_risk,
@@ -941,6 +942,30 @@ def compute_daily(
         f" post_strategy_fee_roe_total={post_strategy_fee_roe_total}"
         f" net_roe_total={net_roe_total}"
         f" avant_gop_roe_total={avant_gop_roe_total}"
+    )
+
+
+@compute_app.command("markets")
+def compute_markets(target_date: str = DATE_OPTION) -> None:
+    """Compute daily market overview metrics from canonical snapshots."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    session = Session(get_engine())
+    try:
+        summary = MarketEngine(session).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute markets complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" as_of_ts_utc={summary.as_of_ts_utc.isoformat()}"
+        f" rows_written={summary.rows_written}"
     )
 
 

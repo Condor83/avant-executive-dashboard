@@ -196,6 +196,9 @@ class MarketSnapshot(Base):
     supply_apy: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     borrow_apy: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
     available_liquidity_usd: Mapped[Decimal | None] = mapped_column(Numeric(38, 18), nullable=True)
+    max_ltv: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    liquidation_threshold: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    liquidation_penalty: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     caps_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     irm_params_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     source: Mapped[str] = mapped_column(
@@ -270,6 +273,54 @@ class YieldDaily(Base):
     product: Mapped[Product | None] = relationship()
     protocol: Mapped[Protocol | None] = relationship()
     market: Mapped[Market | None] = relationship()
+
+
+class MarketOverviewDaily(Base):
+    """Derived daily market overview rows at one deterministic as-of timestamp."""
+
+    __tablename__ = "market_overview_daily"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_date",
+            "market_id",
+            name="uq_market_overview_daily_date_market",
+        ),
+    )
+
+    market_overview_daily_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    business_date: Mapped[date] = mapped_column(nullable=False, index=True)
+    as_of_ts_utc: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        index=True,
+    )
+    market_id: Mapped[int] = mapped_column(
+        ForeignKey("markets.market_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(
+        Enum("rpc", "debank", "defillama", name="market_source_enum", native_enum=False),
+        nullable=False,
+    )
+    total_supply_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    total_borrow_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    utilization: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    available_liquidity_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    supply_apy: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    borrow_apy: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    spread_apy: Mapped[Decimal] = mapped_column(Numeric(20, 10), nullable=False)
+    avant_supplied_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    avant_borrowed_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    avant_supply_share: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    avant_borrow_share: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    max_ltv: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    liquidation_threshold: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+    liquidation_penalty: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
+
+    market: Mapped[Market] = relationship()
 
 
 class Alert(Base):

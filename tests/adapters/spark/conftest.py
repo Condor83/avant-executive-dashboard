@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from adapters.aave_v3.adapter import ReserveCaps, ReserveData, UserAccountData, UserReserveData
+from adapters.aave_v3.adapter import (
+    ReserveCaps,
+    ReserveData,
+    ReserveRiskConfiguration,
+    UserAccountData,
+    UserReserveData,
+)
 from adapters.spark.adapter import SparkRpcClient
 from core.config import MarketsConfig, canonical_address, load_markets_config
 
@@ -123,6 +129,19 @@ class FixtureSparkRpcClient(SparkRpcClient):
         return ReserveCaps(
             borrow_cap=8_000_000,
             supply_cap=16_000_000,
+        )
+
+    def get_reserve_risk_configuration(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> ReserveRiskConfiguration:
+        del chain_code, pool_data_provider, asset
+        return ReserveRiskConfiguration(
+            ltv_bps=7_500,
+            liquidation_threshold_bps=8_000,
+            liquidation_bonus_bps=10_400,
         )
 
 

@@ -29,5 +29,13 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "data_quality",
         "yield_daily",
         "alerts",
+        "market_overview_daily",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
+
+    market_snapshot_columns = {
+        column["name"] for column in inspector.get_columns("market_snapshots")
+    }
+    assert {"max_ltv", "liquidation_threshold", "liquidation_penalty"}.issubset(
+        market_snapshot_columns
+    )

@@ -90,6 +90,9 @@ One row per market per snapshot time.
 - supply_apy
 - borrow_apy
 - available_liquidity_usd (optional)
+- max_ltv (optional)
+- liquidation_threshold (optional)
+- liquidation_penalty (optional)
 - caps_json (optional)
 - irm_params_json (optional)
 - source
@@ -130,3 +133,23 @@ One row per market per snapshot time.
 - entity_id
 - payload_json
 - status: `open` | `ack` | `resolved`
+
+### market_overview_daily
+- business_date (Denver date)
+- as_of_ts_utc (single common market+position snapshot timestamp selected for that day)
+- market_id
+- source
+- total_supply_usd
+- total_borrow_usd
+- utilization
+- available_liquidity_usd
+- supply_apy
+- borrow_apy
+- spread_apy = supply_apy - borrow_apy
+- avant_supplied_usd
+- avant_borrowed_usd
+- avant_supply_share (nullable when total_supply_usd <= 0)
+- avant_borrow_share (nullable when total_borrow_usd <= 0)
+- max_ltv (nullable)
+- liquidation_threshold (nullable)
+- liquidation_penalty (nullable)

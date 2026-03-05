@@ -55,7 +55,7 @@ class FakeSupplyOnlyEulerClient(FakeEulerClient):
         raise RuntimeError("execution reverted")
 
 
-def _config() -> MarketsConfig:
+def _config(*, debt_supported: bool = True) -> MarketsConfig:
     return MarketsConfig.model_validate(
         {
             "aave_v3": {},
@@ -73,6 +73,7 @@ def _config() -> MarketsConfig:
                             "asset_address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
                             "asset_symbol": "USDC",
                             "asset_decimals": 6,
+                            "debt_supported": debt_supported,
                         }
                     ],
                 }
@@ -142,7 +143,10 @@ def test_euler_asset_mismatch_uses_configured_pricing_surface() -> None:
 
 
 def test_euler_supply_only_vault_gracefully_falls_back_when_debt_calls_revert() -> None:
-    adapter = EulerV2Adapter(markets_config=_config(), rpc_client=FakeSupplyOnlyEulerClient())
+    adapter = EulerV2Adapter(
+        markets_config=_config(debt_supported=False),
+        rpc_client=FakeSupplyOnlyEulerClient(),
+    )
     as_of = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
     prices = {("avalanche", "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"): Decimal("1")}
 
@@ -155,10 +159,5 @@ def test_euler_supply_only_vault_gracefully_falls_back_when_debt_calls_revert() 
     assert markets
     assert all(row.borrowed_usd == Decimal("0") for row in positions)
 
-    error_types = {issue.error_type for issue in position_issues}
-    assert "euler_total_borrows_read_failed" in error_types
-    assert "euler_vault_read_failed" not in error_types
-    assert "euler_position_read_failed" not in error_types
-
-    market_error_types = {issue.error_type for issue in market_issues}
-    assert "euler_total_borrows_read_failed" in market_error_types
+    assert not position_issues
+    assert not market_issues

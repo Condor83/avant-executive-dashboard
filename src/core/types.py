@@ -84,5 +84,8 @@ class MarketSnapshotInput:
     source: str = "rpc"
     block_number_or_slot: str | None = None
     available_liquidity_usd: Decimal | None = None
+    max_ltv: Decimal | None = None
+    liquidation_threshold: Decimal | None = None
+    liquidation_penalty: Decimal | None = None
     caps_json: dict[str, Any] | None = None
     irm_params_json: dict[str, Any] | None = None

@@ -372,6 +372,10 @@ class MorphoAdapter:
         return total_borrow / total_supply
 
     @staticmethod
+    def _normalize_ltv_from_wad(raw_ltv_wad: int) -> Decimal:
+        return Decimal(raw_ltv_wad) / WAD
+
+    @staticmethod
     def _price_from_map(
         prices_by_token: dict[tuple[str, str], Decimal],
         *,
@@ -940,6 +944,7 @@ class MorphoAdapter:
                         source="rpc",
                         block_number_or_slot=block_number_or_slot,
                         available_liquidity_usd=available_liquidity_usd,
+                        max_ltv=self._normalize_ltv_from_wad(runtime.market_params.lltv),
                         caps_json=None,
                         irm_params_json=irm_params_json,
                     )

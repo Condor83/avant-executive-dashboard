@@ -84,6 +84,11 @@ class SparkAdapter:
         return Decimal(raw_ltv_bps) / BPS
 
     @staticmethod
+    def _normalize_liquidation_penalty(raw_liquidation_bonus_bps: int) -> Decimal:
+        penalty_bps = max(raw_liquidation_bonus_bps - int(BPS), 0)
+        return Decimal(penalty_bps) / BPS
+
+    @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
         if total_supply <= 0:
             return Decimal("0")
@@ -433,6 +438,23 @@ class SparkAdapter:
                         "supply_cap": str(caps.supply_cap),
                     }
 
+                risk_config = self.rpc_client.get_reserve_risk_configuration(
+                    chain_code,
+                    chain_config.pool_data_provider,
+                    market_ref,
+                )
+                max_ltv: Decimal | None = None
+                liquidation_threshold: Decimal | None = None
+                liquidation_penalty: Decimal | None = None
+                if risk_config is not None:
+                    max_ltv = self._normalize_ltv(risk_config.ltv_bps)
+                    liquidation_threshold = self._normalize_ltv(
+                        risk_config.liquidation_threshold_bps
+                    )
+                    liquidation_penalty = self._normalize_liquidation_penalty(
+                        risk_config.liquidation_bonus_bps
+                    )
+
                 irm_params_json = {
                     "supply_rate": {
                         "raw_ray": str(reserve_runtime.reserve_data.liquidity_rate_ray),
@@ -461,6 +483,9 @@ class SparkAdapter:
                         supply_apy=reserve_runtime.supply_apy,
                         borrow_apy=reserve_runtime.borrow_apy,
                         available_liquidity_usd=available_liquidity_usd,
+                        max_ltv=max_ltv,
+                        liquidation_threshold=liquidation_threshold,
+                        liquidation_penalty=liquidation_penalty,
                         caps_json=caps_json,
                         irm_params_json=irm_params_json,
                         source="rpc",

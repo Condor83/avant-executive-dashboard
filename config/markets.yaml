@@ -313,6 +313,7 @@ euler_v2:
       asset_address: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E'
       asset_symbol: USDC
       asset_decimals: 6
+      debt_supported: false
   bera:
     wallets:
       - '0xC1d023141ad6935F81E5286E577768b75C9Ff8EB'

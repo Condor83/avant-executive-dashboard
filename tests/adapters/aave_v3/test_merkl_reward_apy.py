@@ -10,6 +10,7 @@ from adapters.aave_v3.adapter import (
     AaveV3Adapter,
     ReserveCaps,
     ReserveData,
+    ReserveRiskConfiguration,
     UserAccountData,
     UserReserveData,
     _MerklRewardContext,
@@ -106,6 +107,19 @@ class _StubRpc:
     ) -> ReserveCaps:
         del chain_code, pool_data_provider, asset
         return ReserveCaps(borrow_cap=0, supply_cap=0)
+
+    def get_reserve_risk_configuration(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> ReserveRiskConfiguration:
+        del chain_code, pool_data_provider, asset
+        return ReserveRiskConfiguration(
+            ltv_bps=8_000,
+            liquidation_threshold_bps=8_500,
+            liquidation_bonus_bps=10_500,
+        )
 
 
 def _markets() -> MarketsConfig:

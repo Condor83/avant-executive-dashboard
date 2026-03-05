@@ -72,6 +72,7 @@ Current Morpho collateral carry policy:
   - `vaults` list with:
     - vault `address` + `symbol`
     - underlying `asset_address` + `asset_symbol` + `asset_decimals`
+    - optional `debt_supported` (default `true`)
 
 Euler pricing policy:
 - Euler position/market USD valuation uses the configured underlying asset metadata.
@@ -82,6 +83,11 @@ Subaccount behavior:
 - Adapter derives Euler subaccounts from `wallet + account_id`.
 - If a subaccount has exactly one supply vault and one borrow vault and they differ, ingest synthesizes one combined position row with market ref `<supply_vault>/<borrow_vault>`.
 - If non-zero subaccounts have multiple supply/borrow legs that cannot be reduced to one pair, adapter emits `euler_subaccount_pairing_ambiguous` and keeps per-vault rows.
+
+Supply-only vault behavior:
+- Set `debt_supported: false` when a configured Euler vault is collateral-only and does not expose debt reads.
+- Adapter skips `totalBorrows`, `interestRate`, and per-wallet debt reads for that vault.
+- Borrow metrics persist as zero without emitting `euler_total_borrows_read_failed` for that configured surface.
 
 #### Dolomite
 - chain config includes:

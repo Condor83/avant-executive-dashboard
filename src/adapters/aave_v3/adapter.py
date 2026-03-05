@@ -31,6 +31,7 @@ GET_RESERVE_DATA_SELECTOR = "0x35ea6a75"
 GET_USER_RESERVE_DATA_SELECTOR = "0x28dd2d01"
 GET_USER_ACCOUNT_DATA_SELECTOR = "0xbf92857c"
 GET_RESERVE_CAPS_SELECTOR = "0x46fbe558"
+GET_RESERVE_CONFIGURATION_DATA_SELECTOR = "0x3e150141"
 
 
 def normalize_raw_amount(raw_amount: int, decimals: int) -> Decimal:
@@ -117,6 +118,13 @@ class ReserveCaps:
     supply_cap: int
 
 
+@dataclass(frozen=True)
+class ReserveRiskConfiguration:
+    ltv_bps: int
+    liquidation_threshold_bps: int
+    liquidation_bonus_bps: int
+
+
 class AaveV3RpcClient(Protocol):
     """Protocol for Aave v3 reads used by the adapter."""
 
@@ -158,6 +166,14 @@ class AaveV3RpcClient(Protocol):
         asset: str,
     ) -> ReserveCaps | None:
         """Return reserve caps if available."""
+
+    def get_reserve_risk_configuration(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> ReserveRiskConfiguration | None:
+        """Return reserve-level LTV/liquidation parameters if available."""
 
 
 class EvmRpcAaveV3Client:
@@ -286,6 +302,32 @@ class EvmRpcAaveV3Client:
             supply_cap=words[1],
         )
 
+    def get_reserve_risk_configuration(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> ReserveRiskConfiguration | None:
+        try:
+            words = self._eth_call(
+                chain_code,
+                pool_data_provider,
+                _encode_call_data(GET_RESERVE_CONFIGURATION_DATA_SELECTOR, asset),
+            )
+        except Exception:
+            return None
+
+        # Expected response shape from Aave/Spark PoolDataProvider:
+        # decimals, ltv, liquidationThreshold, liquidationBonus, reserveFactor, ...
+        if len(words) < 4:
+            return None
+
+        return ReserveRiskConfiguration(
+            ltv_bps=int(words[1]),
+            liquidation_threshold_bps=int(words[2]),
+            liquidation_bonus_bps=int(words[3]),
+        )
+
 
 @dataclass(frozen=True)
 class _ReserveRuntime:
@@ -354,6 +396,12 @@ class AaveV3Adapter:
     @staticmethod
     def _normalize_ltv(raw_ltv_bps: int) -> Decimal:
         return Decimal(raw_ltv_bps) / BPS
+
+    @staticmethod
+    def _normalize_liquidation_penalty(raw_liquidation_bonus_bps: int) -> Decimal:
+        # Aave liquidation bonus is encoded as 10000 + penalty_bps.
+        penalty_bps = max(raw_liquidation_bonus_bps - int(BPS), 0)
+        return Decimal(penalty_bps) / BPS
 
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
@@ -913,6 +961,23 @@ class AaveV3Adapter:
                         "supply_cap": str(caps.supply_cap),
                     }
 
+                risk_config = self.rpc_client.get_reserve_risk_configuration(
+                    chain_code,
+                    chain_config.pool_data_provider,
+                    market_ref,
+                )
+                max_ltv: Decimal | None = None
+                liquidation_threshold: Decimal | None = None
+                liquidation_penalty: Decimal | None = None
+                if risk_config is not None:
+                    max_ltv = self._normalize_ltv(risk_config.ltv_bps)
+                    liquidation_threshold = self._normalize_ltv(
+                        risk_config.liquidation_threshold_bps
+                    )
+                    liquidation_penalty = self._normalize_liquidation_penalty(
+                        risk_config.liquidation_bonus_bps
+                    )
+
                 irm_params_json = {
                     "supply_rate": {
                         "raw_ray": str(reserve_runtime.reserve_data.liquidity_rate_ray),
@@ -968,6 +1033,9 @@ class AaveV3Adapter:
                         supply_apy=reserve_runtime.supply_apy,
                         borrow_apy=reserve_runtime.borrow_apy,
                         available_liquidity_usd=available_liquidity_usd,
+                        max_ltv=max_ltv,
+                        liquidation_threshold=liquidation_threshold,
+                        liquidation_penalty=liquidation_penalty,
                         caps_json=caps_json,
                         irm_params_json=irm_params_json,
                         source="rpc",

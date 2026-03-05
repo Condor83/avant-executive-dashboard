@@ -78,6 +78,7 @@ class EulerVault(ConfigModel):
     asset_address: str
     asset_symbol: str
     asset_decimals: int = Field(ge=0, le=36)
+    debt_supported: bool = True
 
 
 class EulerChainConfig(ConfigModel):

@@ -75,6 +75,9 @@ class MockMarketAdapter:
                     supply_apy=Decimal("0"),
                     borrow_apy=Decimal("0"),
                     source="rpc",
+                    max_ltv=Decimal("0.8"),
+                    liquidation_threshold=Decimal("0.85"),
+                    liquidation_penalty=Decimal("0.05"),
                 ),
                 MarketSnapshotInput(
                     as_of_ts_utc=as_of_ts_utc,
@@ -149,3 +152,15 @@ def test_runner_writes_market_rows(postgres_database_url: str) -> None:
 
         utilization_total = session.scalar(select(func.sum(MarketSnapshot.utilization)))
         assert utilization_total == Decimal("0.5000000000")
+        first_market = session.scalar(
+            select(MarketSnapshot).where(
+                MarketSnapshot.market_id
+                == select(Market.market_id)
+                .where(Market.market_address == "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                .scalar_subquery()
+            )
+        )
+        assert first_market is not None
+        assert first_market.max_ltv == Decimal("0.8000000000")
+        assert first_market.liquidation_threshold == Decimal("0.8500000000")
+        assert first_market.liquidation_penalty == Decimal("0.0500000000")
