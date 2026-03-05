@@ -27,7 +27,7 @@ This is the recommended stack for the MVP + production hardening.
 
 ## Orchestration
 
-- MVP: manual CLI sync (`sync snapshot`, `compute daily`)
+- MVP: manual CLI sequence (`sync snapshot`, `sync markets`, `compute markets`, `compute daily`, `compute risk`, `compute rollups`)
 - Production: Prefect/Dagster/Airflow (choose once), plus cron for market snapshots
 
 ## Frontend

@@ -8,7 +8,7 @@ The system has three layers:
    Pulls positions + market state from on-chain RPC providers (primary) and indexed APIs (secondary), normalizes into canonical snapshots.
 
 2) **Analytics**  
-   Computes daily yield (APY-pro-rated), fee waterfall, ROE, risk signals (kink proximity, spread compression), and consumer leverage/concentration metrics.
+   Computes daily yield (APY-pro-rated), fee waterfall, ROE, market-overview/concentration metrics, risk signals (kink proximity, spread compression), and (later) consumer leverage/concentration metrics.
 
 3) **Serving (API + Dashboard)**  
    Provides executive-grade UI and drilldowns; all numbers are traceable to stored snapshots.
@@ -25,7 +25,7 @@ ingestion runner (manual sync or scheduled)
 raw snapshots (position_snapshots, market_snapshots, prices)
             |
             v
-derived tables (yield_daily, rollups, alerts, consumer metrics)
+derived tables (yield_daily, market_overview_daily, rollups, alerts, consumer metrics)
             |
             v
 FastAPI -> Dashboard UI
@@ -93,9 +93,10 @@ Data quality is intentionally multi-layered:
   - must implement the adapter interface and output canonical records
 - `src/analytics/`
   - yield engine (daily APY-pro-rated net interest)
+  - market engine (market overview + concentration vs market totals)
   - fee engine (strategy fee, Avant GOP)
   - risk engine (kink + spread compression)
-  - consumer engine (wallet cohort, leverage %, top wallets)
+  - consumer engine (wallet cohort, leverage %, top wallets; deferred from Sprint 09 MVP)
 - `src/api/`
   - FastAPI app and routes
 - `frontend/` (optional; depends on stack choice)
