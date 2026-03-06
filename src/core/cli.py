@@ -59,7 +59,7 @@ from core.debank_cloud import DebankCloudClient
 from core.debank_coverage import run_debank_coverage_audit, serialize_audit_result
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
 from core.pricing import PriceOracle
-from core.runner import SnapshotRunner
+from core.runner import RunnerSummary, SnapshotRunner
 from core.settings import get_settings
 from core.stacks_client import StacksClient
 from core.yields import DefiLlamaYieldOracle
@@ -393,6 +393,23 @@ def _build_runner(
     return runner, session, closeables
 
 
+def _finalize_sync_command(
+    *,
+    session: Session,
+    result: RunnerSummary,
+    operation: str,
+    as_of_ts_utc: datetime,
+) -> None:
+    session.commit()
+    typer.echo(
+        f"{operation} complete as_of={as_of_ts_utc.isoformat()} "
+        f"rows_written={result.rows_written} issues_written={result.issues_written} "
+        f"component_failures={result.component_failures}"
+    )
+    if result.component_failures > 0:
+        raise typer.Exit(code=1)
+
+
 @app.command("show-config")
 def show_config() -> None:
     """Print a minimal runtime configuration summary."""
@@ -415,10 +432,11 @@ def sync_snapshot(
 
     try:
         result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
-        session.commit()
-        typer.echo(
-            f"sync snapshot complete as_of={as_of_ts_utc.isoformat()} "
-            f"rows_written={result.rows_written} issues_written={result.issues_written}"
+        _finalize_sync_command(
+            session=session,
+            result=result,
+            operation="sync snapshot",
+            as_of_ts_utc=as_of_ts_utc,
         )
     finally:
         session.close()
@@ -439,10 +457,11 @@ def sync_prices(
 
     try:
         result = runner.sync_prices(as_of_ts_utc=as_of_ts_utc)
-        session.commit()
-        typer.echo(
-            f"sync prices complete as_of={as_of_ts_utc.isoformat()} "
-            f"rows_written={result.rows_written} issues_written={result.issues_written}"
+        _finalize_sync_command(
+            session=session,
+            result=result,
+            operation="sync prices",
+            as_of_ts_utc=as_of_ts_utc,
         )
     finally:
         session.close()
@@ -463,10 +482,11 @@ def sync_markets(
 
     try:
         result = runner.sync_markets(as_of_ts_utc=as_of_ts_utc)
-        session.commit()
-        typer.echo(
-            f"sync markets complete as_of={as_of_ts_utc.isoformat()} "
-            f"rows_written={result.rows_written} issues_written={result.issues_written}"
+        _finalize_sync_command(
+            session=session,
+            result=result,
+            operation="sync markets",
+            as_of_ts_utc=as_of_ts_utc,
         )
     finally:
         session.close()

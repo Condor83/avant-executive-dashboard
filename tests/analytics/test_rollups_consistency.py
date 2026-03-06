@@ -7,7 +7,7 @@ from decimal import Decimal
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, func, select
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session
 
 from analytics.fee_engine import apply_fee_waterfall
@@ -46,6 +46,16 @@ def _sum_metrics(rows: list[YieldDaily]) -> tuple[Decimal, Decimal, Decimal, Dec
         avant_gop += row.avant_gop_usd
         net += row.net_yield_usd
     return gross, strategy_fee, avant_gop, net
+
+
+def _assert_metric_tuples_close(
+    left: tuple[Decimal, Decimal, Decimal, Decimal],
+    right: tuple[Decimal, Decimal, Decimal, Decimal],
+    *,
+    tolerance: Decimal = Decimal("0.000000000000000001"),
+) -> None:
+    for left_value, right_value in zip(left, right, strict=True):
+        assert abs(left_value - right_value) <= tolerance
 
 
 def test_compute_daily_rollups_match_position_rows(postgres_database_url: str) -> None:
@@ -211,7 +221,10 @@ def test_compute_daily_rollups_match_position_rows(postgres_database_url: str) -
             total_row.net_yield_usd,
         )
 
-        assert position_totals == wallet_totals == product_totals == protocol_totals == total_totals
+        _assert_metric_tuples_close(position_totals, wallet_totals)
+        _assert_metric_tuples_close(position_totals, product_totals)
+        _assert_metric_tuples_close(position_totals, protocol_totals)
+        _assert_metric_tuples_close(position_totals, total_totals)
 
 
 def test_window_rollups_equal_sum_of_daily_rows(postgres_database_url: str) -> None:
@@ -248,6 +261,7 @@ def test_window_rollups_equal_sum_of_daily_rows(postgres_database_url: str) -> N
                         product_id=product_one.product_id,
                         protocol_id=protocol.protocol_id,
                         market_id=None,
+                        row_key=f"position:w1-{day_offset}",
                         position_key=f"w1-{day_offset}",
                         gross_yield_usd=fees_one.gross_yield_usd,
                         strategy_fee_usd=fees_one.strategy_fee_usd,
@@ -262,6 +276,7 @@ def test_window_rollups_equal_sum_of_daily_rows(postgres_database_url: str) -> N
                         product_id=product_two.product_id,
                         protocol_id=protocol.protocol_id,
                         market_id=None,
+                        row_key=f"position:w2-{day_offset}",
                         position_key=f"w2-{day_offset}",
                         gross_yield_usd=fees_two.gross_yield_usd,
                         strategy_fee_usd=fees_two.strategy_fee_usd,
@@ -297,3 +312,156 @@ def test_window_rollups_equal_sum_of_daily_rows(postgres_database_url: str) -> N
             assert result.total.strategy_fee_usd == totals[1]
             assert result.total.avant_gop_usd == totals[2]
             assert result.total.net_yield_usd == totals[3]
+
+
+def test_compute_daily_rerun_is_idempotent_and_removes_stale_rows(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    business_date = date(2026, 3, 4)
+    sod_ts, eod_ts = denver_business_bounds_utc(business_date)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="aave_v3")
+        wallet = Wallet(
+            address="0x5555555555555555555555555555555555555555",
+            wallet_type="strategy",
+        )
+        product = Product(product_code="stablecoin_senior")
+        session.add_all([chain, protocol, wallet, product])
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0xcccccccccccccccccccccccccccccccccccccccc",
+            base_asset_token_id=None,
+            collateral_token_id=None,
+            metadata_json={"kind": "reserve"},
+        )
+        session.add(market)
+        session.flush()
+        session.add(WalletProductMap(wallet_id=wallet.wallet_id, product_id=product.product_id))
+
+        session.add_all(
+            [
+                PositionSnapshot(
+                    as_of_ts_utc=sod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="pos-1",
+                    supplied_amount=Decimal("100"),
+                    supplied_usd=Decimal("100"),
+                    borrowed_amount=Decimal("10"),
+                    borrowed_usd=Decimal("10"),
+                    supply_apy=Decimal("0.10"),
+                    borrow_apy=Decimal("0.03"),
+                    reward_apy=Decimal("0.01"),
+                    equity_usd=Decimal("90"),
+                    source="rpc",
+                    block_number_or_slot="1",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=eod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="pos-1",
+                    supplied_amount=Decimal("110"),
+                    supplied_usd=Decimal("110"),
+                    borrowed_amount=Decimal("15"),
+                    borrowed_usd=Decimal("15"),
+                    supply_apy=Decimal("0.11"),
+                    borrow_apy=Decimal("0.04"),
+                    reward_apy=Decimal("0.015"),
+                    equity_usd=Decimal("95"),
+                    source="rpc",
+                    block_number_or_slot="2",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=sod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="pos-2",
+                    supplied_amount=Decimal("50"),
+                    supplied_usd=Decimal("50"),
+                    borrowed_amount=Decimal("5"),
+                    borrowed_usd=Decimal("5"),
+                    supply_apy=Decimal("0.08"),
+                    borrow_apy=Decimal("0.02"),
+                    reward_apy=Decimal("0.005"),
+                    equity_usd=Decimal("45"),
+                    source="rpc",
+                    block_number_or_slot="1",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=eod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="pos-2",
+                    supplied_amount=Decimal("48"),
+                    supplied_usd=Decimal("48"),
+                    borrowed_amount=Decimal("4"),
+                    borrowed_usd=Decimal("4"),
+                    supply_apy=Decimal("0.075"),
+                    borrow_apy=Decimal("0.018"),
+                    reward_apy=Decimal("0.004"),
+                    equity_usd=Decimal("44"),
+                    source="rpc",
+                    block_number_or_slot="2",
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary_1 = YieldEngine(session).compute_daily(business_date=business_date)
+        session.commit()
+
+        rows_1 = session.scalars(
+            select(YieldDaily).where(YieldDaily.business_date == business_date)
+        ).all()
+        pos_1_gross_before = next(
+            row.gross_yield_usd for row in rows_1 if row.row_key == "position:pos-1"
+        )
+
+        assert summary_1.position_rows_written == 2
+        assert summary_1.rollup_rows_written == 4
+        assert len(rows_1) == 6
+
+    with Session(engine) as session:
+        session.execute(delete(PositionSnapshot).where(PositionSnapshot.position_key == "pos-2"))
+        session.execute(
+            update(PositionSnapshot)
+            .where(
+                PositionSnapshot.position_key == "pos-1",
+                PositionSnapshot.as_of_ts_utc == eod_ts,
+            )
+            .values(
+                supplied_usd=Decimal("130"),
+                equity_usd=Decimal("115"),
+                supply_apy=Decimal("0.20"),
+                reward_apy=Decimal("0.02"),
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary_2 = YieldEngine(session).compute_daily(business_date=business_date)
+        session.commit()
+
+        rows_2 = session.scalars(
+            select(YieldDaily)
+            .where(YieldDaily.business_date == business_date)
+            .order_by(YieldDaily.row_key)
+        ).all()
+        row_keys = [row.row_key for row in rows_2]
+        pos_1_after = next(row for row in rows_2 if row.row_key == "position:pos-1")
+
+        assert summary_2.position_rows_written == 1
+        assert summary_2.rollup_rows_written == 4
+        assert len(rows_2) == 5
+        assert len(set(row_keys)) == len(row_keys)
+        assert "position:pos-2" not in row_keys
+        assert pos_1_after.gross_yield_usd != pos_1_gross_before

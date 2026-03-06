@@ -1,4 +1,4 @@
-"""Postgres fixtures for DB integration tests."""
+"""Shared test fixtures for database-backed integration tests."""
 
 from __future__ import annotations
 
@@ -12,6 +12,11 @@ from psycopg import sql
 from sqlalchemy.engine import make_url
 
 DEFAULT_TEST_ADMIN_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+
+
+def _require_db_tests() -> bool:
+    value = os.getenv("AVANT_REQUIRE_DB_TESTS", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 @pytest.fixture()
@@ -28,7 +33,10 @@ def postgres_database_url() -> Generator[str, None, None]:
         with psycopg.connect(admin_psycopg_dsn, autocommit=True) as conn:
             conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
     except psycopg.OperationalError as exc:
-        pytest.skip(f"Postgres not reachable for DB tests: {exc}")
+        message = f"Postgres not reachable for DB-backed tests: {exc}"
+        if _require_db_tests():
+            pytest.fail(message)
+        pytest.skip(message)
 
     try:
         yield test_url

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     database_url: str = Field(
         default="postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard",
         description="Database URL used by SQLAlchemy",
+        min_length=1,
     )
     defillama_base_url: str = Field(
         default="https://coins.llama.fi",
@@ -46,10 +47,12 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(
         default=15.0,
         description="HTTP request timeout used by external service clients",
+        gt=0,
     )
     merkl_timeout_seconds: float = Field(
         default=15.0,
         description="HTTP request timeout used for Merkl API requests",
+        gt=0,
     )
     evm_rpc_urls: dict[str, str] = Field(
         default_factory=dict,
@@ -82,13 +85,8 @@ class Settings(BaseSettings):
     silo_top_holders_limit: int = Field(
         default=50,
         description="Top-holder limit for Silo consumer position ingestion",
+        gt=0,
     )
-
-    postgres_host: str = "localhost"
-    postgres_port: int = 5432
-    postgres_db: str = "avant_exec_dashboard"
-    postgres_user: str = "postgres"
-    postgres_password: str = "postgres"
 
 
 @lru_cache(maxsize=1)

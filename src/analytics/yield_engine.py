@@ -80,6 +80,7 @@ class YieldDailyRow:
     product_id: int | None
     protocol_id: int | None
     market_id: int | None
+    row_key: str
     position_key: str | None
     gross_yield_usd: Decimal
     strategy_fee_usd: Decimal
@@ -102,6 +103,7 @@ class YieldDailyRow:
             "product_id": self.product_id,
             "protocol_id": self.protocol_id,
             "market_id": self.market_id,
+            "row_key": self.row_key,
             "position_key": self.position_key,
             "gross_yield_usd": self.gross_yield_usd,
             "strategy_fee_usd": self.strategy_fee_usd,
@@ -305,6 +307,14 @@ def build_rollup_rows(
         protocol_id: int | None,
         values: list[Decimal],
     ) -> YieldDailyRow:
+        if wallet_id is not None:
+            row_key = f"wallet:{wallet_id}"
+        elif product_id is not None:
+            row_key = f"product:{product_id}"
+        elif protocol_id is not None:
+            row_key = f"protocol:{protocol_id}"
+        else:
+            row_key = "total"
         roe = compute_roe_breakdown(
             gross_yield_usd=values[0],
             strategy_fee_usd=values[1],
@@ -318,6 +328,7 @@ def build_rollup_rows(
             product_id=product_id,
             protocol_id=protocol_id,
             market_id=None,
+            row_key=row_key,
             position_key=None,
             gross_yield_usd=values[0],
             strategy_fee_usd=values[1],
@@ -692,6 +703,7 @@ class YieldEngine:
                     product_id=product_id,
                     protocol_id=protocol_id,
                     market_id=market_id,
+                    row_key=f"position:{position_key}",
                     position_key=position_key,
                     gross_yield_usd=fees.gross_yield_usd,
                     strategy_fee_usd=fees.strategy_fee_usd,
@@ -727,16 +739,45 @@ class YieldEngine:
         return rows
 
     def _replace_daily_rows(self, *, business_date: date, rows: list[YieldDailyRow]) -> None:
+        if not rows:
+            self.session.execute(
+                delete(YieldDaily).where(
+                    YieldDaily.business_date == business_date,
+                    YieldDaily.method == METHOD_APY_PRORATED_SOD_EOD,
+                )
+            )
+            return
+
+        row_payloads = [row.as_insert_dict() for row in rows]
+        stmt = insert(YieldDaily).values(row_payloads)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[YieldDaily.business_date, YieldDaily.method, YieldDaily.row_key],
+            set_={
+                "wallet_id": stmt.excluded.wallet_id,
+                "product_id": stmt.excluded.product_id,
+                "protocol_id": stmt.excluded.protocol_id,
+                "market_id": stmt.excluded.market_id,
+                "position_key": stmt.excluded.position_key,
+                "gross_yield_usd": stmt.excluded.gross_yield_usd,
+                "strategy_fee_usd": stmt.excluded.strategy_fee_usd,
+                "avant_gop_usd": stmt.excluded.avant_gop_usd,
+                "net_yield_usd": stmt.excluded.net_yield_usd,
+                "avg_equity_usd": stmt.excluded.avg_equity_usd,
+                "gross_roe": stmt.excluded.gross_roe,
+                "post_strategy_fee_roe": stmt.excluded.post_strategy_fee_roe,
+                "net_roe": stmt.excluded.net_roe,
+                "avant_gop_roe": stmt.excluded.avant_gop_roe,
+                "confidence_score": stmt.excluded.confidence_score,
+            },
+        )
+        self.session.execute(stmt)
         self.session.execute(
             delete(YieldDaily).where(
                 YieldDaily.business_date == business_date,
                 YieldDaily.method == METHOD_APY_PRORATED_SOD_EOD,
+                ~YieldDaily.row_key.in_([row.row_key for row in rows]),
             )
         )
-        if not rows:
-            return
-
-        self.session.execute(insert(YieldDaily).values([row.as_insert_dict() for row in rows]))
 
     def _build_issue(
         self,

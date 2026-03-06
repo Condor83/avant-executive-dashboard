@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 from sqlalchemy import Select, select
 from sqlalchemy.dialects.postgresql import insert
@@ -26,7 +26,13 @@ from core.db.models import (
     Protocol as ProtocolModel,
 )
 from core.pricing import PriceOracle
-from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput, PriceRequest
+from core.types import (
+    DataQualityIssue,
+    MarketSnapshotInput,
+    PositionSnapshotInput,
+    PriceQuote,
+    PriceRequest,
+)
 
 
 class PositionAdapter(Protocol):
@@ -63,6 +69,7 @@ class RunnerSummary:
 
     rows_written: int
     issues_written: int
+    component_failures: int
 
 
 class SnapshotRunner:
@@ -111,6 +118,74 @@ class SnapshotRunner:
         self.session.execute(insert(DataQuality).values(rows))
         return len(rows)
 
+    def _build_component_exception_issue(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        stage: str,
+        error_type: str,
+        error_message: str,
+        protocol_code: str | None = None,
+        payload_json: dict[str, Any] | None = None,
+    ) -> DataQualityIssue:
+        return DataQualityIssue(
+            as_of_ts_utc=as_of_ts_utc,
+            stage=stage,
+            error_type=error_type,
+            error_message=error_message,
+            protocol_code=protocol_code,
+            payload_json=payload_json,
+        )
+
+    def _write_prices(self, *, quotes: list[PriceQuote], as_of_ts_utc: datetime) -> int:
+        rows = [
+            {
+                "ts_utc": as_of_ts_utc,
+                "token_id": quote.token_id,
+                "price_usd": quote.price_usd,
+                "source": quote.source,
+                "confidence": None,
+            }
+            for quote in quotes
+        ]
+
+        if not rows:
+            return 0
+
+        stmt = insert(Price).values(rows)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[Price.ts_utc, Price.token_id, Price.source],
+            set_={
+                "price_usd": stmt.excluded.price_usd,
+                "confidence": stmt.excluded.confidence,
+            },
+        )
+        self.session.execute(stmt)
+        return len(rows)
+
+    def _fetch_price_quotes(
+        self,
+        *,
+        requests: list[PriceRequest],
+        as_of_ts_utc: datetime,
+        stage: str,
+    ) -> tuple[list[PriceQuote], list[DataQualityIssue], int]:
+        if self.price_oracle is None:
+            return [], [], 0
+
+        try:
+            result = self.price_oracle.fetch_prices(requests, as_of_ts_utc=as_of_ts_utc)
+        except Exception as exc:
+            issue = self._build_component_exception_issue(
+                as_of_ts_utc=as_of_ts_utc,
+                stage=stage,
+                error_type="price_oracle_exception",
+                error_message="price oracle raised unexpected exception",
+                payload_json={"exception_class": exc.__class__.__name__, "detail": str(exc)},
+            )
+            return [], [issue], 1
+        return result.quotes, result.issues, 0
+
     def _token_select(self) -> Select[tuple[int, str, str, str]]:
         return select(Token.token_id, Chain.chain_code, Token.address_or_mint, Token.symbol).join(
             Chain, Chain.chain_id == Token.chain_id
@@ -129,7 +204,7 @@ class SnapshotRunner:
                 )
             ]
             issue_count = self._write_data_quality(issues)
-            return RunnerSummary(rows_written=0, issues_written=issue_count)
+            return RunnerSummary(rows_written=0, issues_written=issue_count, component_failures=0)
 
         token_rows = self.session.execute(self._token_select()).all()
         requests = [
@@ -142,44 +217,30 @@ class SnapshotRunner:
             for token_id, chain_code, address_or_mint, symbol in token_rows
         ]
 
-        result = self.price_oracle.fetch_prices(requests, as_of_ts_utc=as_of_ts_utc)
-
-        rows = [
-            {
-                "ts_utc": as_of_ts_utc,
-                "token_id": quote.token_id,
-                "price_usd": quote.price_usd,
-                "source": quote.source,
-                "confidence": None,
-            }
-            for quote in result.quotes
-        ]
-
-        if rows:
-            stmt = insert(Price).values(rows)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[Price.ts_utc, Price.token_id, Price.source],
-                set_={
-                    "price_usd": stmt.excluded.price_usd,
-                    "confidence": stmt.excluded.confidence,
-                },
-            )
-            self.session.execute(stmt)
-
-        issue_count = self._write_data_quality(result.issues)
-        return RunnerSummary(rows_written=len(rows), issues_written=issue_count)
+        quotes, issues, component_failures = self._fetch_price_quotes(
+            requests=requests,
+            as_of_ts_utc=as_of_ts_utc,
+            stage="sync_prices",
+        )
+        rows_written = self._write_prices(quotes=quotes, as_of_ts_utc=as_of_ts_utc)
+        issue_count = self._write_data_quality(issues)
+        return RunnerSummary(
+            rows_written=rows_written,
+            issues_written=issue_count,
+            component_failures=component_failures,
+        )
 
     def _price_map_for_all_tokens(
-        self, *, as_of_ts_utc: datetime
-    ) -> tuple[dict[tuple[str, str], Decimal], int]:
-        """Fetch prices for all seeded tokens and return lookup map + issue count."""
+        self, *, as_of_ts_utc: datetime, stage: str
+    ) -> tuple[dict[tuple[str, str], Decimal], list[DataQualityIssue], int]:
+        """Fetch prices for all seeded tokens and return lookup map + issues."""
 
         if self.price_oracle is None:
-            return {}, 0
+            return {}, [], 0
 
         token_rows = self.session.execute(self._token_select()).all()
         if not token_rows:
-            return {}, 0
+            return {}, [], 0
 
         token_requests = [
             PriceRequest(
@@ -191,29 +252,12 @@ class SnapshotRunner:
             for token_id, chain_code, address_or_mint, symbol in token_rows
         ]
 
-        result = self.price_oracle.fetch_prices(token_requests, as_of_ts_utc=as_of_ts_utc)
-        price_rows = [
-            {
-                "ts_utc": as_of_ts_utc,
-                "token_id": quote.token_id,
-                "price_usd": quote.price_usd,
-                "source": quote.source,
-                "confidence": None,
-            }
-            for quote in result.quotes
-        ]
-        if price_rows:
-            stmt = insert(Price).values(price_rows)
-            stmt = stmt.on_conflict_do_update(
-                index_elements=[Price.ts_utc, Price.token_id, Price.source],
-                set_={
-                    "price_usd": stmt.excluded.price_usd,
-                    "confidence": stmt.excluded.confidence,
-                },
-            )
-            self.session.execute(stmt)
-
-        issue_count = self._write_data_quality(result.issues)
+        quotes, issues, component_failures = self._fetch_price_quotes(
+            requests=token_requests,
+            as_of_ts_utc=as_of_ts_utc,
+            stage=stage,
+        )
+        self._write_prices(quotes=quotes, as_of_ts_utc=as_of_ts_utc)
         symbol_lookup: dict[tuple[str, str], str] = {}
         for _token_id, chain_code, address_or_mint, symbol in token_rows:
             symbol_key = (chain_code, symbol.strip().upper())
@@ -221,7 +265,7 @@ class SnapshotRunner:
             symbol_lookup.setdefault(symbol_key, normalized_address)
 
         price_map: dict[tuple[str, str], Decimal] = {}
-        for quote in result.quotes:
+        for quote in quotes:
             normalized_address = self._normalize_address(quote.address_or_mint)
             price_map[(quote.chain_code, normalized_address)] = quote.price_usd
 
@@ -231,7 +275,7 @@ class SnapshotRunner:
             if price is not None:
                 price_map[(chain_code, f"symbol:{symbol}")] = price
 
-        return price_map, issue_count
+        return price_map, issues, component_failures
 
     def _resolve_wallet_ids(self) -> dict[str, int]:
         rows = self.session.execute(select(Wallet.address, Wallet.wallet_id)).all()
@@ -256,18 +300,36 @@ class SnapshotRunner:
     def sync_snapshot(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
         """Collect adapter positions and persist position snapshots."""
 
-        prices_by_token, price_issue_count = self._price_map_for_all_tokens(
-            as_of_ts_utc=as_of_ts_utc
+        prices_by_token, price_issues, component_failures = self._price_map_for_all_tokens(
+            as_of_ts_utc=as_of_ts_utc,
+            stage="sync_snapshot",
         )
 
         all_positions: list[PositionSnapshotInput] = []
-        all_issues: list[DataQualityIssue] = []
+        all_issues: list[DataQualityIssue] = list(price_issues)
 
         for adapter in self.position_adapters:
-            positions, issues = adapter.collect_positions(
-                as_of_ts_utc=as_of_ts_utc,
-                prices_by_token=prices_by_token,
-            )
+            try:
+                positions, issues = adapter.collect_positions(
+                    as_of_ts_utc=as_of_ts_utc,
+                    prices_by_token=prices_by_token,
+                )
+            except Exception as exc:
+                component_failures += 1
+                all_issues.append(
+                    self._build_component_exception_issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="position_adapter_exception",
+                        error_message="position adapter raised unexpected exception",
+                        protocol_code=adapter.protocol_code,
+                        payload_json={
+                            "exception_class": exc.__class__.__name__,
+                            "detail": str(exc),
+                        },
+                    )
+                )
+                continue
             all_positions.extend(positions)
             all_issues.extend(issues)
 
@@ -344,23 +406,45 @@ class SnapshotRunner:
             self.session.execute(stmt)
 
         issue_count = self._write_data_quality(all_issues)
-        return RunnerSummary(rows_written=len(rows), issues_written=issue_count + price_issue_count)
+        return RunnerSummary(
+            rows_written=len(rows),
+            issues_written=issue_count,
+            component_failures=component_failures,
+        )
 
     def sync_markets(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
         """Collect adapter market data and persist market snapshots."""
 
-        prices_by_token, price_issue_count = self._price_map_for_all_tokens(
-            as_of_ts_utc=as_of_ts_utc
+        prices_by_token, price_issues, component_failures = self._price_map_for_all_tokens(
+            as_of_ts_utc=as_of_ts_utc,
+            stage="sync_markets",
         )
 
         all_markets: list[MarketSnapshotInput] = []
-        all_issues: list[DataQualityIssue] = []
+        all_issues: list[DataQualityIssue] = list(price_issues)
 
         for adapter in self.market_adapters:
-            markets, issues = adapter.collect_markets(
-                as_of_ts_utc=as_of_ts_utc,
-                prices_by_token=prices_by_token,
-            )
+            try:
+                markets, issues = adapter.collect_markets(
+                    as_of_ts_utc=as_of_ts_utc,
+                    prices_by_token=prices_by_token,
+                )
+            except Exception as exc:
+                component_failures += 1
+                all_issues.append(
+                    self._build_component_exception_issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_markets",
+                        error_type="market_adapter_exception",
+                        error_message="market adapter raised unexpected exception",
+                        protocol_code=adapter.protocol_code,
+                        payload_json={
+                            "exception_class": exc.__class__.__name__,
+                            "detail": str(exc),
+                        },
+                    )
+                )
+                continue
             all_markets.extend(markets)
             all_issues.extend(issues)
 
@@ -436,4 +520,8 @@ class SnapshotRunner:
             self.session.execute(stmt)
 
         issue_count = self._write_data_quality(all_issues)
-        return RunnerSummary(rows_written=len(rows), issues_written=issue_count + price_issue_count)
+        return RunnerSummary(
+            rows_written=len(rows),
+            issues_written=issue_count,
+            component_failures=component_failures,
+        )

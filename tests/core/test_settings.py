@@ -1,5 +1,8 @@
 """Settings parsing tests for Sprint 00."""
 
+import pytest
+from pydantic import ValidationError
+
 from core.settings import Settings
 
 
@@ -9,13 +12,16 @@ def test_settings_defaults(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AVANT_APP_ENV", raising=False)
     monkeypatch.delenv("AVANT_LOG_LEVEL", raising=False)
-    monkeypatch.delenv("AVANT_POSTGRES_PORT", raising=False)
+    monkeypatch.delenv("AVANT_DATABASE_URL", raising=False)
 
     settings = Settings()
 
     assert settings.app_env == "dev"
     assert settings.log_level == "INFO"
-    assert settings.postgres_port == 5432
+    assert (
+        settings.database_url
+        == "postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard"
+    )
     assert settings.debank_cloud_base_url == "https://pro-openapi.debank.com"
     assert settings.debank_cloud_api_key is None
 
@@ -26,12 +32,38 @@ def test_settings_parses_environment(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AVANT_APP_ENV", "test")
     monkeypatch.setenv("AVANT_LOG_LEVEL", "DEBUG")
-    monkeypatch.setenv("AVANT_POSTGRES_PORT", "6543")
+    monkeypatch.setenv(
+        "AVANT_DATABASE_URL",
+        "postgresql+psycopg://app:secret@db.internal:6543/avant_exec_dashboard",
+    )
     monkeypatch.setenv("AVANT_DEBANK_CLOUD_API_KEY", "debank-key")
 
     settings = Settings()
 
     assert settings.app_env == "test"
     assert settings.log_level == "DEBUG"
-    assert settings.postgres_port == 6543
+    assert settings.database_url == (
+        "postgresql+psycopg://app:secret@db.internal:6543/avant_exec_dashboard"
+    )
     assert settings.debank_cloud_api_key == "debank-key"
+
+
+@pytest.mark.parametrize(
+    ("env_name", "env_value"),
+    [
+        ("AVANT_REQUEST_TIMEOUT_SECONDS", "0"),
+        ("AVANT_REQUEST_TIMEOUT_SECONDS", "-1"),
+        ("AVANT_MERKL_TIMEOUT_SECONDS", "0"),
+        ("AVANT_MERKL_TIMEOUT_SECONDS", "-1"),
+        ("AVANT_SILO_TOP_HOLDERS_LIMIT", "0"),
+        ("AVANT_SILO_TOP_HOLDERS_LIMIT", "-5"),
+    ],
+)
+def test_settings_rejects_non_positive_runtime_values(
+    monkeypatch, tmp_path, env_name: str, env_value: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(env_name, env_value)
+
+    with pytest.raises(ValidationError):
+        Settings()

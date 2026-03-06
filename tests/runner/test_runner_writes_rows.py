@@ -2,54 +2,29 @@
 
 from __future__ import annotations
 
-import os
-from collections.abc import Generator
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from typing import cast
 
-import psycopg
-import pytest
 from alembic import command
 from alembic.config import Config
-from psycopg import sql
 from sqlalchemy import create_engine, func, select
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from core.config import load_markets_config
-from core.db.models import Chain, Market, MarketSnapshot, PositionSnapshot, Protocol, Wallet
+from core.db.models import (
+    Chain,
+    DataQuality,
+    Market,
+    MarketSnapshot,
+    PositionSnapshot,
+    Protocol,
+    Token,
+    Wallet,
+)
+from core.pricing import PriceOracle
 from core.runner import SnapshotRunner
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
-
-DEFAULT_TEST_ADMIN_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
-
-
-@pytest.fixture()
-def postgres_database_url() -> Generator[str, None, None]:
-    admin_url = make_url(os.getenv("AVANT_TEST_DATABASE_URL", DEFAULT_TEST_ADMIN_URL))
-    db_name = f"avant_runner_test_{uuid4().hex[:12]}"
-
-    admin_psycopg_dsn = admin_url.render_as_string(hide_password=False).replace("+psycopg", "")
-    test_url = admin_url.set(database=db_name).render_as_string(hide_password=False)
-
-    try:
-        with psycopg.connect(admin_psycopg_dsn, autocommit=True) as conn:
-            conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(db_name)))
-    except psycopg.OperationalError as exc:
-        pytest.skip(f"Postgres not reachable for runner tests: {exc}")
-
-    try:
-        yield test_url
-    finally:
-        with psycopg.connect(admin_psycopg_dsn, autocommit=True) as conn:
-            conn.execute(
-                "SELECT pg_terminate_backend(pid) "
-                "FROM pg_stat_activity "
-                "WHERE datname = %s AND pid <> pg_backend_pid()",
-                (db_name,),
-            )
-            conn.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(db_name)))
 
 
 class MockAdapter:
@@ -146,6 +121,32 @@ class MockMarketAdapter:
         )
 
 
+class ExplodingPositionAdapter:
+    protocol_code = "wallet_balances"
+
+    def collect_positions(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
+        del as_of_ts_utc
+        del prices_by_token
+        raise RuntimeError("rpc timeout")
+
+
+class ExplodingPriceOracle:
+    def fetch_prices(
+        self,
+        requests,
+        *,
+        as_of_ts_utc: datetime,
+    ):
+        del requests
+        del as_of_ts_utc
+        raise RuntimeError("price service unavailable")
+
+
 def test_runner_writes_position_rows(postgres_database_url: str) -> None:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", postgres_database_url)
@@ -200,6 +201,7 @@ def test_runner_writes_position_rows(postgres_database_url: str) -> None:
 
         assert summary.rows_written == 2
         assert summary.issues_written == 0
+        assert summary.component_failures == 0
 
         row_count = session.scalar(select(func.count()).select_from(PositionSnapshot))
         assert row_count == 2
@@ -258,9 +260,186 @@ def test_runner_writes_market_rows(postgres_database_url: str) -> None:
 
         assert summary.rows_written == 2
         assert summary.issues_written == 0
+        assert summary.component_failures == 0
 
         row_count = session.scalar(select(func.count()).select_from(MarketSnapshot))
         assert row_count == 2
 
         utilization_avg = session.scalar(select(func.avg(MarketSnapshot.utilization)))
         assert utilization_avg == Decimal("0.2000000000")
+
+
+def test_runner_sync_snapshot_records_adapter_exception_and_keeps_healthy_rows(
+    postgres_database_url: str,
+) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="wallet_balances")
+        wallets = [
+            Wallet(address="0x1111111111111111111111111111111111111111", wallet_type="strategy"),
+            Wallet(address="0x2222222222222222222222222222222222222222", wallet_type="strategy"),
+        ]
+        session.add(chain)
+        session.add(protocol)
+        session.add_all(wallets)
+        session.flush()
+        session.add_all(
+            [
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=None,
+            position_adapters=[MockAdapter(), ExplodingPositionAdapter()],
+        )
+        summary = runner.sync_snapshot(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert summary.rows_written == 2
+        assert summary.issues_written == 1
+        assert summary.component_failures == 1
+
+        row_count = session.scalar(select(func.count()).select_from(PositionSnapshot))
+        assert row_count == 2
+
+        issue = session.scalars(select(DataQuality)).one()
+        assert issue.stage == "sync_snapshot"
+        assert issue.error_type == "position_adapter_exception"
+        assert issue.protocol_code == "wallet_balances"
+        assert issue.payload_json == {
+            "exception_class": "RuntimeError",
+            "detail": "rpc timeout",
+        }
+
+
+def test_runner_sync_prices_records_price_oracle_exception(postgres_database_url: str) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=cast(PriceOracle, ExplodingPriceOracle()),
+            position_adapters=[],
+        )
+        summary = runner.sync_prices(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert summary.rows_written == 0
+        assert summary.issues_written == 1
+        assert summary.component_failures == 1
+
+        issue = session.scalars(select(DataQuality)).one()
+        assert issue.stage == "sync_prices"
+        assert issue.error_type == "price_oracle_exception"
+        assert issue.payload_json == {
+            "exception_class": "RuntimeError",
+            "detail": "price service unavailable",
+        }
+
+
+def test_runner_sync_snapshot_records_price_oracle_exception_and_keeps_healthy_rows(
+    postgres_database_url: str,
+) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="wallet_balances")
+        wallets = [
+            Wallet(address="0x1111111111111111111111111111111111111111", wallet_type="strategy"),
+            Wallet(address="0x2222222222222222222222222222222222222222", wallet_type="strategy"),
+        ]
+        session.add_all([chain, protocol, *wallets])
+        session.flush()
+        session.add(
+            Token(
+                chain_id=chain.chain_id,
+                address_or_mint="0xcccccccccccccccccccccccccccccccccccccccc",
+                symbol="USDC",
+                decimals=6,
+            )
+        )
+        session.add_all(
+            [
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=cast(PriceOracle, ExplodingPriceOracle()),
+            position_adapters=[MockAdapter()],
+        )
+        summary = runner.sync_snapshot(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert summary.rows_written == 2
+        assert summary.issues_written == 1
+        assert summary.component_failures == 1
+
+        row_count = session.scalar(select(func.count()).select_from(PositionSnapshot))
+        assert row_count == 2
+
+        issue = session.scalars(select(DataQuality)).one()
+        assert issue.stage == "sync_snapshot"
+        assert issue.error_type == "price_oracle_exception"
+        assert issue.payload_json == {
+            "exception_class": "RuntimeError",
+            "detail": "price service unavailable",
+        }

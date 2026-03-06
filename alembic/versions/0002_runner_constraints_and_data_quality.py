@@ -19,6 +19,42 @@ depends_on = None
 
 
 def upgrade() -> None:
+    # Protect upgrades from pre-constraint databases that may already contain duplicate rows.
+    op.execute(
+        """
+        DELETE FROM position_snapshots
+        WHERE snapshot_id IN (
+            SELECT snapshot_id
+            FROM (
+                SELECT snapshot_id,
+                       row_number() OVER (
+                           PARTITION BY as_of_ts_utc, position_key
+                           ORDER BY snapshot_id DESC
+                       ) AS row_num
+                FROM position_snapshots
+            ) ranked
+            WHERE ranked.row_num > 1
+        )
+        """
+    )
+    op.execute(
+        """
+        DELETE FROM market_snapshots
+        WHERE snapshot_id IN (
+            SELECT snapshot_id
+            FROM (
+                SELECT snapshot_id,
+                       row_number() OVER (
+                           PARTITION BY as_of_ts_utc, market_id, source
+                           ORDER BY snapshot_id DESC
+                       ) AS row_num
+                FROM market_snapshots
+            ) ranked
+            WHERE ranked.row_num > 1
+        )
+        """
+    )
+
     op.create_unique_constraint(
         "uq_position_snapshots_asof_key",
         "position_snapshots",

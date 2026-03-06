@@ -10,11 +10,13 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -234,6 +236,14 @@ class YieldDaily(Base):
     """Derived daily yield and fee rows at position + rollup levels."""
 
     __tablename__ = "yield_daily"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_date",
+            "method",
+            "row_key",
+            name="uq_yield_daily_business_date_method_row_key",
+        ),
+    )
 
     yield_daily_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     business_date: Mapped[date] = mapped_column(nullable=False, index=True)
@@ -256,6 +266,7 @@ class YieldDaily(Base):
         ForeignKey("markets.market_id", ondelete="SET NULL"),
         nullable=True,
     )
+    row_key: Mapped[str] = mapped_column(String(255), nullable=False)
     position_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     gross_yield_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     strategy_fee_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
@@ -327,6 +338,16 @@ class Alert(Base):
     """Derived risk alert records for market/position monitoring."""
 
     __tablename__ = "alerts"
+    __table_args__ = (
+        Index(
+            "uq_alerts_active_key",
+            "alert_type",
+            "entity_type",
+            "entity_id",
+            unique=True,
+            postgresql_where=text("status IN ('open', 'ack')"),
+        ),
+    )
 
     alert_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ts_utc: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)

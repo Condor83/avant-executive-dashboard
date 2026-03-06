@@ -108,6 +108,14 @@ One row per market per snapshot time.
 
 ### yield_daily
 - business_date (Denver date)
+- row_key
+  - deterministic logical identity for storage-level upserts
+  - position rows: `position:{position_key}`
+  - wallet rollups: `wallet:{wallet_id}`
+  - product rollups: `product:{product_id}`
+  - protocol rollups: `protocol:{protocol_id}`
+  - total row: `total`
+- unique on `(business_date, method, row_key)`
 - wallet_id, product_id, protocol_id, market_id, position_key
   - position rows: `position_key` is non-null
   - rollup rows: `position_key` is null and exactly one rollup dimension is set
@@ -133,6 +141,7 @@ One row per market per snapshot time.
 - entity_id
 - payload_json
 - status: `open` | `ack` | `resolved`
+- at most one active alert (`open` or `ack`) may exist per `(alert_type, entity_type, entity_id)`
 
 ### market_overview_daily
 - business_date (Denver date)
@@ -153,3 +162,7 @@ One row per market per snapshot time.
 - max_ltv (nullable)
 - liquidation_threshold (nullable)
 - liquidation_penalty (nullable)
+
+Canonical note:
+- `market_overview_daily` is the supported derived market overview table.
+- `market_view_daily` is not part of the canonical schema.

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,7 +11,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from analytics.alerts import AlertEngine
+from analytics.alerts import AlertCandidate, AlertEngine
 from analytics.risk_engine import RiskEngine
 from analytics.yield_engine import denver_business_bounds_utc
 from core.config import load_risk_thresholds_config
@@ -275,3 +275,58 @@ def test_alert_rows_are_created_updated_and_resolved(postgres_database_url: str)
         all_alerts = session.scalars(select(Alert)).all()
         assert len(all_alerts) == 4
         assert all(alert.status == "resolved" for alert in all_alerts)
+
+
+def test_sync_candidates_preserves_ack_status_on_upsert(postgres_database_url: str) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    thresholds = load_risk_thresholds_config(Path("config/risk_thresholds.yaml"))
+    first_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+    second_ts = datetime(2026, 3, 3, 13, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        session.add(
+            Alert(
+                ts_utc=first_ts,
+                alert_type="KINK_NEAR",
+                severity="med",
+                entity_type="market",
+                entity_id="market-1",
+                payload_json={"version": 1},
+                status="ack",
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = AlertEngine(session, thresholds=thresholds).sync_candidates(
+            as_of_ts_utc=second_ts,
+            candidates=[
+                AlertCandidate(
+                    alert_type="KINK_NEAR",
+                    severity="high",
+                    entity_type="market",
+                    entity_id="market-1",
+                    payload_json={"version": 2},
+                )
+            ],
+        )
+        session.commit()
+
+        alerts = session.scalars(
+            select(Alert).where(
+                Alert.alert_type == "KINK_NEAR",
+                Alert.entity_type == "market",
+                Alert.entity_id == "market-1",
+            )
+        ).all()
+
+        assert summary.opened == 0
+        assert summary.updated == 1
+        assert summary.resolved == 0
+        assert summary.open_alerts == 0
+        assert len(alerts) == 1
+        assert alerts[0].status == "ack"
+        assert alerts[0].severity == "high"
+        assert alerts[0].payload_json == {"version": 2}
+        assert alerts[0].ts_utc == second_ts

@@ -7,7 +7,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from analytics.risk_engine import RiskComputationResult
@@ -237,34 +238,50 @@ class AlertEngine:
 
         opened = 0
         updated = 0
+        upsert_rows: list[dict[str, Any]] = []
 
         for key, candidate in desired_by_key.items():
             existing = existing_by_key.pop(key, None)
             if existing is None:
-                self.session.add(
-                    Alert(
-                        ts_utc=as_of_ts_utc,
-                        alert_type=candidate.alert_type,
-                        severity=candidate.severity,
-                        entity_type=candidate.entity_type,
-                        entity_id=candidate.entity_id,
-                        payload_json=candidate.payload_json,
-                        status="open",
-                    )
-                )
                 opened += 1
-                continue
+            else:
+                updated += 1
 
-            existing.ts_utc = as_of_ts_utc
-            existing.severity = candidate.severity
-            existing.payload_json = candidate.payload_json
-            updated += 1
+            upsert_rows.append(
+                {
+                    "ts_utc": as_of_ts_utc,
+                    "alert_type": candidate.alert_type,
+                    "severity": candidate.severity,
+                    "entity_type": candidate.entity_type,
+                    "entity_id": candidate.entity_id,
+                    "payload_json": candidate.payload_json,
+                    "status": "open",
+                }
+            )
+
+        if upsert_rows:
+            stmt = insert(Alert).values(upsert_rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=[Alert.alert_type, Alert.entity_type, Alert.entity_id],
+                index_where=Alert.status.in_(ACTIVE_ALERT_STATUSES),
+                set_={
+                    "ts_utc": stmt.excluded.ts_utc,
+                    "severity": stmt.excluded.severity,
+                    "payload_json": stmt.excluded.payload_json,
+                },
+            )
+            self.session.execute(stmt)
 
         resolved = 0
-        for stale_alert in existing_by_key.values():
-            stale_alert.ts_utc = as_of_ts_utc
-            stale_alert.status = "resolved"
-            resolved += 1
+        stale_keys = list(existing_by_key)
+        if stale_keys:
+            self.session.execute(
+                update(Alert)
+                .where(Alert.status.in_(ACTIVE_ALERT_STATUSES))
+                .where(tuple_(Alert.alert_type, Alert.entity_type, Alert.entity_id).in_(stale_keys))
+                .values(ts_utc=as_of_ts_utc, status="resolved")
+            )
+            resolved = len(stale_keys)
 
         open_alerts = int(
             self.session.scalar(select(func.count(Alert.alert_id)).where(Alert.status == "open"))

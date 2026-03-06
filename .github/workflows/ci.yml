@@ -25,6 +25,7 @@ jobs:
     env:
       AVANT_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard
       AVANT_TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/postgres
+      AVANT_REQUIRE_DB_TESTS: "1"
 
     steps:
       - name: Checkout
