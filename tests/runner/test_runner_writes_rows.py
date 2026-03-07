@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
@@ -75,6 +76,64 @@ class MockAdapter:
                     equity_usd=Decimal("7.5"),
                     source="rpc",
                 ),
+            ],
+            [],
+        )
+
+
+class CoordinatedMockAdapter:
+    def __init__(
+        self,
+        *,
+        wallet_address: str,
+        market_ref: str,
+        position_key: str,
+        all_started: threading.Event,
+        release: threading.Event,
+        counter: list[int],
+        counter_lock: threading.Lock,
+    ) -> None:
+        self.protocol_code = "wallet_balances"
+        self.wallet_address = wallet_address
+        self.market_ref = market_ref
+        self.position_key = position_key
+        self.all_started = all_started
+        self.release = release
+        self.counter = counter
+        self.counter_lock = counter_lock
+
+    def collect_positions(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
+        del prices_by_token
+        with self.counter_lock:
+            self.counter[0] += 1
+            if self.counter[0] == 2:
+                self.all_started.set()
+        if not self.release.wait(timeout=2.0):
+            raise RuntimeError("release timeout")
+        return (
+            [
+                PositionSnapshotInput(
+                    as_of_ts_utc=as_of_ts_utc,
+                    protocol_code="wallet_balances",
+                    chain_code="ethereum",
+                    wallet_address=self.wallet_address,
+                    market_ref=self.market_ref,
+                    position_key=self.position_key,
+                    supplied_amount=Decimal("1"),
+                    supplied_usd=Decimal("1"),
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("1"),
+                    source="rpc",
+                )
             ],
             [],
         )
@@ -448,6 +507,119 @@ def test_runner_sync_snapshot_records_adapter_exception_and_keeps_healthy_rows(
             "exception_class": "RuntimeError",
             "detail": "rpc timeout",
         }
+
+
+def test_runner_sync_snapshot_collects_adapters_concurrently_and_reports_progress(
+    postgres_database_url: str,
+) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 3, 12, 0, tzinfo=UTC)
+    progress_messages: list[str] = []
+    all_started = threading.Event()
+    release = threading.Event()
+    counter = [0]
+    counter_lock = threading.Lock()
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="wallet_balances")
+        wallets = [
+            Wallet(address="0x1111111111111111111111111111111111111111", wallet_type="strategy"),
+            Wallet(address="0x2222222222222222222222222222222222222222", wallet_type="strategy"),
+        ]
+        session.add(chain)
+        session.add(protocol)
+        session.add_all(wallets)
+        session.flush()
+        session.add_all(
+            [
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+                Market(
+                    chain_id=chain.chain_id,
+                    protocol_id=protocol.protocol_id,
+                    market_address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    base_asset_token_id=None,
+                    collateral_token_id=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                ),
+            ]
+        )
+        session.commit()
+
+    def _release_when_ready() -> None:
+        if all_started.wait(timeout=1.0):
+            release.set()
+
+    with Session(engine) as session:
+        releaser = threading.Thread(target=_release_when_ready, daemon=True)
+        releaser.start()
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=None,
+            progress_callback=progress_messages.append,
+            position_adapters=[
+                CoordinatedMockAdapter(
+                    wallet_address="0x1111111111111111111111111111111111111111",
+                    market_ref="0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    position_key=(
+                        "wallet_balances:ethereum:0x1111111111111111111111111111111111111111:"
+                        "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    ),
+                    all_started=all_started,
+                    release=release,
+                    counter=counter,
+                    counter_lock=counter_lock,
+                ),
+                CoordinatedMockAdapter(
+                    wallet_address="0x2222222222222222222222222222222222222222",
+                    market_ref="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    position_key=(
+                        "wallet_balances:ethereum:0x2222222222222222222222222222222222222222:"
+                        "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    ),
+                    all_started=all_started,
+                    release=release,
+                    counter=counter,
+                    counter_lock=counter_lock,
+                ),
+            ],
+        )
+        summary = runner.sync_snapshot(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert all_started.is_set()
+        assert summary.rows_written == 2
+        assert summary.issues_written == 0
+        assert any(
+            "sync snapshot stage=collect_positions status=start adapter_count=2" in message
+            for message in progress_messages
+        )
+        assert (
+            sum(
+                "sync snapshot adapter=wallet_balances status=start" in message
+                for message in progress_messages
+            )
+            == 2
+        )
+        assert (
+            sum(
+                "sync snapshot adapter=wallet_balances status=complete" in message
+                for message in progress_messages
+            )
+            == 2
+        )
 
 
 def test_runner_sync_prices_records_price_oracle_exception(postgres_database_url: str) -> None:

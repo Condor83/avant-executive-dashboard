@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -132,6 +135,7 @@ class SnapshotRunner:
         market_adapters: list[MarketAdapter] | None = None,
         pendle_history_client: PendleHistoryClientLike | None = None,
         pt_fixed_yield_overrides: dict[str, PTFixedYieldOverride] | None = None,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.session = session
         self.markets_config = markets_config
@@ -140,6 +144,11 @@ class SnapshotRunner:
         self.market_adapters = market_adapters or []
         self.pendle_history_client = pendle_history_client
         self.pt_fixed_yield_overrides = pt_fixed_yield_overrides or {}
+        self.progress_callback = progress_callback
+
+    def _report_progress(self, message: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(message)
 
     @staticmethod
     def _normalize_address(value: str) -> str:
@@ -960,38 +969,80 @@ class SnapshotRunner:
     def sync_snapshot(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
         """Collect adapter positions and persist position snapshots."""
 
+        price_start = time.perf_counter()
+        self._report_progress("sync snapshot stage=price_map status=start")
         prices_by_token, price_issues, component_failures = self._price_map_for_all_tokens(
             as_of_ts_utc=as_of_ts_utc,
             stage="sync_snapshot",
+        )
+        self._report_progress(
+            "sync snapshot stage=price_map status=complete "
+            f"duration_s={time.perf_counter() - price_start:.2f} "
+            f"prices={len(prices_by_token)} issues={len(price_issues)} "
+            f"component_failures={component_failures}"
         )
 
         all_positions: list[PositionSnapshotInput] = []
         all_issues: list[DataQualityIssue] = list(price_issues)
 
-        for adapter in self.position_adapters:
-            try:
-                positions, issues = adapter.collect_positions(
-                    as_of_ts_utc=as_of_ts_utc,
-                    prices_by_token=prices_by_token,
-                )
-            except Exception as exc:
-                component_failures += 1
-                all_issues.append(
-                    self._build_component_exception_issue(
-                        as_of_ts_utc=as_of_ts_utc,
-                        stage="sync_snapshot",
-                        error_type="position_adapter_exception",
-                        error_message="position adapter raised unexpected exception",
-                        protocol_code=adapter.protocol_code,
-                        payload_json={
-                            "exception_class": exc.__class__.__name__,
-                            "detail": str(exc),
-                        },
+        collect_start = time.perf_counter()
+        self._report_progress(
+            "sync snapshot stage=collect_positions status=start "
+            f"adapter_count={len(self.position_adapters)}"
+        )
+        if self.position_adapters:
+            max_workers = min(4, len(self.position_adapters))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_map = {}
+                for adapter in self.position_adapters:
+                    self._report_progress(
+                        f"sync snapshot adapter={adapter.protocol_code} status=start"
                     )
-                )
-                continue
-            all_positions.extend(positions)
-            all_issues.extend(issues)
+                    future = executor.submit(
+                        adapter.collect_positions,
+                        as_of_ts_utc=as_of_ts_utc,
+                        prices_by_token=prices_by_token,
+                    )
+                    future_map[future] = (adapter, time.perf_counter())
+
+                for future in as_completed(future_map):
+                    adapter, started_at = future_map[future]
+                    duration_s = time.perf_counter() - started_at
+                    try:
+                        positions, issues = future.result()
+                    except Exception as exc:
+                        component_failures += 1
+                        all_issues.append(
+                            self._build_component_exception_issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="position_adapter_exception",
+                                error_message="position adapter raised unexpected exception",
+                                protocol_code=adapter.protocol_code,
+                                payload_json={
+                                    "exception_class": exc.__class__.__name__,
+                                    "detail": str(exc),
+                                },
+                            )
+                        )
+                        self._report_progress(
+                            f"sync snapshot adapter={adapter.protocol_code} status=error "
+                            f"duration_s={duration_s:.2f} "
+                            f"exception_class={exc.__class__.__name__}"
+                        )
+                        continue
+                    all_positions.extend(positions)
+                    all_issues.extend(issues)
+                    self._report_progress(
+                        f"sync snapshot adapter={adapter.protocol_code} status=complete "
+                        f"duration_s={duration_s:.2f} positions={len(positions)} "
+                        f"issues={len(issues)}"
+                    )
+        self._report_progress(
+            "sync snapshot stage=collect_positions status=complete "
+            f"duration_s={time.perf_counter() - collect_start:.2f} "
+            f"positions={len(all_positions)} issues={len(all_issues)}"
+        )
 
         market_ids = self._resolve_market_ids()
         market_details = self._resolve_market_details()
@@ -1122,38 +1173,79 @@ class SnapshotRunner:
     def sync_markets(self, *, as_of_ts_utc: datetime) -> RunnerSummary:
         """Collect adapter market data and persist market snapshots."""
 
+        price_start = time.perf_counter()
+        self._report_progress("sync markets stage=price_map status=start")
         prices_by_token, price_issues, component_failures = self._price_map_for_all_tokens(
             as_of_ts_utc=as_of_ts_utc,
             stage="sync_markets",
+        )
+        self._report_progress(
+            "sync markets stage=price_map status=complete "
+            f"duration_s={time.perf_counter() - price_start:.2f} "
+            f"prices={len(prices_by_token)} issues={len(price_issues)} "
+            f"component_failures={component_failures}"
         )
 
         all_markets: list[MarketSnapshotInput] = []
         all_issues: list[DataQualityIssue] = list(price_issues)
 
-        for adapter in self.market_adapters:
-            try:
-                markets, issues = adapter.collect_markets(
-                    as_of_ts_utc=as_of_ts_utc,
-                    prices_by_token=prices_by_token,
-                )
-            except Exception as exc:
-                component_failures += 1
-                all_issues.append(
-                    self._build_component_exception_issue(
-                        as_of_ts_utc=as_of_ts_utc,
-                        stage="sync_markets",
-                        error_type="market_adapter_exception",
-                        error_message="market adapter raised unexpected exception",
-                        protocol_code=adapter.protocol_code,
-                        payload_json={
-                            "exception_class": exc.__class__.__name__,
-                            "detail": str(exc),
-                        },
+        collect_start = time.perf_counter()
+        self._report_progress(
+            "sync markets stage=collect_markets status=start "
+            f"adapter_count={len(self.market_adapters)}"
+        )
+        if self.market_adapters:
+            max_workers = min(4, len(self.market_adapters))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_map = {}
+                for adapter in self.market_adapters:
+                    self._report_progress(
+                        f"sync markets adapter={adapter.protocol_code} status=start"
                     )
-                )
-                continue
-            all_markets.extend(markets)
-            all_issues.extend(issues)
+                    future = executor.submit(
+                        adapter.collect_markets,
+                        as_of_ts_utc=as_of_ts_utc,
+                        prices_by_token=prices_by_token,
+                    )
+                    future_map[future] = (adapter, time.perf_counter())
+
+                for future in as_completed(future_map):
+                    adapter, started_at = future_map[future]
+                    duration_s = time.perf_counter() - started_at
+                    try:
+                        markets, issues = future.result()
+                    except Exception as exc:
+                        component_failures += 1
+                        all_issues.append(
+                            self._build_component_exception_issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_markets",
+                                error_type="market_adapter_exception",
+                                error_message="market adapter raised unexpected exception",
+                                protocol_code=adapter.protocol_code,
+                                payload_json={
+                                    "exception_class": exc.__class__.__name__,
+                                    "detail": str(exc),
+                                },
+                            )
+                        )
+                        self._report_progress(
+                            f"sync markets adapter={adapter.protocol_code} status=error "
+                            f"duration_s={duration_s:.2f} "
+                            f"exception_class={exc.__class__.__name__}"
+                        )
+                        continue
+                    all_markets.extend(markets)
+                    all_issues.extend(issues)
+                    self._report_progress(
+                        f"sync markets adapter={adapter.protocol_code} status=complete "
+                        f"duration_s={duration_s:.2f} markets={len(markets)} issues={len(issues)}"
+                    )
+        self._report_progress(
+            "sync markets stage=collect_markets status=complete "
+            f"duration_s={time.perf_counter() - collect_start:.2f} "
+            f"markets={len(all_markets)} issues={len(all_issues)}"
+        )
 
         market_ids = self._resolve_market_ids()
         rows: list[dict[str, object]] = []

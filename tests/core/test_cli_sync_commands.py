@@ -46,7 +46,7 @@ def test_sync_snapshot_exits_non_zero_after_committing_partial_results(monkeypat
 
     monkeypatch.setattr(
         "core.cli._build_runner",
-        lambda markets_path, consumer_markets_path: (
+        lambda markets_path, consumer_markets_path, *, progress_callback=None: (
             DummyRunner(result_summary),
             session,
             [closeable],

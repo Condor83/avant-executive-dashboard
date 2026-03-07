@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -231,6 +232,8 @@ def _parse_as_of(as_of: str | None) -> datetime:
 def _build_runner(
     markets_path: Path,
     consumer_markets_path: Path,
+    *,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> tuple[SnapshotRunner, Session, list[Closeable]]:
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
@@ -376,6 +379,7 @@ def _build_runner(
         price_oracle=price_oracle,
         pendle_history_client=pendle_history_client,
         pt_fixed_yield_overrides=pt_fixed_yield_overrides,
+        progress_callback=progress_callback,
         position_adapters=[
             wallet_adapter,
             aave_adapter,
@@ -460,7 +464,11 @@ def sync_snapshot(
     """Sync position snapshots from configured adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
+    runner, session, closeables = _build_runner(
+        markets_path,
+        consumer_markets_path,
+        progress_callback=typer.echo,
+    )
 
     try:
         result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
@@ -485,7 +493,11 @@ def sync_prices(
     """Sync token prices via shared price oracle."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
+    runner, session, closeables = _build_runner(
+        markets_path,
+        consumer_markets_path,
+        progress_callback=typer.echo,
+    )
 
     try:
         result = runner.sync_prices(as_of_ts_utc=as_of_ts_utc)
@@ -510,7 +522,11 @@ def sync_markets(
     """Sync market health snapshots from configured market adapters."""
 
     as_of_ts_utc = _parse_as_of(as_of)
-    runner, session, closeables = _build_runner(markets_path, consumer_markets_path)
+    runner, session, closeables = _build_runner(
+        markets_path,
+        consumer_markets_path,
+        progress_callback=typer.echo,
+    )
 
     try:
         result = runner.sync_markets(as_of_ts_utc=as_of_ts_utc)
