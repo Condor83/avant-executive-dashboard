@@ -140,6 +140,11 @@ Morpho collateralized position note:
 - Portfolio and `yield_daily` treat `collateral_*` as the economic supply leg when it is present.
 - `market_overview_daily` continues to use lend-side `supplied_usd` for Avant supply-share math.
 
+Kamino collateralized position note:
+- For configured Kamino borrow positions, posted deposit collateral should be persisted in `collateral_*`.
+- `supplied_*` remains zero unless there is true lend-side base-asset exposure.
+- Portfolio and `yield_daily` then use the collateral side as the economic supply leg through the shared collateral-aware helpers.
+
 ### position_snapshot_legs
 Explicit supply/borrow legs for a snapshot-linked position.
 

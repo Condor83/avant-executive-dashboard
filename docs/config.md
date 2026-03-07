@@ -153,6 +153,8 @@ Kamino token normalization policy:
 - when configured, `supply_token` is seeded as `markets.collateral_token_id`
 - when configured, `borrow_token` is seeded as `markets.base_asset_token_id`
 - this keeps dual-token markets aligned with Morpho semantics for downstream reporting
+- when a live obligation cleanly matches the configured single collateral token, the adapter writes that deposit into `collateral_amount` / `collateral_usd` instead of flattening it into generic `supplied_*`
+- `health_factor` is derived from liquidation distance (`borrowLiquidationLimit / userTotalBorrow` when available), not from the raw Kamino `borrowLimit` USD field
 - adapter emits token-shape DQ issues when obligations diverge from configured token expectations:
   - `kamino_multi_supply_token`
   - `kamino_supply_token_mismatch`

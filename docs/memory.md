@@ -92,6 +92,14 @@ When `avg_equity_usd <= 0`, ROE values are null.
 - For configured non-Avant supplied tokens with known external carry (for example `weETH`), position-level `supply_apy` can use a configured DefiLlama pool APY.
 - If Avant's API is unavailable during a run, position ingest falls back to Dolomite's protocol-native `supply_apy` and emits `dolomite_underlying_apy_fetch_failed`.
 
+### Kamino collateralized position policy (current)
+
+- Kamino market rates remain the protocol-native source for market-level analytics.
+- For configured Kamino borrow positions, the deposit side is treated as posted collateral, not as lend-side base-asset supply.
+- When the live obligation cleanly matches the configured collateral token, the adapter writes that deposit into `collateral_amount` / `collateral_usd` and leaves lend-side `supplied_*` at zero.
+- Portfolio and yield analytics then use the collateral side as economic supply through the shared collateral-aware helpers.
+- `health_factor` should be a ratio derived from liquidation distance, not the raw Kamino `borrowLimit` USD field.
+
 ## Fee waterfall (always the same)
 
 Fees are applied deterministically, even at wallet/position level:

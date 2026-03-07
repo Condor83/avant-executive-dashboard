@@ -66,8 +66,77 @@ class _StubKaminoClient(KaminoClient):
                     "reserve-syrup": Decimal("9"),
                     "reserve-pyusd": Decimal("1"),
                 },
+                deposit_reserve_raw_amounts={
+                    "reserve-syrup": Decimal("9000000"),
+                    "reserve-pyusd": Decimal("1000000"),
+                },
                 borrow_reserve_values={
                     "reserve-pyusd": Decimal("10"),
+                },
+                borrow_reserve_raw_amounts={
+                    "reserve-pyusd": Decimal("15580000"),
+                },
+            )
+        ]
+
+
+class _SingleSupplyKaminoClient(KaminoClient):
+    def close(self) -> None:
+        return
+
+    def get_market_stats(self, chain_code: str, market_pubkey: str) -> KaminoMarketStats:
+        del chain_code, market_pubkey
+        return KaminoMarketStats(
+            total_supply_usd=Decimal("25000000"),
+            total_borrow_usd=Decimal("18000000"),
+            supply_apy=Decimal("0.02"),
+            borrow_apy=Decimal("0.03"),
+            reserve_rates={
+                "reserve-syrup": KaminoReserveRate(
+                    reserve_ref="reserve-syrup",
+                    liquidity_token="syrupUSDC",
+                    liquidity_token_mint=None,
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0.0001"),
+                    total_supply_usd=Decimal("20000000"),
+                    total_borrow_usd=Decimal("0"),
+                ),
+                "reserve-pyusd": KaminoReserveRate(
+                    reserve_ref="reserve-pyusd",
+                    liquidity_token="PYUSD",
+                    liquidity_token_mint=None,
+                    supply_apy=Decimal("0.02"),
+                    borrow_apy=Decimal("0.07"),
+                    total_supply_usd=Decimal("5000000"),
+                    total_borrow_usd=Decimal("18000000"),
+                ),
+            },
+        )
+
+    def get_user_obligations(
+        self,
+        *,
+        chain_code: str,
+        market_pubkey: str,
+        wallet_address: str,
+    ) -> list[KaminoObligationSnapshot]:
+        del chain_code, market_pubkey, wallet_address
+        return [
+            KaminoObligationSnapshot(
+                obligation_ref="obligation-1",
+                supplied_usd=Decimal("17300000"),
+                borrowed_usd=Decimal("15580000"),
+                deposit_reserve_values={
+                    "reserve-syrup": Decimal("10"),
+                },
+                deposit_reserve_raw_amounts={
+                    "reserve-syrup": Decimal("9000000"),
+                },
+                borrow_reserve_values={
+                    "reserve-pyusd": Decimal("10"),
+                },
+                borrow_reserve_raw_amounts={
+                    "reserve-pyusd": Decimal("15580000"),
                 },
             )
         ]
@@ -184,3 +253,27 @@ def test_collect_positions_flags_multi_supply_token_when_configured() -> None:
     assert "kamino_multi_supply_token" in issue_types
     assert "kamino_supply_token_mismatch" not in issue_types
     assert "kamino_borrow_token_mismatch" not in issue_types
+
+
+def test_collect_positions_uses_collateral_fields_for_single_configured_supply_token() -> None:
+    adapter = KaminoAdapter(
+        markets_config=_kamino_markets_with_token_expectations(),
+        client=_SingleSupplyKaminoClient(),
+        yield_oracle=_StubYieldOracle(apy=Decimal("0.08")),
+    )
+
+    positions, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 3, 0, 0, tzinfo=UTC),
+        prices_by_token={},
+    )
+
+    assert len(positions) == 1
+    position = positions[0]
+    assert position.supplied_amount == Decimal("0")
+    assert position.supplied_usd == Decimal("0")
+    assert position.collateral_amount == Decimal("9")
+    assert position.collateral_usd == Decimal("17300000")
+    assert position.borrowed_amount == Decimal("15.58")
+    assert position.borrowed_usd == Decimal("15580000")
+    assert position.equity_usd == Decimal("1720000")
+    assert not issues

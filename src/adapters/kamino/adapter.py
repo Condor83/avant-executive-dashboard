@@ -80,6 +80,8 @@ class KaminoObligationSnapshot:
     block_number_or_slot: str | None = None
     deposit_reserve_values: dict[str, Decimal] = field(default_factory=dict)
     borrow_reserve_values: dict[str, Decimal] = field(default_factory=dict)
+    deposit_reserve_raw_amounts: dict[str, Decimal] = field(default_factory=dict)
+    borrow_reserve_raw_amounts: dict[str, Decimal] = field(default_factory=dict)
 
 
 class KaminoClient(Protocol):
@@ -303,6 +305,39 @@ class KaminoApiClient:
         return reserve_values
 
     @staticmethod
+    def _extract_reserve_raw_amount_map(
+        entries: object,
+        *,
+        reserve_key: str,
+        amount_keys: tuple[str, ...],
+    ) -> dict[str, Decimal]:
+        if not isinstance(entries, list):
+            return {}
+
+        reserve_amounts: dict[str, Decimal] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            reserve_ref = entry.get(reserve_key)
+            if not isinstance(reserve_ref, str) or not reserve_ref:
+                continue
+            amount: Decimal | None = None
+            for amount_key in amount_keys:
+                raw_amount = entry.get(amount_key)
+                if raw_amount in (None, "", "0", 0):
+                    continue
+                try:
+                    amount = _decimal_from(raw_amount, default=Decimal("0"))
+                except Exception:
+                    amount = None
+                if amount is not None and amount > 0:
+                    break
+            if amount is None or amount <= 0:
+                continue
+            reserve_amounts[reserve_ref] = amount
+        return reserve_amounts
+
+    @staticmethod
     def _extract_obligation_slot(row: dict[str, object]) -> str | None:
         timestamp = row.get("timestamp")
         if timestamp is not None:
@@ -319,6 +354,31 @@ class KaminoApiClient:
             stale = last_update.get("stale")
             if stale is not None:
                 return str(stale)
+        return None
+
+    @staticmethod
+    def _extract_health_factor(
+        stats: dict[str, object],
+        *,
+        borrowed_usd: Decimal | None,
+        ltv: Decimal | None,
+    ) -> Decimal | None:
+        explicit = KaminoApiClient._extract_decimal(stats, ("healthFactor",))
+        if explicit is not None:
+            return explicit
+
+        liquidation_limit = KaminoApiClient._extract_decimal(stats, ("borrowLiquidationLimit",))
+        if (
+            liquidation_limit is not None
+            and borrowed_usd is not None
+            and borrowed_usd > Decimal("0")
+        ):
+            return liquidation_limit / borrowed_usd
+
+        liquidation_ltv = KaminoApiClient._extract_decimal(stats, ("liquidationLtv",))
+        if liquidation_ltv is not None and ltv is not None and ltv > Decimal("0"):
+            return liquidation_ltv / ltv
+
         return None
 
     def get_user_obligations(
@@ -372,7 +432,11 @@ class KaminoApiClient:
                     borrowed_usd = borrowed_usd or Decimal("0")
 
             ltv = self._extract_decimal(stats, ("loanToValue",))
-            health_factor = self._extract_decimal(stats, ("borrowLimit", "healthFactor"))
+            health_factor = self._extract_health_factor(
+                stats,
+                borrowed_usd=borrowed_usd,
+                ltv=ltv,
+            )
             block_number_or_slot = self._extract_obligation_slot(row)
 
             deposits_entries = state.get("deposits")
@@ -397,6 +461,16 @@ class KaminoApiClient:
                     borrow_reserve_values=self._extract_reserve_value_map(
                         borrows_entries,
                         reserve_key="borrowReserve",
+                    ),
+                    deposit_reserve_raw_amounts=self._extract_reserve_raw_amount_map(
+                        deposits_entries,
+                        reserve_key="depositReserve",
+                        amount_keys=("depositedAmount",),
+                    ),
+                    borrow_reserve_raw_amounts=self._extract_reserve_raw_amount_map(
+                        borrows_entries,
+                        reserve_key="borrowReserve",
+                        amount_keys=("borrowedAmountOutsideElevationGroups",),
                     ),
                 )
             )
@@ -499,6 +573,28 @@ class KaminoAdapter:
                 continue
             symbols.add(rate_row.liquidity_token)
         return symbols
+
+    @staticmethod
+    def _scaled_reserve_amount_for_symbol(
+        reserve_amounts: dict[str, Decimal],
+        reserve_rates: dict[str, KaminoReserveRate],
+        *,
+        symbol: str,
+        decimals: int,
+    ) -> Decimal | None:
+        raw_total = Decimal("0")
+        matched = False
+        for reserve_ref, raw_amount in reserve_amounts.items():
+            if raw_amount <= 0:
+                continue
+            rate_row = reserve_rates.get(reserve_ref)
+            if rate_row is None or rate_row.liquidity_token != symbol:
+                continue
+            raw_total += raw_amount
+            matched = True
+        if not matched:
+            return None
+        return raw_total / (Decimal("10") ** decimals)
 
     def collect_positions(
         self,
@@ -670,10 +766,40 @@ class KaminoAdapter:
                                 )
                             )
 
-                        # Kamino obligations can span multiple reserve assets. For canonical market
-                        # rows we store aggregated notional values in amount fields.
+                        single_configured_supply = (
+                            market.supply_token is not None
+                            and observed_supply_symbols == {market.supply_token.symbol}
+                        )
+                        single_configured_borrow = (
+                            market.borrow_token is not None
+                            and observed_borrow_symbols == {market.borrow_token.symbol}
+                        )
+
                         supplied_amount = obligation.supplied_usd
+                        supplied_usd = obligation.supplied_usd
+                        collateral_amount: Decimal | None = None
+                        collateral_usd: Decimal | None = None
+                        if single_configured_supply and market.supply_token is not None:
+                            collateral_usd = obligation.supplied_usd
+                            collateral_amount = self._scaled_reserve_amount_for_symbol(
+                                obligation.deposit_reserve_raw_amounts,
+                                market_rates.reserve_rates,
+                                symbol=market.supply_token.symbol,
+                                decimals=market.supply_token.decimals,
+                            )
+                            supplied_amount = Decimal("0")
+                            supplied_usd = Decimal("0")
+
                         borrowed_amount = obligation.borrowed_usd
+                        if single_configured_borrow and market.borrow_token is not None:
+                            scaled_borrow_amount = self._scaled_reserve_amount_for_symbol(
+                                obligation.borrow_reserve_raw_amounts,
+                                market_rates.reserve_rates,
+                                symbol=market.borrow_token.symbol,
+                                decimals=market.borrow_token.decimals,
+                            )
+                            if scaled_borrow_amount is not None:
+                                borrowed_amount = scaled_borrow_amount
                         position_supply_apy = self._weighted_reserve_apy(
                             reserve_values=obligation.deposit_reserve_values,
                             reserve_rates=market_rates.reserve_rates,
@@ -708,19 +834,25 @@ class KaminoAdapter:
                                     obligation.obligation_ref,
                                 ),
                                 supplied_amount=supplied_amount,
-                                supplied_usd=obligation.supplied_usd,
+                                supplied_usd=supplied_usd,
                                 borrowed_amount=borrowed_amount,
                                 borrowed_usd=obligation.borrowed_usd,
                                 supply_apy=max(position_supply_apy, Decimal("0")),
                                 borrow_apy=max(position_borrow_apy, Decimal("0")),
                                 reward_apy=Decimal("0"),
-                                equity_usd=obligation.supplied_usd - obligation.borrowed_usd,
+                                equity_usd=(
+                                    supplied_usd
+                                    + (collateral_usd or Decimal("0"))
+                                    - obligation.borrowed_usd
+                                ),
                                 source="rpc",
                                 block_number_or_slot=(
                                     obligation.block_number_or_slot or market_rates.slot
                                 ),
                                 health_factor=obligation.health_factor,
                                 ltv=obligation.ltv,
+                                collateral_amount=collateral_amount,
+                                collateral_usd=collateral_usd,
                             )
                         )
 
