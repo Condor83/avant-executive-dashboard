@@ -12,6 +12,7 @@ import httpx
 
 from core.config import EulerChainConfig, EulerVault, MarketsConfig, canonical_address
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
+from core.yields import AVANT_APY_ENDPOINTS, AvantYieldOracle
 
 ERC20_DECIMALS_SELECTOR = "0x313ce567"
 ERC20_BALANCE_OF_SELECTOR = "0x70a08231"
@@ -108,6 +109,7 @@ class _EulerAccountExposure:
     supplied_usd: Decimal
     borrowed_amount: Decimal
     borrowed_usd: Decimal
+    supply_apy: Decimal
     runtime: _EulerVaultRuntime
 
 
@@ -259,9 +261,16 @@ class EulerV2Adapter:
 
     protocol_code = "euler_v2"
 
-    def __init__(self, markets_config: MarketsConfig, rpc_client: EulerV2RpcClient) -> None:
+    def __init__(
+        self,
+        markets_config: MarketsConfig,
+        rpc_client: EulerV2RpcClient,
+        *,
+        avant_yield_oracle: AvantYieldOracle | None = None,
+    ) -> None:
         self.markets_config = markets_config
         self.rpc_client = rpc_client
+        self.avant_yield_oracle = avant_yield_oracle
 
     @staticmethod
     def _position_key(chain_code: str, wallet_address: str, market_ref: str) -> str:
@@ -295,6 +304,10 @@ class EulerV2Adapter:
         if total_supply <= 0:
             return Decimal("0")
         return total_borrow / total_supply
+
+    @staticmethod
+    def _supports_avant_native_yield(symbol: str) -> bool:
+        return symbol.strip().upper() in AVANT_APY_ENDPOINTS
 
     @staticmethod
     def _symbol_candidates(vault_symbol: str) -> list[str]:
@@ -487,6 +500,31 @@ class EulerV2Adapter:
 
             supplied_usd = supplied_amount * asset_price
             borrowed_usd = borrowed_amount * asset_price
+            supply_apy = runtime.supply_apy
+            if (
+                supplied_amount > 0
+                and self.avant_yield_oracle is not None
+                and self._supports_avant_native_yield(runtime.config.asset_symbol)
+            ):
+                try:
+                    supply_apy = self.avant_yield_oracle.get_token_apy(runtime.config.asset_symbol)
+                except Exception as exc:
+                    issues.append(
+                        self._issue(
+                            as_of_ts_utc=as_of_ts_utc,
+                            stage="sync_snapshot",
+                            error_type="euler_underlying_apy_fetch_failed",
+                            error_message=str(exc),
+                            chain_code=chain_code,
+                            wallet_address=wallet_address,
+                            market_ref=market_ref,
+                            payload_json={
+                                "symbol": runtime.config.asset_symbol,
+                                "source": "avant_api",
+                                "subaccount": subaccount_address,
+                            },
+                        )
+                    )
             exposures.append(
                 _EulerAccountExposure(
                     market_ref=market_ref,
@@ -494,6 +532,7 @@ class EulerV2Adapter:
                     supplied_usd=supplied_usd,
                     borrowed_amount=borrowed_amount,
                     borrowed_usd=borrowed_usd,
+                    supply_apy=supply_apy,
                     runtime=runtime,
                 )
             )
@@ -720,7 +759,7 @@ class EulerV2Adapter:
                                 supplied_usd=supply_exposure.supplied_usd,
                                 borrowed_amount=borrow_exposure.borrowed_amount,
                                 borrowed_usd=borrow_exposure.borrowed_usd,
-                                supply_apy=supply_exposure.runtime.supply_apy,
+                                supply_apy=supply_exposure.supply_apy,
                                 borrow_apy=borrow_exposure.runtime.borrow_apy,
                             )
                         )
@@ -770,7 +809,7 @@ class EulerV2Adapter:
                                 supplied_usd=exposure.supplied_usd,
                                 borrowed_amount=exposure.borrowed_amount,
                                 borrowed_usd=exposure.borrowed_usd,
-                                supply_apy=exposure.runtime.supply_apy,
+                                supply_apy=exposure.supply_apy,
                                 borrow_apy=exposure.runtime.borrow_apy,
                             )
                         )

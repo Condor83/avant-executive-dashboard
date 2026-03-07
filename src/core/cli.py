@@ -322,7 +322,11 @@ def _build_runner(
         bracket_yield_oracle=bracket_yield_oracle,
         vault_yield_client=morpho_vault_yield_client,
     )
-    euler_adapter = EulerV2Adapter(markets_config=markets_config, rpc_client=euler_client)
+    euler_adapter = EulerV2Adapter(
+        markets_config=markets_config,
+        rpc_client=euler_client,
+        avant_yield_oracle=avant_yield_oracle,
+    )
     dolomite_adapter = DolomiteAdapter(
         markets_config=markets_config,
         rpc_client=dolomite_client,

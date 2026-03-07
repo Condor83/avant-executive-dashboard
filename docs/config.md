@@ -112,11 +112,17 @@ Subaccount behavior:
 - Adapter derives Euler subaccounts from `wallet + account_id`.
 - If a subaccount has exactly one supply vault and one borrow vault and they differ, ingest synthesizes one combined position row with market ref `<supply_vault>/<borrow_vault>`.
 - If non-zero subaccounts have multiple supply/borrow legs that cannot be reduced to one pair, adapter emits `euler_subaccount_pairing_ambiguous` and keeps per-vault rows.
+- For paired consumer-market rows, served Portfolio labels should use the consumer market token roles:
+  - `collateral_token_id` = supply token
+  - `base_asset_token_id` = borrow token
+  - example: `savUSD/USDC Euler V2-Avalanche`
 
 Supply-only vault behavior:
 - Set `debt_supported: false` when a configured Euler vault is collateral-only and does not expose debt reads.
 - Adapter skips `totalBorrows`, `interestRate`, and per-wallet debt reads for that vault.
 - Borrow metrics persist as zero without emitting `euler_total_borrows_read_failed` for that configured surface.
+- Position-level `supply_apy` for Avant-native supplied assets (`savUSD`, `savETH`, `savBTC`, `avUSDx`, `avETHx`, `avBTCx`) uses Avant's API as the primary source.
+- If the Avant API is unavailable, Euler position ingest falls back to protocol-native `supply_apy` and emits `euler_underlying_apy_fetch_failed`.
 
 #### Dolomite
 - chain config includes:

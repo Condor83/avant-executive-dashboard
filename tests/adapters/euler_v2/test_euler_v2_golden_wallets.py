@@ -5,9 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 from adapters.euler_v2.adapter import EulerV2Adapter
 from core.config import MarketsConfig, load_markets_config
+from core.yields import AvantYieldOracle
 
 
 class FakeEulerClient:
@@ -76,6 +78,24 @@ class FakeEulerClient:
     def get_debt_of(self, chain_code: str, vault_address: str, wallet_address: str) -> int:
         assert chain_code == "avalanche"
         return self.debts[(vault_address, wallet_address)]
+
+
+class _StubAvantYieldOracle:
+    def __init__(self, apy: Decimal | None, *, error: Exception | None = None) -> None:
+        self.apy = apy
+        self.error = error
+        self.calls: list[str] = []
+
+    def close(self) -> None:
+        return None
+
+    def get_token_apy(self, symbol: str) -> Decimal:
+        self.calls.append(symbol)
+        if self.error is not None:
+            raise self.error
+        if self.apy is None:
+            raise RuntimeError("apy not configured")
+        return self.apy
 
 
 def _minimal_euler_config() -> tuple[MarketsConfig, list[str], list[str]]:
@@ -288,3 +308,165 @@ def test_euler_subaccount_single_pair_synthesizes_consumer_market() -> None:
     assert row.position_key.endswith(":acct2")
     assert row.supplied_usd == Decimal("410")
     assert row.borrowed_usd == Decimal("120")
+
+
+def test_euler_uses_avant_api_for_avant_native_supplied_asset() -> None:
+    wallet = "0xd1b366727b30d996b81018bb31ec37f64ed8ad28"
+    vault_supply = "0xbac3983342b805e66f8756e265b3b0ddf4b685fc"
+    vault_borrow = "0x37ca03ad51b8ff79aad35fadacba4cedf0c3e74e"
+    usdc = "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
+    savusd = "0x06d47f3fb376649c3a9dafe069b3d6e35572219e"
+
+    cfg = MarketsConfig.model_validate(
+        {
+            "aave_v3": {},
+            "morpho": {},
+            "euler_v2": {
+                "avalanche": {
+                    "wallets": [wallet],
+                    "account_ids": [2],
+                    "vaults": [
+                        {
+                            "address": vault_supply,
+                            "symbol": "eavUSD",
+                            "asset_address": savusd,
+                            "asset_symbol": "savUSD",
+                            "asset_decimals": 18,
+                        },
+                        {
+                            "address": vault_borrow,
+                            "symbol": "eUSDC",
+                            "asset_address": usdc,
+                            "asset_symbol": "USDC",
+                            "asset_decimals": 6,
+                        },
+                    ],
+                }
+            },
+            "dolomite": {},
+            "kamino": {},
+            "zest": {},
+            "wallet_balances": {},
+        }
+    )
+
+    subaccount = _subaccount_address(wallet, 2)
+    client = FakeEulerClient(
+        vault_assets={
+            vault_supply: savusd,
+            vault_borrow: usdc,
+        },
+        asset_decimals={
+            savusd: 18,
+            usdc: 6,
+        },
+        total_assets={
+            vault_supply: 2_000_000_000_000_000_000,
+            vault_borrow: 1_500_000_000,
+        },
+        total_borrows={
+            vault_supply: 100_000_000_000_000_000,
+            vault_borrow: 900_000_000,
+        },
+        interest_rates={
+            vault_supply: 1_100_000_000,
+            vault_borrow: 1_800_000_000,
+        },
+        interest_fees={
+            vault_supply: 500,
+            vault_borrow: 500,
+        },
+        share_balances={
+            (vault_supply, subaccount): 400_000_000_000_000_000,
+            (vault_borrow, subaccount): 0,
+        },
+        converted_assets={
+            (vault_supply, 400_000_000_000_000_000): 410_000_000_000_000_000,
+            (vault_borrow, 0): 0,
+        },
+        debts={
+            (vault_supply, subaccount): 0,
+            (vault_borrow, subaccount): 120_000_000,
+        },
+    )
+    avant_oracle = _StubAvantYieldOracle(Decimal("0.0745"))
+    adapter = EulerV2Adapter(
+        markets_config=cfg,
+        rpc_client=client,
+        avant_yield_oracle=cast(AvantYieldOracle, avant_oracle),
+    )
+
+    rows, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+        prices_by_token={
+            ("avalanche", savusd): Decimal("1"),
+            ("avalanche", usdc): Decimal("1"),
+        },
+    )
+
+    assert len(rows) == 1
+    assert not issues
+    assert rows[0].market_ref == f"{vault_supply}/{vault_borrow}"
+    assert rows[0].supply_apy == Decimal("0.0745")
+    assert rows[0].borrow_apy > Decimal("0")
+    assert avant_oracle.calls == ["savUSD"]
+
+
+def test_euler_avant_api_failure_falls_back_to_protocol_supply_apy() -> None:
+    wallet = "0xd1b366727b30d996b81018bb31ec37f64ed8ad28"
+    vault_supply = "0xbac3983342b805e66f8756e265b3b0ddf4b685fc"
+    savusd = "0x06d47f3fb376649c3a9dafe069b3d6e35572219e"
+
+    cfg = MarketsConfig.model_validate(
+        {
+            "aave_v3": {},
+            "morpho": {},
+            "euler_v2": {
+                "avalanche": {
+                    "wallets": [wallet],
+                    "vaults": [
+                        {
+                            "address": vault_supply,
+                            "symbol": "eavUSD",
+                            "asset_address": savusd,
+                            "asset_symbol": "savUSD",
+                            "asset_decimals": 18,
+                        },
+                    ],
+                }
+            },
+            "dolomite": {},
+            "kamino": {},
+            "zest": {},
+            "wallet_balances": {},
+        }
+    )
+    client = FakeEulerClient(
+        vault_assets={vault_supply: savusd},
+        asset_decimals={savusd: 18},
+        total_assets={vault_supply: 2_000_000_000_000_000_000},
+        total_borrows={vault_supply: 100_000_000_000_000_000},
+        interest_rates={vault_supply: 1_100_000_000},
+        interest_fees={vault_supply: 500},
+        share_balances={(vault_supply, wallet): 400_000_000_000_000_000},
+        converted_assets={(vault_supply, 400_000_000_000_000_000): 410_000_000_000_000_000},
+        debts={(vault_supply, wallet): 0},
+    )
+    avant_oracle = _StubAvantYieldOracle(None, error=RuntimeError("avant unavailable"))
+    adapter = EulerV2Adapter(
+        markets_config=cfg,
+        rpc_client=client,
+        avant_yield_oracle=cast(AvantYieldOracle, avant_oracle),
+    )
+
+    rows, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+        prices_by_token={("avalanche", savusd): Decimal("1")},
+    )
+
+    assert len(rows) == 1
+    assert rows[0].supply_apy > Decimal("0")
+    assert len(issues) == 1
+    assert issues[0].error_type == "euler_underlying_apy_fetch_failed"
+    assert issues[0].payload_json is not None
+    assert issues[0].payload_json["symbol"] == "savUSD"

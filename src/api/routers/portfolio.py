@@ -43,6 +43,7 @@ ZERO = Decimal("0")
 METHOD = "apy_prorated_sod_eod"
 ANNUALIZATION_DAYS = Decimal("365")
 ROE_QUANTUM = Decimal("0.0000000001")
+DUST_BORROW_USD = Decimal("1")
 SUPPLY_TOKEN = aliased(Token)
 BORROW_TOKEN = aliased(Token)
 
@@ -320,6 +321,17 @@ def _synthetic_dolomite_position_key(row: Any, *, account_number: str) -> str:
     )
 
 
+def _zest_bucket_key(row: Any) -> tuple[str, str | None, str, str] | None:
+    if row.protocol_code != "zest":
+        return None
+    return (row.wallet_address, row.product_code, row.protocol_code, row.chain_code)
+
+
+def _synthetic_zest_position_key(row: Any) -> str:
+    product = row.product_code or "unassigned"
+    return f"paired-zest:{row.protocol_code}:{row.chain_code}:{row.wallet_address}:{product}"
+
+
 def _is_split_position_row(row: Any) -> bool:
     return (row.supply_usd > ZERO and row.borrow_usd <= ZERO) or (
         row.supply_usd <= ZERO and row.borrow_usd > ZERO
@@ -348,6 +360,14 @@ def _is_pairable_dolomite_bucket(rows: list[Any]) -> bool:
     if not borrow_rows:
         return False
     return all(row.borrow_usd > ZERO and row.supply_usd <= ZERO for row in borrow_rows)
+
+
+def _is_pairable_zest_bucket(rows: list[Any]) -> bool:
+    if len(rows) <= 1 or any(row.protocol_code != "zest" for row in rows):
+        return False
+    supply_rows = [row for row in rows if row.supply_usd > ZERO]
+    borrow_rows = [row for row in rows if row.borrow_usd > DUST_BORROW_USD]
+    return bool(supply_rows and borrow_rows)
 
 
 def _singleton_position(row: Any) -> _PositionAggregate:
@@ -522,6 +542,69 @@ def _paired_dolomite_position(
     )
 
 
+def _paired_zest_position(rows: list[Any], avg_equity: dict[str, Decimal]) -> _PositionAggregate:
+    supply_rows = sorted(
+        (row for row in rows if row.supply_usd > ZERO),
+        key=lambda row: (row.supply_usd, row.position_key),
+        reverse=True,
+    )
+    supply_row = supply_rows[0]
+    borrow_rows = sorted(
+        (row for row in rows if row.borrow_usd > DUST_BORROW_USD),
+        key=lambda row: (row.borrow_usd, row.position_key),
+        reverse=True,
+    )
+    supply_legs = tuple(_build_supply_leg(row) for row in supply_rows)
+    borrow_legs = tuple(leg for row in borrow_rows if (leg := _build_borrow_leg(row)) is not None)
+    display_name = _display_name(
+        supply_legs=supply_legs,
+        borrow_legs=borrow_legs,
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+    )
+    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
+    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
+    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
+    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
+    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
+    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
+    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
+    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
+    total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
+    total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
+    health_values = [row.health_factor for row in rows if row.health_factor is not None]
+    return _PositionAggregate(
+        position_id=supply_row.position_id,
+        position_key=_synthetic_zest_position_key(supply_row),
+        display_name=display_name,
+        wallet_address=supply_row.wallet_address,
+        product_code=supply_row.product_code,
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+        position_kind="Carry",
+        market_exposure_slug=None,
+        supply_legs=supply_legs,
+        borrow_legs=borrow_legs,
+        net_equity_usd=total_net_equity_usd,
+        leverage_ratio=leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd),
+        health_factor=min(health_values) if health_values else None,
+        gross_yield_daily_usd=gross_yield_daily_usd,
+        net_yield_daily_usd=net_yield_daily_usd,
+        gross_yield_mtd_usd=gross_yield_mtd_usd,
+        net_yield_mtd_usd=net_yield_mtd_usd,
+        strategy_fee_daily_usd=strategy_fee_daily_usd,
+        avant_gop_daily_usd=avant_gop_daily_usd,
+        strategy_fee_mtd_usd=strategy_fee_mtd_usd,
+        avant_gop_mtd_usd=avant_gop_mtd_usd,
+        gross_roe=(
+            gross_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None
+        ),
+        net_roe=net_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None,
+        member_position_keys=tuple(sorted(row.position_key for row in rows)),
+    )
+
+
 def _sort_value(position: _PositionAggregate, sort_by: str) -> Decimal | None:
     if sort_by == "supply_usd":
         return _total_supply_usd(position.supply_legs)
@@ -557,12 +640,16 @@ def _group_positions(
     )
     reserve_buckets: dict[tuple[str, str | None, str, str], list[Any]] = {}
     dolomite_buckets: dict[tuple[str, str | None, str, str, str], list[Any]] = {}
+    zest_buckets: dict[tuple[str, str | None, str, str], list[Any]] = {}
     for row in rows:
         if row.market_kind == "reserve" and _is_split_position_row(row):
             reserve_buckets.setdefault(_reserve_bucket_key(row), []).append(row)
         dolomite_bucket = _dolomite_bucket_key(row)
         if dolomite_bucket is not None and _is_split_position_row(row):
             dolomite_buckets.setdefault(dolomite_bucket, []).append(row)
+        zest_bucket = _zest_bucket_key(row)
+        if zest_bucket is not None:
+            zest_buckets.setdefault(zest_bucket, []).append(row)
 
     consumed: set[str] = set()
     grouped: list[_PositionAggregate] = []
@@ -577,6 +664,11 @@ def _group_positions(
         grouped.append(
             _paired_dolomite_position(bucket_rows, avg_equity, account_number=dolomite_bucket[-1])
         )
+        consumed.update(row.position_key for row in bucket_rows)
+    for bucket_rows in zest_buckets.values():
+        if not _is_pairable_zest_bucket(bucket_rows):
+            continue
+        grouped.append(_paired_zest_position(bucket_rows, avg_equity))
         consumed.update(row.position_key for row in bucket_rows)
 
     for row in rows:

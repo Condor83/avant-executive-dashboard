@@ -56,6 +56,7 @@ This repo uses snapshot-first facts plus derived aggregates.
 Token-role convention:
 - single-asset lending markets (for example Aave reserve): `base_asset_token_id` is both supply and borrow token
 - dual-token markets (for example Morpho/Kamino): `base_asset_token_id` = borrow token, `collateral_token_id` = supply/collateral token
+- consumer-market synths (for example paired Euler rows): served Portfolio supply labeling should use `collateral_token_id`, while borrow labeling should use `base_asset_token_id`
 
 ### market_exposures
 Business-facing paired exposure lens used by the dashboard.

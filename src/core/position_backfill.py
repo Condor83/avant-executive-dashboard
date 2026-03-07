@@ -167,12 +167,19 @@ def backfill_positions_and_legs(
             descriptor.metadata_json,
             descriptor.protocol_code,
         )
-        supply_token_id = economic_supply_token_id(
-            base_asset_token_id=descriptor.base_asset_token_id,
-            collateral_token_id=descriptor.collateral_token_id,
-            collateral_amount=descriptor.collateral_amount,
-            collateral_usd=descriptor.collateral_usd,
-        )
+        supply_token_id: int | None
+        if (
+            descriptor.market_kind == "consumer_market"
+            and descriptor.collateral_token_id is not None
+        ):
+            supply_token_id = descriptor.collateral_token_id
+        else:
+            supply_token_id = economic_supply_token_id(
+                base_asset_token_id=descriptor.base_asset_token_id,
+                collateral_token_id=descriptor.collateral_token_id,
+                collateral_amount=descriptor.collateral_amount,
+                collateral_usd=descriptor.collateral_usd,
+            )
         if supply_token_id is None:
             if exposure_class != "core_lending":
                 continue

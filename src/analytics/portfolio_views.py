@@ -58,9 +58,13 @@ class PortfolioViewEngine:
         business_date: date,
         as_of_ts_utc: datetime | None = None,
     ) -> PortfolioBuildSummary:
-        backfill_positions_and_legs(self.session, as_of_ts_utc=None)
         daily_as_of = as_of_ts_utc or self._resolve_business_date_snapshot(business_date)
         current_as_of = self._latest_snapshot_ts()
+        backfill_timestamps = {
+            snapshot_ts for snapshot_ts in (daily_as_of, current_as_of) if snapshot_ts is not None
+        }
+        for snapshot_ts in backfill_timestamps:
+            backfill_positions_and_legs(self.session, as_of_ts_utc=snapshot_ts)
 
         daily_rows = self._build_rows(
             business_date=business_date,

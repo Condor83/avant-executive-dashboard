@@ -92,6 +92,15 @@ When `avg_equity_usd <= 0`, ROE values are null.
 - For configured non-Avant supplied tokens with known external carry (for example `weETH`), position-level `supply_apy` can use a configured DefiLlama pool APY.
 - If Avant's API is unavailable during a run, position ingest falls back to Dolomite's protocol-native `supply_apy` and emits `dolomite_underlying_apy_fetch_failed`.
 
+### Euler supplied-token carry policy (current)
+
+- Euler market rates remain the protocol-native source for market analytics.
+- For positions that supply Avant-native yield-bearing tokens (`savUSD`, `savETH`, `savBTC`, `avUSDx`, `avETHx`, `avBTCx`), position-level `supply_apy` should use Avant's API as the primary underlying yield source.
+- Paired Euler consumer-market rows should display the consumer-market token roles, not the raw vault token ids:
+  - `collateral_token_id` = supply token
+  - `base_asset_token_id` = borrow token
+- If Avant's API is unavailable during a run, position ingest falls back to Euler's protocol-native `supply_apy` and emits `euler_underlying_apy_fetch_failed`.
+
 ### Kamino collateralized position policy (current)
 
 - Kamino market rates remain the protocol-native source for market-level analytics.
