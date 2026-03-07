@@ -32,6 +32,7 @@ def test_positions_current_returns_served_rows(api_client: tuple[TestClient, See
     assert data["total_count"] == 4
     assert len(data["positions"]) == 4
     assert data["positions"][0]["supply_leg"]["symbol"] is not None
+    assert data["positions"][0]["supply_legs"]
     assert any("Aave V3-Ethereum" in row["display_name"] for row in data["positions"])
 
 
@@ -532,3 +533,263 @@ def test_positions_current_pairs_split_dolomite_account_rows(
     assert Decimal(paired["net_equity_usd"]) == Decimal("500")
     assert Decimal(paired["leverage_ratio"]) == Decimal("3")
     assert Decimal(paired["roe"]["gross_roe_daily"]) == Decimal("0.03")
+
+
+def test_positions_current_pairs_spark_multi_supply_reserve_rows(
+    api_client: tuple[TestClient, SeedMetadata],
+    seeded_session: tuple[Session, SeedMetadata],
+) -> None:
+    client, meta = api_client
+    session, _ = seeded_session
+    wallet_address = "0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd"
+
+    chain_eth = session.scalar(select(Chain).where(Chain.chain_code == "ethereum"))
+    protocol = session.scalar(select(Protocol).where(Protocol.protocol_code == "spark"))
+    product = session.scalar(select(Product).where(Product.product_code == "eth_senior"))
+    wallet = session.scalar(select(Wallet).where(Wallet.address == wallet_address))
+    assert chain_eth is not None
+    assert protocol is not None
+    assert product is not None
+    assert wallet is not None
+
+    def _token(symbol: str, address: str, decimals: int) -> Token:
+        token = session.scalar(
+            select(Token).where(Token.chain_id == chain_eth.chain_id, Token.symbol == symbol)
+        )
+        if token is None:
+            token = Token(
+                chain_id=chain_eth.chain_id,
+                address_or_mint=address,
+                symbol=symbol,
+                decimals=decimals,
+            )
+            session.add(token)
+            session.flush()
+        return token
+
+    token_weeth = _token("weETH", "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee", 18)
+    token_weth = _token("WETH", "0xc02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2", 18)
+    token_usdc = _token("USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 6)
+    token_usdt = _token("USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7", 6)
+
+    def _market(native_key: str, display_name: str, base_token: Token) -> Market:
+        market = session.scalar(select(Market).where(Market.native_market_key == native_key))
+        if market is None:
+            market = Market(
+                chain_id=chain_eth.chain_id,
+                protocol_id=protocol.protocol_id,
+                native_market_key=native_key,
+                market_address=base_token.address_or_mint,
+                market_kind="reserve",
+                display_name=display_name,
+                base_asset_token_id=base_token.token_id,
+            )
+            session.add(market)
+            session.flush()
+        return market
+
+    market_weeth = _market("spark-weeth", "weETH Spark", token_weeth)
+    market_weth = _market("spark-weth", "WETH Spark", token_weth)
+    market_usdc = _market("spark-usdc", "USDC Spark", token_usdc)
+    market_usdt = _market("spark-usdt", "USDT Spark", token_usdt)
+
+    as_of_ts_utc = session.scalar(select(PortfolioPositionCurrent.as_of_ts_utc).limit(1))
+    assert as_of_ts_utc is not None
+
+    rows = [
+        {
+            "position_key": "spark:ethereum:0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd:weeth",
+            "display_name": "weETH Spark",
+            "market_id": market_weeth.market_id,
+            "supply_token_id": token_weeth.token_id,
+            "borrow_token_id": None,
+            "supply_amount": Decimal("2921.7060"),
+            "supply_usd": Decimal("5805196"),
+            "supply_apy": Decimal("0.0249"),
+            "borrow_amount": Decimal("0"),
+            "borrow_usd": Decimal("0"),
+            "borrow_apy": Decimal("0"),
+            "reward_apy": Decimal("0"),
+            "net_equity_usd": Decimal("5805196"),
+            "gross_yield_daily_usd": Decimal("396"),
+            "net_yield_daily_usd": Decimal("396"),
+            "gross_yield_mtd_usd": Decimal("3960"),
+            "net_yield_mtd_usd": Decimal("3960"),
+            "avg_equity_usd": Decimal("5805196"),
+        },
+        {
+            "position_key": "spark:ethereum:0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd:weth",
+            "display_name": "WETH Spark",
+            "market_id": market_weth.market_id,
+            "supply_token_id": token_weth.token_id,
+            "borrow_token_id": None,
+            "supply_amount": Decimal("1088.7076"),
+            "supply_usd": Decimal("2163175"),
+            "supply_apy": Decimal("0.0175"),
+            "borrow_amount": Decimal("0"),
+            "borrow_usd": Decimal("0"),
+            "borrow_apy": Decimal("0"),
+            "reward_apy": Decimal("0"),
+            "net_equity_usd": Decimal("2163175"),
+            "gross_yield_daily_usd": Decimal("103"),
+            "net_yield_daily_usd": Decimal("103"),
+            "gross_yield_mtd_usd": Decimal("1030"),
+            "net_yield_mtd_usd": Decimal("1030"),
+            "avg_equity_usd": Decimal("2163175"),
+        },
+        {
+            "position_key": "spark:ethereum:0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd:usdt",
+            "display_name": "USDT Spark",
+            "market_id": market_usdt.market_id,
+            "supply_token_id": token_usdt.token_id,
+            "borrow_token_id": token_usdt.token_id,
+            "supply_amount": Decimal("0"),
+            "supply_usd": Decimal("0"),
+            "supply_apy": Decimal("0"),
+            "borrow_amount": Decimal("3190573.1162"),
+            "borrow_usd": Decimal("3190382"),
+            "borrow_apy": Decimal("0.0342"),
+            "reward_apy": Decimal("0"),
+            "net_equity_usd": Decimal("-3190382"),
+            "gross_yield_daily_usd": Decimal("-299"),
+            "net_yield_daily_usd": Decimal("-299"),
+            "gross_yield_mtd_usd": Decimal("-2990"),
+            "net_yield_mtd_usd": Decimal("-2990"),
+            "avg_equity_usd": Decimal("0"),
+        },
+        {
+            "position_key": "spark:ethereum:0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd:usdc",
+            "display_name": "USDC Spark",
+            "market_id": market_usdc.market_id,
+            "supply_token_id": token_usdc.token_id,
+            "borrow_token_id": token_usdc.token_id,
+            "supply_amount": Decimal("0"),
+            "supply_usd": Decimal("0"),
+            "supply_apy": Decimal("0"),
+            "borrow_amount": Decimal("1478483.9444"),
+            "borrow_usd": Decimal("1478632"),
+            "borrow_apy": Decimal("0.0502"),
+            "reward_apy": Decimal("0"),
+            "net_equity_usd": Decimal("-1478632"),
+            "gross_yield_daily_usd": Decimal("-203"),
+            "net_yield_daily_usd": Decimal("-203"),
+            "gross_yield_mtd_usd": Decimal("-2030"),
+            "net_yield_mtd_usd": Decimal("-2030"),
+            "avg_equity_usd": Decimal("0"),
+        },
+    ]
+
+    now = datetime.now(UTC)
+    positions: list[Position] = []
+    for row in rows:
+        position = Position(
+            position_key=row["position_key"],
+            wallet_id=wallet.wallet_id,
+            product_id=product.product_id,
+            protocol_id=protocol.protocol_id,
+            chain_id=chain_eth.chain_id,
+            market_id=row["market_id"],
+            exposure_class="core_lending",
+            status="open",
+            display_name=row["display_name"],
+            opened_at_utc=now,
+            last_seen_at_utc=now,
+        )
+        positions.append(position)
+        session.add(position)
+    session.flush()
+
+    for position, row in zip(positions, rows, strict=True):
+        session.add(
+            PortfolioPositionCurrent(
+                position_id=position.position_id,
+                business_date=meta.business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                product_id=product.product_id,
+                protocol_id=protocol.protocol_id,
+                chain_id=chain_eth.chain_id,
+                market_exposure_id=None,
+                scope_segment="strategy_only",
+                supply_token_id=row["supply_token_id"],
+                borrow_token_id=row["borrow_token_id"],
+                supply_amount=row["supply_amount"],
+                supply_usd=row["supply_usd"],
+                supply_apy=row["supply_apy"],
+                borrow_amount=row["borrow_amount"],
+                borrow_usd=row["borrow_usd"],
+                borrow_apy=row["borrow_apy"],
+                reward_apy=row["reward_apy"],
+                net_equity_usd=row["net_equity_usd"],
+                leverage_ratio=None,
+                health_factor=Decimal("1.39"),
+                gross_yield_daily_usd=row["gross_yield_daily_usd"],
+                net_yield_daily_usd=row["net_yield_daily_usd"],
+                gross_yield_mtd_usd=row["gross_yield_mtd_usd"],
+                net_yield_mtd_usd=row["net_yield_mtd_usd"],
+                strategy_fee_daily_usd=Decimal("0"),
+                avant_gop_daily_usd=Decimal("0"),
+                strategy_fee_mtd_usd=Decimal("0"),
+                avant_gop_mtd_usd=Decimal("0"),
+                gross_roe=None,
+                net_roe=None,
+            )
+        )
+        session.add(
+            PortfolioPositionDaily(
+                business_date=meta.business_date,
+                position_id=position.position_id,
+                as_of_ts_utc=as_of_ts_utc,
+                market_exposure_id=None,
+                scope_segment="strategy_only",
+                supply_usd=row["supply_usd"],
+                borrow_usd=row["borrow_usd"],
+                net_equity_usd=row["net_equity_usd"],
+                leverage_ratio=None,
+                health_factor=Decimal("1.39"),
+                gross_yield_usd=row["gross_yield_daily_usd"],
+                net_yield_usd=row["net_yield_daily_usd"],
+                strategy_fee_usd=Decimal("0"),
+                avant_gop_usd=Decimal("0"),
+                gross_roe=None,
+                net_roe=None,
+            )
+        )
+        session.add(
+            YieldDaily(
+                business_date=meta.business_date,
+                wallet_id=wallet.wallet_id,
+                product_id=product.product_id,
+                protocol_id=protocol.protocol_id,
+                market_id=row["market_id"],
+                row_key=f"position:{row['position_key']}",
+                position_key=row["position_key"],
+                gross_yield_usd=row["gross_yield_daily_usd"],
+                strategy_fee_usd=Decimal("0"),
+                avant_gop_usd=Decimal("0"),
+                net_yield_usd=row["net_yield_daily_usd"],
+                avg_equity_usd=row["avg_equity_usd"],
+                gross_roe=None,
+                post_strategy_fee_roe=None,
+                net_roe=None,
+                avant_gop_roe=None,
+                method="apy_prorated_sod_eod",
+                confidence_score=None,
+            )
+        )
+    session.commit()
+
+    data = client.get(
+        f"/portfolio/positions/current?wallet_address={wallet_address}&protocol_code=spark"
+    ).json()
+
+    paired = next(
+        row for row in data["positions"] if row["position_key"].startswith("paired-reserve:spark:")
+    )
+    assert paired["display_name"] == "weETH + WETH/USDT + USDC Spark-Ethereum"
+    assert paired["position_kind"] == "Carry"
+    assert len(paired["supply_legs"]) == 2
+    assert [leg["symbol"] for leg in paired["supply_legs"]] == ["weETH", "WETH"]
+    assert len(paired["borrow_legs"]) == 2
+    assert {leg["symbol"] for leg in paired["borrow_legs"]} == {"USDT", "USDC"}
+    assert Decimal(paired["net_equity_usd"]) == Decimal("3299357")

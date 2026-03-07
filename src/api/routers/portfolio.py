@@ -58,7 +58,7 @@ class _PositionAggregate:
     chain_code: str
     position_kind: str
     market_exposure_slug: str | None
-    supply_leg: PositionLeg
+    supply_legs: tuple[PositionLeg, ...]
     borrow_legs: tuple[PositionLeg, ...]
     net_equity_usd: Decimal
     leverage_ratio: Decimal | None
@@ -145,12 +145,15 @@ def _build_borrow_leg(row: Any) -> PositionLeg | None:
 
 def _display_name(
     *,
-    supply_symbol: str | None,
+    supply_legs: tuple[PositionLeg, ...],
     borrow_legs: tuple[PositionLeg, ...],
     protocol_code: str,
     chain_code: str,
 ) -> str:
-    supply_label = supply_symbol or "Unknown"
+    supply_symbols = [leg.symbol or "Unknown" for leg in supply_legs if leg.usd_value > ZERO]
+    if not supply_symbols and supply_legs:
+        supply_symbols = [supply_legs[0].symbol or "Unknown"]
+    supply_label = " + ".join(supply_symbols) if supply_symbols else "Unknown"
     borrow_symbols = [leg.symbol or "Unknown" for leg in borrow_legs]
     borrow_label = " + ".join(borrow_symbols) if borrow_symbols else None
     protocol_chain = f"{code_label(protocol_code)}-{code_label(chain_code)}"
@@ -159,7 +162,18 @@ def _display_name(
     return f"{supply_label} {protocol_chain}"
 
 
+def _total_supply_usd(legs: Sequence[PositionLeg]) -> Decimal:
+    return sum((leg.usd_value for leg in legs), ZERO)
+
+
+def _primary_supply_leg(legs: Sequence[PositionLeg]) -> PositionLeg:
+    if not legs:
+        raise ValueError("supply legs must not be empty")
+    return max(legs, key=lambda leg: (leg.usd_value, leg.symbol or ""))
+
+
 def _build_position_row(position: _PositionAggregate) -> PortfolioPositionRow:
+    supply_legs = list(position.supply_legs)
     borrow_legs = list(position.borrow_legs)
     return PortfolioPositionRow(
         position_id=position.position_id,
@@ -173,7 +187,8 @@ def _build_position_row(position: _PositionAggregate) -> PortfolioPositionRow:
         chain_code=position.chain_code,
         position_kind=position.position_kind,
         market_exposure_slug=position.market_exposure_slug,
-        supply_leg=position.supply_leg,
+        supply_leg=_primary_supply_leg(supply_legs),
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         borrow_leg=borrow_legs[0] if len(borrow_legs) == 1 else None,
         net_equity_usd=position.net_equity_usd,
@@ -314,18 +329,11 @@ def _is_split_position_row(row: Any) -> bool:
 def _is_pairable_reserve_bucket(rows: list[Any]) -> bool:
     if len(rows) <= 1 or any(row.market_kind != "reserve" for row in rows):
         return False
+    if any(not _is_split_position_row(row) for row in rows):
+        return False
     supply_rows = [row for row in rows if row.supply_usd > ZERO]
-    if len(supply_rows) != 1:
-        return False
-    supply_row = supply_rows[0]
-    if supply_row.borrow_usd > ZERO:
-        return False
-    borrow_rows = [
-        row for row in rows if row.position_key != supply_row.position_key and row.borrow_usd > ZERO
-    ]
-    if not borrow_rows:
-        return False
-    return all(row.supply_usd <= ZERO for row in borrow_rows)
+    borrow_rows = [row for row in rows if row.borrow_usd > ZERO]
+    return bool(supply_rows and borrow_rows)
 
 
 def _is_pairable_dolomite_bucket(rows: list[Any]) -> bool:
@@ -343,10 +351,11 @@ def _is_pairable_dolomite_bucket(rows: list[Any]) -> bool:
 
 
 def _singleton_position(row: Any) -> _PositionAggregate:
+    supply_legs = (_build_supply_leg(row),)
     borrow_leg = _build_borrow_leg(row)
     borrow_legs = (borrow_leg,) if borrow_leg is not None else ()
     display_name = _display_name(
-        supply_symbol=row.supply_symbol,
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         protocol_code=row.protocol_code,
         chain_code=row.chain_code,
@@ -364,7 +373,7 @@ def _singleton_position(row: Any) -> _PositionAggregate:
         chain_code=row.chain_code,
         position_kind=position_kind,
         market_exposure_slug=row.market_exposure_slug,
-        supply_leg=_build_supply_leg(row),
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         net_equity_usd=row.net_equity_usd,
         leverage_ratio=row.leverage_ratio,
@@ -384,19 +393,21 @@ def _singleton_position(row: Any) -> _PositionAggregate:
 
 
 def _paired_reserve_position(rows: list[Any], avg_equity: dict[str, Decimal]) -> _PositionAggregate:
-    supply_row = next(row for row in rows if row.supply_usd > ZERO)
+    supply_rows = sorted(
+        (row for row in rows if row.supply_usd > ZERO),
+        key=lambda row: (row.supply_usd, row.position_key),
+        reverse=True,
+    )
+    supply_row = supply_rows[0]
     borrow_rows = sorted(
-        (
-            row
-            for row in rows
-            if row.position_key != supply_row.position_key and row.borrow_usd > ZERO
-        ),
+        (row for row in rows if row.borrow_usd > ZERO),
         key=lambda row: (row.borrow_usd, row.position_key),
         reverse=True,
     )
+    supply_legs = tuple(_build_supply_leg(row) for row in supply_rows)
     borrow_legs = tuple(leg for row in borrow_rows if (leg := _build_borrow_leg(row)) is not None)
     display_name = _display_name(
-        supply_symbol=supply_row.supply_symbol,
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
@@ -423,7 +434,7 @@ def _paired_reserve_position(rows: list[Any], avg_equity: dict[str, Decimal]) ->
         chain_code=supply_row.chain_code,
         position_kind="Carry",
         market_exposure_slug=None,
-        supply_leg=_build_supply_leg(supply_row),
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         net_equity_usd=total_net_equity_usd,
         leverage_ratio=leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd),
@@ -451,6 +462,7 @@ def _paired_dolomite_position(
     account_number: str,
 ) -> _PositionAggregate:
     supply_row = next(row for row in rows if row.supply_usd > ZERO)
+    supply_legs = (_build_supply_leg(supply_row),)
     borrow_rows = sorted(
         (
             row
@@ -462,7 +474,7 @@ def _paired_dolomite_position(
     )
     borrow_legs = tuple(leg for row in borrow_rows if (leg := _build_borrow_leg(row)) is not None)
     display_name = _display_name(
-        supply_symbol=supply_row.supply_symbol,
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
@@ -489,7 +501,7 @@ def _paired_dolomite_position(
         chain_code=supply_row.chain_code,
         position_kind="Carry",
         market_exposure_slug=None,
-        supply_leg=_build_supply_leg(supply_row),
+        supply_legs=supply_legs,
         borrow_legs=borrow_legs,
         net_equity_usd=total_net_equity_usd,
         leverage_ratio=leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd),
@@ -512,7 +524,7 @@ def _paired_dolomite_position(
 
 def _sort_value(position: _PositionAggregate, sort_by: str) -> Decimal | None:
     if sort_by == "supply_usd":
-        return position.supply_leg.usd_value
+        return _total_supply_usd(position.supply_legs)
     if sort_by == "borrow_usd":
         return sum((leg.usd_value for leg in position.borrow_legs), ZERO)
     if sort_by == "gross_yield_daily_usd":
@@ -698,7 +710,10 @@ def _history_points(
 def _summary_from_positions(
     *, business_date: date, positions: list[_PositionAggregate]
 ) -> PortfolioSummaryResponse:
-    total_supply_usd = sum((position.supply_leg.usd_value for position in positions), ZERO)
+    total_supply_usd = sum(
+        (_total_supply_usd(position.supply_legs) for position in positions),
+        ZERO,
+    )
     total_borrow_usd = sum(
         (sum((leg.usd_value for leg in position.borrow_legs), ZERO) for position in positions),
         ZERO,

@@ -111,6 +111,7 @@ export interface PortfolioPositionRow {
   position_kind: string;
   market_exposure_slug: string | null;
   supply_leg: PositionLeg;
+  supply_legs: PositionLeg[];
   borrow_legs: PositionLeg[];
   borrow_leg: PositionLeg | null;
   net_equity_usd: string;

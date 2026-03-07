@@ -161,3 +161,14 @@ def test_morpho_susde_pyusd_market_uses_susde_carry_fallback() -> None:
     assert target.loan_token_address == "0x6c3ea9036406852006290770bedfcaba0e23a0e8"
     assert target.collateral_decimals == 18
     assert target.defillama_pool_id == "66985a81-9c51-46ca-9977-42b4fe7bc6df"
+
+
+def test_spark_weeth_market_uses_defillama_supply_fallback() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    target = next(
+        market for market in markets.spark["ethereum"].markets if market.symbol == "weETH"
+    )
+
+    assert target.asset == "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee"
+    assert target.supply_apy_fallback_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"

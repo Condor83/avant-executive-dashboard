@@ -30,6 +30,7 @@ class PortfolioPositionRow(BaseModel):
     position_kind: str
     market_exposure_slug: str | None
     supply_leg: PositionLeg
+    supply_legs: list[PositionLeg]
     borrow_legs: list[PositionLeg]
     borrow_leg: PositionLeg | None
     net_equity_usd: Decimal

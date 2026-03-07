@@ -21,7 +21,13 @@ def test_positions_sum_to_portfolio_summary(api_client: tuple[TestClient, SeedMe
     summary = client.get("/portfolio/summary").json()
 
     total_equity = sum((Decimal(row["net_equity_usd"]) for row in positions), Decimal("0"))
-    total_supply = sum((Decimal(row["supply_leg"]["usd_value"]) for row in positions), Decimal("0"))
+    total_supply = sum(
+        (
+            sum((Decimal(leg["usd_value"]) for leg in row["supply_legs"]), Decimal("0"))
+            for row in positions
+        ),
+        Decimal("0"),
+    )
     total_borrow = sum(
         (
             sum((Decimal(leg["usd_value"]) for leg in row["borrow_legs"]), Decimal("0"))

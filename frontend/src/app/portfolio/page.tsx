@@ -98,14 +98,31 @@ function healthDescriptor(value: string | null | undefined) {
   return `Health Rate ${parsed.toFixed(2)}`;
 }
 
+function supplyLegs(row: PortfolioPositionRow) {
+  return row.supply_legs?.length ? row.supply_legs : [row.supply_leg];
+}
+
 function positionTitle(row: PortfolioPositionRow) {
+  const supplySymbols = supplyLegs(row)
+    .map((leg) => leg.symbol)
+    .filter((symbol): symbol is string => Boolean(symbol));
   const borrowSymbols = row.borrow_legs
     .map((leg) => leg.symbol)
     .filter((symbol): symbol is string => Boolean(symbol));
+  const supplyTitle = supplySymbols.length > 0
+    ? supplySymbols.join("+")
+    : row.supply_leg.symbol ?? row.display_name;
   if (borrowSymbols.length === 0) {
-    return row.supply_leg.symbol ?? row.display_name;
+    return supplyTitle;
   }
-  return `${row.supply_leg.symbol ?? "Unknown"}/${borrowSymbols.join("+")}`;
+  return `${supplyTitle}/${borrowSymbols.join("+")}`;
+}
+
+function totalSupplyUsd(row: PortfolioPositionRow) {
+  return supplyLegs(row).reduce(
+    (sum, leg) => sum + decimalValue(leg.usd_value),
+    0,
+  );
 }
 
 function totalBorrowUsd(row: PortfolioPositionRow) {
@@ -117,7 +134,7 @@ function totalBorrowUsd(row: PortfolioPositionRow) {
 
 function isDustPosition(row: PortfolioPositionRow) {
   const visibleSizeUsd = Math.max(
-    decimalValue(row.supply_leg.usd_value),
+    totalSupplyUsd(row),
     totalBorrowUsd(row),
     Math.abs(decimalValue(row.net_equity_usd)),
   );
@@ -170,12 +187,19 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       key: "supply_leg",
       header: "Supply",
       cell: (row) => (
-        <div className="space-y-0.5 text-right">
+        <div className="space-y-1 text-right">
           <div className="font-semibold text-slate-900">
-            {formatUSD(row.supply_leg.usd_value)}
+            {formatUSD(totalSupplyUsd(row).toString())}
           </div>
-          <div className="text-xs text-slate-500">{row.supply_leg.symbol ?? "Unknown"}</div>
-          <div className="text-[11px] text-teal-700">{formatAPY(row.supply_leg.apy)}</div>
+          {supplyLegs(row).map((leg, index) => (
+            <div
+              key={`${row.position_key}-supply-${leg.token_id ?? index}`}
+              className="text-xs text-slate-500"
+            >
+              <span>{leg.symbol ?? "Unknown"}</span>
+              <span className="ml-1 text-teal-700">{formatAPY(leg.apy)}</span>
+            </div>
+          ))}
         </div>
       ),
       align: "right",
