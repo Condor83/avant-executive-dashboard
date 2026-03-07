@@ -41,6 +41,14 @@ PRICE_ALIAS_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
         "avalanche",
         "0x06d47f3fb376649c3a9dafe069b3d6e35572219e",
     ),
+    # Berachain savUSD -> Avalanche savUSD
+    (
+        "bera",
+        "0xa744fe3688291ac3a4a7ec917678783ad9946a1e",
+    ): (
+        "avalanche",
+        "0x06d47f3fb376649c3a9dafe069b3d6e35572219e",
+    ),
 }
 
 

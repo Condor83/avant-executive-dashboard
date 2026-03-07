@@ -12,6 +12,7 @@ import httpx
 
 from core.config import DolomiteChainConfig, DolomiteMarket, MarketsConfig, canonical_address
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
+from core.yields import AVANT_APY_ENDPOINTS, AvantYieldOracle, DefiLlamaYieldOracle
 
 DOLO_GET_ACCOUNT_WEI_SELECTOR = "0xc190c2ec"
 DOLO_GET_MARKET_TOKEN_ADDRESS_SELECTOR = "0x062bd3e9"
@@ -281,9 +282,17 @@ class DolomiteAdapter:
 
     protocol_code = "dolomite"
 
-    def __init__(self, markets_config: MarketsConfig, rpc_client: DolomiteRpcClient) -> None:
+    def __init__(
+        self,
+        markets_config: MarketsConfig,
+        rpc_client: DolomiteRpcClient,
+        avant_yield_oracle: AvantYieldOracle | None = None,
+        yield_oracle: DefiLlamaYieldOracle | None = None,
+    ) -> None:
         self.markets_config = markets_config
         self.rpc_client = rpc_client
+        self.avant_yield_oracle = avant_yield_oracle
+        self.yield_oracle = yield_oracle
 
     @staticmethod
     def _position_key(
@@ -301,6 +310,10 @@ class DolomiteAdapter:
         return total_borrow / total_supply
 
     @staticmethod
+    def _price_lookup_key(chain_code: str, token_address: str) -> tuple[str, str]:
+        return (chain_code, canonical_address(token_address))
+
+    @staticmethod
     def _normalize_price(price_raw: int, decimals: int) -> Decimal:
         exponent = 36 - decimals
         if exponent <= 0:
@@ -313,6 +326,37 @@ class DolomiteAdapter:
         if par <= 0 or index <= 0:
             return 0
         return (par * index) // int(WAD)
+
+    def _resolve_price_usd(
+        self,
+        *,
+        chain_code: str,
+        runtime: _DolomiteMarketRuntime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> Decimal:
+        configured_token_address = runtime.config.token_address
+        if configured_token_address is not None:
+            price = prices_by_token.get(
+                self._price_lookup_key(chain_code, configured_token_address)
+            )
+            if price is not None:
+                return price
+
+        live_price = prices_by_token.get(
+            self._price_lookup_key(chain_code, runtime.state.token_address)
+        )
+        if live_price is not None:
+            return live_price
+
+        symbol_price = prices_by_token.get((chain_code, f"symbol:{runtime.config.symbol.upper()}"))
+        if symbol_price is not None:
+            return symbol_price
+
+        return runtime.price_usd
+
+    @staticmethod
+    def _supports_avant_native_yield(symbol: str) -> bool:
+        return symbol.strip().upper() in AVANT_APY_ENDPOINTS
 
     def _issue(
         self,
@@ -435,8 +479,6 @@ class DolomiteAdapter:
         as_of_ts_utc: datetime,
         prices_by_token: dict[tuple[str, str], Decimal],
     ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
-        del prices_by_token
-
         positions: list[PositionSnapshotInput] = []
         issues: list[DataQualityIssue] = []
 
@@ -492,10 +534,68 @@ class DolomiteAdapter:
                             borrowed_raw, runtime.config.decimals
                         )
 
-                        supplied_usd = supplied_amount * runtime.price_usd
-                        borrowed_usd = borrowed_amount * runtime.price_usd
+                        price_usd = self._resolve_price_usd(
+                            chain_code=chain_code,
+                            runtime=runtime,
+                            prices_by_token=prices_by_token,
+                        )
+
+                        supplied_usd = supplied_amount * price_usd
+                        borrowed_usd = borrowed_amount * price_usd
                         equity_usd = supplied_usd - borrowed_usd
                         ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
+                        supply_apy = runtime.supply_apy
+                        if (
+                            supplied_amount > 0
+                            and self.avant_yield_oracle is not None
+                            and self._supports_avant_native_yield(runtime.config.symbol)
+                        ):
+                            try:
+                                supply_apy = self.avant_yield_oracle.get_token_apy(
+                                    runtime.config.symbol
+                                )
+                            except Exception as exc:
+                                issues.append(
+                                    self._issue(
+                                        as_of_ts_utc=as_of_ts_utc,
+                                        stage="sync_snapshot",
+                                        error_type="dolomite_underlying_apy_fetch_failed",
+                                        error_message=str(exc),
+                                        chain_code=chain_code,
+                                        wallet_address=wallet_address,
+                                        market_ref=runtime.market_ref,
+                                        payload_json={
+                                            "symbol": runtime.config.symbol,
+                                            "source": "avant_api",
+                                        },
+                                    )
+                                )
+                        elif (
+                            supplied_amount > 0
+                            and self.yield_oracle is not None
+                            and runtime.config.defillama_pool_id is not None
+                        ):
+                            try:
+                                supply_apy = self.yield_oracle.get_pool_apy(
+                                    runtime.config.defillama_pool_id
+                                )
+                            except Exception as exc:
+                                issues.append(
+                                    self._issue(
+                                        as_of_ts_utc=as_of_ts_utc,
+                                        stage="sync_snapshot",
+                                        error_type="dolomite_underlying_apy_fetch_failed",
+                                        error_message=str(exc),
+                                        chain_code=chain_code,
+                                        wallet_address=wallet_address,
+                                        market_ref=runtime.market_ref,
+                                        payload_json={
+                                            "symbol": runtime.config.symbol,
+                                            "source": "defillama_pool",
+                                            "pool_id": runtime.config.defillama_pool_id,
+                                        },
+                                    )
+                                )
 
                         positions.append(
                             PositionSnapshotInput(
@@ -514,7 +614,7 @@ class DolomiteAdapter:
                                 supplied_usd=supplied_usd,
                                 borrowed_amount=borrowed_amount,
                                 borrowed_usd=borrowed_usd,
-                                supply_apy=runtime.supply_apy,
+                                supply_apy=supply_apy,
                                 borrow_apy=runtime.borrow_apy,
                                 reward_apy=Decimal("0"),
                                 equity_usd=equity_usd,
@@ -532,8 +632,6 @@ class DolomiteAdapter:
         as_of_ts_utc: datetime,
         prices_by_token: dict[tuple[str, str], Decimal],
     ) -> tuple[list[MarketSnapshotInput], list[DataQualityIssue]]:
-        del prices_by_token
-
         snapshots: list[MarketSnapshotInput] = []
         issues: list[DataQualityIssue] = []
 
@@ -562,8 +660,13 @@ class DolomiteAdapter:
                 total_supply_amount = normalize_raw_amount(
                     total_supply_raw, runtime.config.decimals
                 )
-                total_supply_usd = total_supply_amount * runtime.price_usd
-                total_borrow_usd = total_borrow_amount * runtime.price_usd
+                price_usd = self._resolve_price_usd(
+                    chain_code=chain_code,
+                    runtime=runtime,
+                    prices_by_token=prices_by_token,
+                )
+                total_supply_usd = total_supply_amount * price_usd
+                total_borrow_usd = total_borrow_amount * price_usd
                 utilization = self._utilization(total_supply_usd, total_borrow_usd)
                 available_liquidity_usd = max(total_supply_usd - total_borrow_usd, Decimal("0"))
 

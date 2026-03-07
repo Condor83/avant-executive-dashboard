@@ -261,6 +261,17 @@ def _collect_token_rows(
         for token in wallet_balance_chain.tokens:
             add_token(chain_code, token.address, token.symbol, token.decimals)
 
+    for chain_code, dolomite_chain in markets.dolomite.items():
+        for dolomite_market in dolomite_chain.markets:
+            if dolomite_market.token_address is None:
+                continue
+            add_token(
+                chain_code,
+                dolomite_market.token_address,
+                dolomite_market.symbol,
+                dolomite_market.decimals,
+            )
+
     for chain_code, traderjoe_chain in markets.traderjoe_lp.items():
         for traderjoe_pool in traderjoe_chain.pools:
             add_token(
@@ -548,7 +559,15 @@ def _collect_market_rows(
 
     for chain_code, dolomite_chain in markets.dolomite.items():
         for dolomite_market in dolomite_chain.markets:
-            token_id = token_ids_by_symbol.get((chain_code, dolomite_market.symbol.upper()))
+            dolomite_token_id: int | None = None
+            if dolomite_market.token_address is not None:
+                dolomite_token_id = token_ids.get(
+                    (chain_code, _normalize_token_address(dolomite_market.token_address))
+                )
+            if dolomite_token_id is None:
+                dolomite_token_id = token_ids_by_symbol.get(
+                    (chain_code, dolomite_market.symbol.upper())
+                )
             add_market(
                 protocol_code="dolomite",
                 chain_code=chain_code,
@@ -561,7 +580,7 @@ def _collect_market_rows(
                     metadata_json={"kind": "market", "symbol": dolomite_market.symbol},
                     market_address=str(dolomite_market.id),
                 ),
-                base_asset_token_id=token_id,
+                base_asset_token_id=dolomite_token_id,
                 collateral_token_id=None,
                 metadata={
                     "symbol": dolomite_market.symbol,

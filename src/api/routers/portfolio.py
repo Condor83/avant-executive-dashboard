@@ -278,6 +278,39 @@ def _synthetic_position_key(row: Any) -> str:
     return f"paired-reserve:{row.protocol_code}:{row.chain_code}:{row.wallet_address}:{product}"
 
 
+def _dolomite_account_number(position_key: str) -> str | None:
+    parts = position_key.split(":", 4)
+    if len(parts) != 5 or parts[0] != "dolomite":
+        return None
+    return parts[3]
+
+
+def _dolomite_bucket_key(row: Any) -> tuple[str, str | None, str, str, str] | None:
+    account_number = _dolomite_account_number(row.position_key)
+    if account_number is None:
+        return None
+    return (
+        row.wallet_address,
+        row.product_code,
+        row.protocol_code,
+        row.chain_code,
+        account_number,
+    )
+
+
+def _synthetic_dolomite_position_key(row: Any, *, account_number: str) -> str:
+    return (
+        "paired-dolomite:"
+        f"{row.protocol_code}:{row.chain_code}:{row.wallet_address}:{account_number}"
+    )
+
+
+def _is_split_position_row(row: Any) -> bool:
+    return (row.supply_usd > ZERO and row.borrow_usd <= ZERO) or (
+        row.supply_usd <= ZERO and row.borrow_usd > ZERO
+    )
+
+
 def _is_pairable_reserve_bucket(rows: list[Any]) -> bool:
     if len(rows) <= 1 or any(row.market_kind != "reserve" for row in rows):
         return False
@@ -293,6 +326,20 @@ def _is_pairable_reserve_bucket(rows: list[Any]) -> bool:
     if not borrow_rows:
         return False
     return all(row.supply_usd <= ZERO for row in borrow_rows)
+
+
+def _is_pairable_dolomite_bucket(rows: list[Any]) -> bool:
+    if len(rows) <= 1 or any(row.protocol_code != "dolomite" for row in rows):
+        return False
+    if any(not _is_split_position_row(row) for row in rows):
+        return False
+    supply_rows = [row for row in rows if row.supply_usd > ZERO]
+    if len(supply_rows) != 1:
+        return False
+    borrow_rows = [row for row in rows if row.position_key != supply_rows[0].position_key]
+    if not borrow_rows:
+        return False
+    return all(row.borrow_usd > ZERO and row.supply_usd <= ZERO for row in borrow_rows)
 
 
 def _singleton_position(row: Any) -> _PositionAggregate:
@@ -397,6 +444,72 @@ def _paired_reserve_position(rows: list[Any], avg_equity: dict[str, Decimal]) ->
     )
 
 
+def _paired_dolomite_position(
+    rows: list[Any],
+    avg_equity: dict[str, Decimal],
+    *,
+    account_number: str,
+) -> _PositionAggregate:
+    supply_row = next(row for row in rows if row.supply_usd > ZERO)
+    borrow_rows = sorted(
+        (
+            row
+            for row in rows
+            if row.position_key != supply_row.position_key and row.borrow_usd > ZERO
+        ),
+        key=lambda row: (row.borrow_usd, row.position_key),
+        reverse=True,
+    )
+    borrow_legs = tuple(leg for row in borrow_rows if (leg := _build_borrow_leg(row)) is not None)
+    display_name = _display_name(
+        supply_symbol=supply_row.supply_symbol,
+        borrow_legs=borrow_legs,
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+    )
+    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
+    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
+    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
+    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
+    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
+    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
+    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
+    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
+    total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
+    total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
+    health_values = [row.health_factor for row in rows if row.health_factor is not None]
+    return _PositionAggregate(
+        position_id=supply_row.position_id,
+        position_key=_synthetic_dolomite_position_key(supply_row, account_number=account_number),
+        display_name=display_name,
+        wallet_address=supply_row.wallet_address,
+        product_code=supply_row.product_code,
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+        position_kind="Carry",
+        market_exposure_slug=None,
+        supply_leg=_build_supply_leg(supply_row),
+        borrow_legs=borrow_legs,
+        net_equity_usd=total_net_equity_usd,
+        leverage_ratio=leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd),
+        health_factor=min(health_values) if health_values else None,
+        gross_yield_daily_usd=gross_yield_daily_usd,
+        net_yield_daily_usd=net_yield_daily_usd,
+        gross_yield_mtd_usd=gross_yield_mtd_usd,
+        net_yield_mtd_usd=net_yield_mtd_usd,
+        strategy_fee_daily_usd=strategy_fee_daily_usd,
+        avant_gop_daily_usd=avant_gop_daily_usd,
+        strategy_fee_mtd_usd=strategy_fee_mtd_usd,
+        avant_gop_mtd_usd=avant_gop_mtd_usd,
+        gross_roe=(
+            gross_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None
+        ),
+        net_roe=net_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None,
+        member_position_keys=tuple(sorted(row.position_key for row in rows)),
+    )
+
+
 def _sort_value(position: _PositionAggregate, sort_by: str) -> Decimal | None:
     if sort_by == "supply_usd":
         return position.supply_leg.usd_value
@@ -431,12 +544,13 @@ def _group_positions(
         position_keys=[row.position_key for row in rows],
     )
     reserve_buckets: dict[tuple[str, str | None, str, str], list[Any]] = {}
+    dolomite_buckets: dict[tuple[str, str | None, str, str, str], list[Any]] = {}
     for row in rows:
-        is_split_reserve_row = (row.supply_usd > ZERO and row.borrow_usd <= ZERO) or (
-            row.supply_usd <= ZERO and row.borrow_usd > ZERO
-        )
-        if row.market_kind == "reserve" and is_split_reserve_row:
+        if row.market_kind == "reserve" and _is_split_position_row(row):
             reserve_buckets.setdefault(_reserve_bucket_key(row), []).append(row)
+        dolomite_bucket = _dolomite_bucket_key(row)
+        if dolomite_bucket is not None and _is_split_position_row(row):
+            dolomite_buckets.setdefault(dolomite_bucket, []).append(row)
 
     consumed: set[str] = set()
     grouped: list[_PositionAggregate] = []
@@ -444,6 +558,13 @@ def _group_positions(
         if not _is_pairable_reserve_bucket(bucket_rows):
             continue
         grouped.append(_paired_reserve_position(bucket_rows, avg_equity))
+        consumed.update(row.position_key for row in bucket_rows)
+    for dolomite_bucket, bucket_rows in dolomite_buckets.items():
+        if not _is_pairable_dolomite_bucket(bucket_rows):
+            continue
+        grouped.append(
+            _paired_dolomite_position(bucket_rows, avg_equity, account_number=dolomite_bucket[-1])
+        )
         consumed.update(row.position_key for row in bucket_rows)
 
     for row in rows:

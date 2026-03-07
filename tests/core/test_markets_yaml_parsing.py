@@ -77,7 +77,18 @@ def test_markets_and_tokens_have_required_fields() -> None:
         for dolomite_market in dolomite_chain.markets:
             assert dolomite_market.id >= 0
             assert dolomite_market.symbol
+            assert dolomite_market.token_address
             assert dolomite_market.decimals >= 0
+
+
+def test_dolomite_weeth_market_uses_defillama_carry_fallback() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    target = next(market for market in markets.dolomite["ethereum"].markets if market.id == 6)
+
+    assert target.symbol == "weETH"
+    assert target.token_address == "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee"
+    assert target.defillama_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"
 
     for kamino_chain in markets.kamino.values():
         for kamino_market in kamino_chain.markets:

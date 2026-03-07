@@ -85,6 +85,13 @@ When `avg_equity_usd <= 0`, ROE values are null.
 - `avgNetApyExcludingRewards` maps to `supply_apy`; rewards map to `reward_apy`.
 - Internal vault allocations are look-through context only and are not counted as separate Portfolio positions in the current dashboard.
 
+### Dolomite supplied-token carry policy (current)
+
+- Dolomite market rates are still the protocol-native source for market analytics.
+- For positions that supply Avant-native yield-bearing tokens (`savUSD`, `savETH`, `savBTC`, `avUSDx`, `avETHx`, `avBTCx`), position-level `supply_apy` should use Avant's API as the primary underlying yield source.
+- For configured non-Avant supplied tokens with known external carry (for example `weETH`), position-level `supply_apy` can use a configured DefiLlama pool APY.
+- If Avant's API is unavailable during a run, position ingest falls back to Dolomite's protocol-native `supply_apy` and emits `dolomite_underlying_apy_fetch_failed`.
+
 ## Fee waterfall (always the same)
 
 Fees are applied deterministically, even at wallet/position level:

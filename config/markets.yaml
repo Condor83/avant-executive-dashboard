@@ -471,24 +471,31 @@ dolomite:
     markets:
     - id: 2
       symbol: USDC.e
+      token_address: '0x549943e04f40284185054145c6e4e9568c1d3241'
       decimals: 6
     - id: 3
       symbol: HONEY
+      token_address: '0xfcbd14dc51f0a4d49d5e53c2e0950e0bc26d0dce'
       decimals: 18
     - id: 5
       symbol: USD₮0
+      token_address: '0x779ded0c9e1022225f8e0630b35a9b54be713736'
       decimals: 6
     - id: 8
       symbol: rUSD
+      token_address: '0x09d4214c03d01f49544c0448dbe3a27f768f2b34'
       decimals: 18
     - id: 19
       symbol: NECT
+      token_address: '0x1ce0a25d13ce4d52071ae7e02cf1f6606f4c79d3'
       decimals: 18
     - id: 35
       symbol: DOLO
+      token_address: '0x0f81001ef0a83ecce5ccebf63eb302c70a39a654'
       decimals: 18
     - id: 47
       symbol: savUSD
+      token_address: '0xa744fe3688291ac3a4a7ec917678783ad9946a1e'
       decimals: 18
   ethereum:
     wallets:
@@ -500,9 +507,12 @@ dolomite:
     markets:
     - id: 0
       symbol: WETH
+      token_address: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
       decimals: 18
     - id: 6
       symbol: weETH
+      token_address: '0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee'
+      defillama_pool_id: '46bd2bdf-6d92-4066-b482-e885ee172264'
       decimals: 18
 
 kamino:

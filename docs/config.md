@@ -122,12 +122,22 @@ Supply-only vault behavior:
 - chain config includes:
   - margin contract address
   - wallets list
-  - markets list with numeric market ids and decimals
+  - markets list with numeric market ids, token addresses, and decimals
   - `account_numbers` list (default `[0]`)
 
 Dolomite account policy:
 - Each configured account number is queried per wallet/market.
 - Missing account numbers are a common source of borrow-leg coverage gaps.
+
+Dolomite valuation policy:
+- Position and market USD valuation should use the shared DefiLlama-backed `PriceOracle` when a token price is available for the configured market token address.
+- Dolomite's internal market price is a fallback, not the canonical accounting source, because Avant assets can drift from that internal oracle and understate equity.
+
+Dolomite position yield policy:
+- Market snapshot `supply_apy` and `borrow_apy` remain protocol-native Dolomite rates.
+- Position-level `supply_apy` for Avant-native supplied tokens (`savUSD`, `savETH`, `savBTC`, `avUSDx`, `avETHx`, `avBTCx`) uses Avant's API as the primary source.
+- Position-level `supply_apy` for configured non-Avant supplied tokens can use `defillama_pool_id` when the token itself has an external carry source, such as `weETH`.
+- If the Avant API is unavailable, Dolomite position ingest falls back to protocol-native `supply_apy` and emits `dolomite_underlying_apy_fetch_failed`.
 
 #### Kamino (Solana)
 - chain config includes:

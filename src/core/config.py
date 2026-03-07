@@ -103,6 +103,8 @@ class EulerChainConfig(ConfigModel):
 class DolomiteMarket(ConfigModel):
     id: int
     symbol: str
+    token_address: str | None = None
+    defillama_pool_id: str | None = None
     decimals: int = Field(ge=0, le=36)
 
 
