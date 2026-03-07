@@ -57,13 +57,42 @@ Current Aave USDe/sUSDe loop policy:
 - chain config includes:
   - morpho contract address
   - wallets list
-  - markets list with `id` (bytes32) and token symbols (plus optional defillama pool id)
+  - markets list with:
+    - `id` (bytes32)
+    - `loan_token`
+    - `loan_token_address`
+    - `loan_decimals`
+    - `collateral_token`
+    - `collateral_token_address`
+    - `collateral_decimals`
+    - optional `defillama_pool_id`
   - optional `vaults` (MetaMorpho vault addresses)
+    - `address`
+    - optional underlying asset metadata
+    - optional `chain_id`
+    - `apy_source` (currently `morpho_api`)
+    - `apy_lookback` (default `SIX_HOURS`)
 
 Current Morpho collateral carry policy:
 - market snapshot rates remain protocol-native Morpho Blue rates.
-- if a market has `defillama_pool_id`, position `supply_apy` may use that pool APY for collateral carry representation.
+- Avant-native collateral tokens (`savUSD`, `savETH`, `savBTC`, `avUSDx`, `avETHx`, `avBTCx`) use Avant's API as the primary carry source.
+- `wbravUSDC` uses Bracket's public GraphQL APY series as the primary carry source. The repo uses the latest positive `apy_series` value exposed by Bracket's UI feed and falls back to trailing NAV history only if that series is unavailable.
+- if a market has `defillama_pool_id`, DefiLlama remains the fallback carry source for configured markets and the primary source for non-Avant tokens like `sUSDe`.
+- plain `USDe` is not treated as a carry-bearing Morpho collateral asset.
+- PT collateral (`PT-*`) does not use floating collateral carry overrides. The fixed APY is reconstructed from Pendle trade history and cached by `position_key`.
+- Manual PT stopgaps can be defined in `config/pt_fixed_yield_overrides.yaml`. These keyed overrides take precedence over Pendle reconstruction when a small number of live positions need a corrected fixed APY immediately.
 - `borrow_apy` remains protocol-native and is never overridden by DefiLlama.
+- adapter validates configured `loan_token_address` and `collateral_token_address` against live Morpho market params and emits `morpho_market_token_mismatch` on drift.
+- yield-bearing collateral positions without a configured carry source emit `morpho_collateral_apy_source_missing`.
+- unresolved PT fixed-yield lookups emit `pt_fixed_apy_unresolved`; refresh failures emit `pt_fixed_apy_refresh_failed`
+
+Current Morpho vault wrapper policy:
+- vault wrapper balances are valued from ERC4626 share balances converted into underlying assets
+- wrapper APY is sourced from Morpho's official GraphQL API (`vaultV2ByAddress`)
+- `avgNetApyExcludingRewards` maps to `supply_apy`
+- reward APRs are summed into `reward_apy`
+- if Morpho vault APY fetch fails, the position still ingests and emits `morpho_vault_apy_fetch_failed`
+- internal vault allocations are not surfaced as separate Portfolio positions in the current tranche
 
 #### Euler v2
 - chain config includes:
@@ -210,4 +239,5 @@ Current Silo v2 behavior:
 - `AVANT_SILO_API_BASE_URL`: Silo API base URL (default `https://app.silo.finance`).
 - `AVANT_SILO_POINTS_API_BASE_URL`: optional Silo points API for holder endpoints.
 - `AVANT_DEFILLAMA_YIELDS_BASE_URL`: DefiLlama yields endpoint for configured APY fallback paths.
+- `AVANT_AVANT_API_BASE_URL`: Avant API base URL for native token APY endpoints.
 - `AVANT_DEBANK_CLOUD_API_KEY`: required for `sync debank-coverage-audit` only.

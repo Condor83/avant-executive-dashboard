@@ -5,5 +5,12 @@ from adapters.morpho.adapter import (
     MorphoAdapter,
     normalize_raw_amount,
 )
+from adapters.morpho.vault_yields import MorphoVaultApyQuote, MorphoVaultYieldClient
 
-__all__ = ["EvmRpcMorphoClient", "MorphoAdapter", "normalize_raw_amount"]
+__all__ = [
+    "EvmRpcMorphoClient",
+    "MorphoAdapter",
+    "MorphoVaultApyQuote",
+    "MorphoVaultYieldClient",
+    "normalize_raw_amount",
+]

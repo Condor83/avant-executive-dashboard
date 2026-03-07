@@ -10,6 +10,8 @@ from typing import Protocol
 
 import httpx
 
+from adapters.bracket import BracketNavYieldOracle
+from adapters.morpho.vault_yields import MorphoVaultApyQuote, MorphoVaultYieldClient
 from core.config import (
     MarketsConfig,
     MorphoChainConfig,
@@ -18,7 +20,7 @@ from core.config import (
     canonical_address,
 )
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
-from core.yields import DefiLlamaYieldOracle
+from core.yields import AVANT_APY_ENDPOINTS, AvantYieldOracle, DefiLlamaYieldOracle
 
 MORPHO_POSITION_SELECTOR = "0x93c52062"
 MORPHO_MARKET_SELECTOR = "0x5c60e39a"
@@ -33,6 +35,18 @@ WAD = Decimal("1e18")
 BPS = Decimal("1e4")
 SECONDS_PER_YEAR = Decimal("31536000")
 SECONDS_PER_YEAR_FLOAT = 31536000.0
+MORPHO_CHAIN_IDS = {
+    "ethereum": 1,
+    "base": 8453,
+    "arbitrum": 42161,
+}
+MORPHO_COLLATERAL_CARRY_SYMBOLS = {
+    "SYRUPUSDC",
+    "SUSDE",
+    "SAVUSD",
+    "SAVETH",
+    "WBRAVUSDC",
+}
 
 
 def normalize_raw_amount(raw_amount: int, decimals: int) -> Decimal:
@@ -137,6 +151,8 @@ class _MorphoVaultRuntime:
     asset_address: str
     asset_symbol: str
     asset_decimals: int
+    chain_id: int
+    apy_lookback: str
 
 
 class MorphoRpcClient(Protocol):
@@ -186,6 +202,14 @@ class MorphoRpcClient(Protocol):
 
     def convert_to_assets(self, chain_code: str, vault_address: str, shares: int) -> int:
         """Convert ERC4626 vault shares into underlying assets."""
+
+
+class MorphoVaultYieldClientLike(Protocol):
+    def close(self) -> None:
+        """Close transport resources."""
+
+    def get_vault_apy(self, *, address: str, chain_id: int, lookback: str) -> MorphoVaultApyQuote:
+        """Return Morpho vault APY quote."""
 
 
 class EvmRpcMorphoClient:
@@ -348,10 +372,22 @@ class MorphoAdapter:
         *,
         defillama_timeout_seconds: float = 15.0,
         yield_oracle: DefiLlamaYieldOracle | None = None,
+        avant_yield_oracle: AvantYieldOracle | None = None,
+        bracket_yield_oracle: BracketNavYieldOracle | None = None,
+        vault_yield_client: MorphoVaultYieldClientLike | None = None,
     ) -> None:
         self.markets_config = markets_config
         self.rpc_client = rpc_client
         self.yield_oracle = yield_oracle or DefiLlamaYieldOracle(
+            timeout_seconds=defillama_timeout_seconds
+        )
+        self.avant_yield_oracle = avant_yield_oracle or AvantYieldOracle(
+            timeout_seconds=defillama_timeout_seconds
+        )
+        self.bracket_yield_oracle = bracket_yield_oracle or BracketNavYieldOracle(
+            timeout_seconds=defillama_timeout_seconds
+        )
+        self.vault_yield_client = vault_yield_client or MorphoVaultYieldClient(
             timeout_seconds=defillama_timeout_seconds
         )
 
@@ -374,6 +410,18 @@ class MorphoAdapter:
     @staticmethod
     def _normalize_ltv_from_wad(raw_ltv_wad: int) -> Decimal:
         return Decimal(raw_ltv_wad) / WAD
+
+    @staticmethod
+    def _supports_avant_native_carry(symbol: str) -> bool:
+        return symbol.strip().upper() in AVANT_APY_ENDPOINTS
+
+    @staticmethod
+    def _supports_bracket_native_carry(symbol: str) -> bool:
+        return BracketNavYieldOracle.supports_token(symbol)
+
+    @staticmethod
+    def _expects_pt_fixed_yield(symbol: str) -> bool:
+        return symbol.strip().upper().startswith("PT-")
 
     @staticmethod
     def _price_from_map(
@@ -412,6 +460,16 @@ class MorphoAdapter:
             market_ref=market_ref,
             payload_json=payload_json,
         )
+
+    @staticmethod
+    def _expects_collateral_carry(symbol: str) -> bool:
+        return symbol.strip().upper() in MORPHO_COLLATERAL_CARRY_SYMBOLS
+
+    @staticmethod
+    def _vault_chain_id(*, chain_code: str, vault: MorphoVault) -> int | None:
+        if vault.chain_id is not None:
+            return vault.chain_id
+        return MORPHO_CHAIN_IDS.get(chain_code)
 
     def _collect_chain_market_runtime(
         self,
@@ -464,6 +522,48 @@ class MorphoAdapter:
                     )
                 )
                 continue
+
+            if market.loan_token_address is not None and canonical_address(
+                market.loan_token_address
+            ) != canonical_address(market_params.loan_token):
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage=stage,
+                        error_type="morpho_market_token_mismatch",
+                        error_message=(
+                            "configured loan token address does not match on-chain market params"
+                        ),
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={
+                            "configured": canonical_address(market.loan_token_address),
+                            "observed": canonical_address(market_params.loan_token),
+                            "token_role": "loan",
+                        },
+                    )
+                )
+            if market.collateral_token_address is not None and canonical_address(
+                market.collateral_token_address
+            ) != canonical_address(market_params.collateral_token):
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage=stage,
+                        error_type="morpho_market_token_mismatch",
+                        error_message=(
+                            "configured collateral token address does not match on-chain"
+                            " market params"
+                        ),
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={
+                            "configured": canonical_address(market.collateral_token_address),
+                            "observed": canonical_address(market_params.collateral_token),
+                            "token_role": "collateral",
+                        },
+                    )
+                )
 
             collateral_decimals = market.collateral_decimals
             if collateral_decimals is None:
@@ -535,6 +635,25 @@ class MorphoAdapter:
 
         for vault in chain_config.vaults:
             market_ref = canonical_address(vault.address)
+            chain_id = self._vault_chain_id(chain_code=chain_code, vault=vault)
+            if chain_id is None:
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        error_type="morpho_vault_apy_fetch_failed",
+                        error_message=(
+                            f"no Morpho chain id configured for vault APY lookup on {chain_code}"
+                        ),
+                        chain_code=chain_code,
+                        market_ref=market_ref,
+                        payload_json={
+                            "apy_source": vault.apy_source,
+                            "lookback": vault.apy_lookback,
+                        },
+                    )
+                )
+                continue
 
             asset_address = (
                 canonical_address(vault.asset_address) if vault.asset_address is not None else None
@@ -587,6 +706,8 @@ class MorphoAdapter:
                 asset_address=asset_address,
                 asset_symbol=asset_symbol,
                 asset_decimals=int(asset_decimals),
+                chain_id=chain_id,
+                apy_lookback=vault.apy_lookback,
             )
 
         return runtimes, issues
@@ -722,34 +843,112 @@ class MorphoAdapter:
                                 )
                             )
 
-                    supplied_usd = (supplied_amount * loan_price) + (
-                        collateral_amount * collateral_price
+                    supplied_usd = supplied_amount * loan_price
+                    collateral_usd = (
+                        collateral_amount * collateral_price if collateral_amount > 0 else None
                     )
                     borrowed_usd = borrowed_amount * loan_price
-                    equity_usd = supplied_usd - borrowed_usd
-                    ltv = borrowed_usd / supplied_usd if supplied_usd > 0 else None
+                    equity_usd = supplied_usd + (collateral_usd or Decimal("0")) - borrowed_usd
+                    collateral_basis_usd = collateral_usd or supplied_usd
+                    ltv = borrowed_usd / collateral_basis_usd if collateral_basis_usd > 0 else None
                     supply_apy = runtime.supply_apy
-                    if runtime.config.defillama_pool_id and collateral_amount > 0:
-                        try:
-                            supply_apy = self.yield_oracle.get_pool_apy(
-                                runtime.config.defillama_pool_id
-                            )
-                        except Exception as exc:
-                            issues.append(
-                                self._issue(
-                                    as_of_ts_utc=as_of_ts_utc,
-                                    stage="sync_snapshot",
-                                    error_type="morpho_collateral_apy_fallback_failed",
-                                    error_message=str(exc),
-                                    chain_code=chain_code,
-                                    wallet_address=wallet_address,
-                                    market_ref=market_ref,
-                                    payload_json={
-                                        "pool_id": runtime.config.defillama_pool_id,
-                                        "collateral_token": runtime.config.collateral_token,
-                                    },
+                    carry_source_resolved = False
+                    if collateral_amount > 0:
+                        if self._supports_avant_native_carry(runtime.config.collateral_token):
+                            try:
+                                supply_apy = self.avant_yield_oracle.get_token_apy(
+                                    runtime.config.collateral_token
                                 )
+                                carry_source_resolved = True
+                            except Exception as exc:
+                                issues.append(
+                                    self._issue(
+                                        as_of_ts_utc=as_of_ts_utc,
+                                        stage="sync_snapshot",
+                                        error_type="morpho_collateral_apy_fallback_failed",
+                                        error_message=str(exc),
+                                        chain_code=chain_code,
+                                        wallet_address=wallet_address,
+                                        market_ref=market_ref,
+                                        payload_json={
+                                            "source": "avant_api",
+                                            "collateral_token": runtime.config.collateral_token,
+                                        },
+                                    )
+                                )
+                        if not carry_source_resolved and self._supports_bracket_native_carry(
+                            runtime.config.collateral_token
+                        ):
+                            try:
+                                supply_apy = self.bracket_yield_oracle.get_token_apy(
+                                    runtime.config.collateral_token
+                                )
+                                carry_source_resolved = True
+                            except Exception as exc:
+                                issues.append(
+                                    self._issue(
+                                        as_of_ts_utc=as_of_ts_utc,
+                                        stage="sync_snapshot",
+                                        error_type="morpho_collateral_apy_fallback_failed",
+                                        error_message=str(exc),
+                                        chain_code=chain_code,
+                                        wallet_address=wallet_address,
+                                        market_ref=market_ref,
+                                        payload_json={
+                                            "source": "bracket_nav",
+                                            "collateral_token": runtime.config.collateral_token,
+                                        },
+                                    )
+                                )
+                        if not carry_source_resolved and runtime.config.defillama_pool_id:
+                            try:
+                                supply_apy = self.yield_oracle.get_pool_apy(
+                                    runtime.config.defillama_pool_id
+                                )
+                                carry_source_resolved = True
+                            except Exception as exc:
+                                issues.append(
+                                    self._issue(
+                                        as_of_ts_utc=as_of_ts_utc,
+                                        stage="sync_snapshot",
+                                        error_type="morpho_collateral_apy_fallback_failed",
+                                        error_message=str(exc),
+                                        chain_code=chain_code,
+                                        wallet_address=wallet_address,
+                                        market_ref=market_ref,
+                                        payload_json={
+                                            "source": "defillama_pool",
+                                            "pool_id": runtime.config.defillama_pool_id,
+                                            "collateral_token": runtime.config.collateral_token,
+                                        },
+                                    )
+                                )
+                    if (
+                        collateral_amount > 0
+                        and not carry_source_resolved
+                        and self._expects_collateral_carry(runtime.config.collateral_token)
+                        and not self._expects_pt_fixed_yield(runtime.config.collateral_token)
+                        and not self._supports_avant_native_carry(runtime.config.collateral_token)
+                        and not self._supports_bracket_native_carry(runtime.config.collateral_token)
+                        and runtime.config.defillama_pool_id is None
+                    ):
+                        issues.append(
+                            self._issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="morpho_collateral_apy_source_missing",
+                                error_message=(
+                                    "yield-bearing collateral position is missing a configured"
+                                    " carry source"
+                                ),
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                market_ref=market_ref,
+                                payload_json={
+                                    "collateral_token": runtime.config.collateral_token,
+                                },
                             )
+                        )
 
                     positions.append(
                         PositionSnapshotInput(
@@ -770,6 +969,8 @@ class MorphoAdapter:
                             ltv=ltv,
                             source="rpc",
                             block_number_or_slot=block_number_or_slot,
+                            collateral_amount=collateral_amount if collateral_amount > 0 else None,
+                            collateral_usd=collateral_usd,
                         )
                     )
 
@@ -834,6 +1035,33 @@ class MorphoAdapter:
                         )
 
                     supplied_usd = supplied_amount * asset_price
+                    supply_apy = Decimal("0")
+                    reward_apy = Decimal("0")
+                    try:
+                        apy_quote = self.vault_yield_client.get_vault_apy(
+                            address=market_ref,
+                            chain_id=vault_runtime.chain_id,
+                            lookback=vault_runtime.apy_lookback,
+                        )
+                        supply_apy = apy_quote.base_apy_excluding_rewards
+                        reward_apy = apy_quote.reward_apy
+                    except Exception as exc:
+                        issues.append(
+                            self._issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="morpho_vault_apy_fetch_failed",
+                                error_message=str(exc),
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                market_ref=market_ref,
+                                payload_json={
+                                    "apy_source": vault_runtime.config.apy_source,
+                                    "chain_id": vault_runtime.chain_id,
+                                    "lookback": vault_runtime.apy_lookback,
+                                },
+                            )
+                        )
 
                     positions.append(
                         PositionSnapshotInput(
@@ -847,9 +1075,9 @@ class MorphoAdapter:
                             supplied_usd=supplied_usd,
                             borrowed_amount=Decimal("0"),
                             borrowed_usd=Decimal("0"),
-                            supply_apy=Decimal("0"),
+                            supply_apy=supply_apy,
                             borrow_apy=Decimal("0"),
-                            reward_apy=Decimal("0"),
+                            reward_apy=reward_apy,
                             equity_usd=supplied_usd,
                             ltv=None,
                             source="rpc",

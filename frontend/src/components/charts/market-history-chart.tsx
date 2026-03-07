@@ -1,30 +1,30 @@
 "use client";
 
 import {
-  ComposedChart,
   Area,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
   Line,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
 } from "recharts";
 import { CHART_COLORS } from "@/lib/constants";
-import { formatUSDCompact, formatPercent } from "@/lib/formatters";
-import type { MarketHistoryPoint } from "@/lib/types";
+import { formatPercent, formatUSDCompact } from "@/lib/formatters";
+import type { MarketExposureHistoryPoint } from "@/lib/types";
 
 interface MarketHistoryChartProps {
-  data: MarketHistoryPoint[];
+  data: MarketExposureHistoryPoint[];
 }
 
 export function MarketHistoryChart({ data }: MarketHistoryChartProps) {
-  const chartData = data.map((p) => ({
-    date: p.business_date,
-    supply: Number(p.total_supply_usd),
-    borrow: Number(p.total_borrow_usd),
-    utilization: Number(p.utilization),
+  const chartData = data.map((point) => ({
+    date: point.business_date,
+    supply: Number(point.total_supply_usd),
+    borrow: Number(point.total_borrow_usd),
+    utilization: Number(point.utilization),
   }));
 
   return (
@@ -40,7 +40,7 @@ export function MarketHistoryChart({ data }: MarketHistoryChartProps) {
         <YAxis
           yAxisId="usd"
           tick={{ fontSize: 11, fill: "#64748b" }}
-          tickFormatter={(v: number) => formatUSDCompact(String(v))}
+          tickFormatter={(value: number) => formatUSDCompact(String(value))}
           axisLine={false}
           tickLine={false}
         />
@@ -48,7 +48,7 @@ export function MarketHistoryChart({ data }: MarketHistoryChartProps) {
           yAxisId="pct"
           orientation="right"
           tick={{ fontSize: 11, fill: "#64748b" }}
-          tickFormatter={(v: number) => formatPercent(String(v))}
+          tickFormatter={(value: number) => formatPercent(String(value))}
           domain={[0, 1]}
           axisLine={false}
           tickLine={false}
@@ -59,14 +59,12 @@ export function MarketHistoryChart({ data }: MarketHistoryChartProps) {
             border: "1px solid #e2e8f0",
             fontSize: 12,
           }}
-          formatter={(v, name) => {
-            if (name === "utilization") return formatPercent(String(v));
-            return formatUSDCompact(String(v));
+          formatter={(value, name) => {
+            if (name === "utilization") return formatPercent(String(value));
+            return formatUSDCompact(String(value));
           }}
         />
-        <Legend
-          wrapperStyle={{ fontSize: 12, paddingTop: 8 }}
-        />
+        <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} />
         <Area
           yAxisId="usd"
           type="monotone"

@@ -1,4 +1,4 @@
-"""Test fixtures for API integration tests."""
+"""Test fixtures for served API integration tests."""
 
 from __future__ import annotations
 
@@ -14,7 +14,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from analytics.market_engine import MarketEngine
+from analytics.executive_summary import ExecutiveSummaryEngine
+from analytics.market_views import MarketViewEngine
+from analytics.portfolio_views import PortfolioViewEngine
 from analytics.yield_engine import YieldEngine, denver_business_bounds_utc
 from api.app import create_app
 from api.deps import get_session
@@ -37,22 +39,13 @@ BUSINESS_DATE = date(2026, 3, 3)
 
 @dataclass
 class SeedMetadata:
-    """Metadata about the seeded test data for assertions."""
-
     business_date: date
-    chains: list[Chain]
-    protocols: list[Protocol]
-    products: list[Product]
-    wallets: list[Wallet]
-    markets: list[Market]
-    tokens: list[Token]
 
 
 @pytest.fixture()
 def seeded_session(
     postgres_database_url: str,
 ) -> Generator[tuple[Session, SeedMetadata], None, None]:
-    """Apply migrations, seed dimensions + facts, run engines, return session."""
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", postgres_database_url)
     command.upgrade(config, "head")
@@ -62,7 +55,6 @@ def seeded_session(
 
     sod_ts, eod_ts = denver_business_bounds_utc(BUSINESS_DATE)
 
-    # -- Dimensions --
     chain_eth = Chain(chain_code="ethereum")
     chain_arb = Chain(chain_code="arbitrum")
     proto_aave = Protocol(protocol_code="aave_v3")
@@ -104,30 +96,47 @@ def seeded_session(
     session.add_all([token_usdc, token_wbtc])
     session.flush()
 
-    m1 = Market(
-        chain_id=chain_eth.chain_id,
-        protocol_id=proto_aave.protocol_id,
-        market_address="0xaaa1",
-        base_asset_token_id=token_usdc.token_id,
-    )
-    m2 = Market(
-        chain_id=chain_eth.chain_id,
-        protocol_id=proto_aave.protocol_id,
-        market_address="0xaaa2",
-        base_asset_token_id=token_wbtc.token_id,
-    )
-    m3 = Market(
-        chain_id=chain_arb.chain_id,
-        protocol_id=proto_morpho.protocol_id,
-        market_address="0xbbb1",
-        base_asset_token_id=token_usdc.token_id,
-    )
-    m4 = Market(
-        chain_id=chain_arb.chain_id,
-        protocol_id=proto_morpho.protocol_id,
-        market_address="0xbbb2",
-    )
-    session.add_all([m1, m2, m3, m4])
+    markets = [
+        Market(
+            chain_id=chain_eth.chain_id,
+            protocol_id=proto_aave.protocol_id,
+            native_market_key="aave-usdc",
+            market_address="0xaaa1",
+            market_kind="reserve",
+            display_name="USDC Reserve",
+            base_asset_token_id=token_usdc.token_id,
+        ),
+        Market(
+            chain_id=chain_eth.chain_id,
+            protocol_id=proto_aave.protocol_id,
+            native_market_key="aave-wbtc",
+            market_address="0xaaa2",
+            market_kind="reserve",
+            display_name="WBTC Reserve",
+            base_asset_token_id=token_wbtc.token_id,
+        ),
+        Market(
+            chain_id=chain_arb.chain_id,
+            protocol_id=proto_morpho.protocol_id,
+            native_market_key="morpho-usdc",
+            market_address="0xbbb1",
+            market_kind="market",
+            display_name="USDC / USDC",
+            base_asset_token_id=token_usdc.token_id,
+            collateral_token_id=token_usdc.token_id,
+        ),
+        Market(
+            chain_id=chain_arb.chain_id,
+            protocol_id=proto_morpho.protocol_id,
+            native_market_key="morpho-wbtc",
+            market_address="0xbbb2",
+            market_kind="market",
+            display_name="WBTC / WBTC",
+            base_asset_token_id=token_wbtc.token_id,
+            collateral_token_id=token_wbtc.token_id,
+        ),
+    ]
+    session.add_all(markets)
     session.flush()
 
     session.add_all(
@@ -138,12 +147,10 @@ def seeded_session(
         ]
     )
 
-    # -- Position snapshots (SOD + EOD for 4 positions) --
-    _pos_snapshots = [
-        # w1 on m1 (aave/eth/USDC)
+    position_snapshots = [
         dict(
             wallet_id=w1.wallet_id,
-            market_id=m1.market_id,
+            market_id=markets[0].market_id,
             position_key="pos-w1-m1",
             supplied_amount=Decimal("1000"),
             supplied_usd=Decimal("1000"),
@@ -154,10 +161,9 @@ def seeded_session(
             reward_apy=Decimal("0.01"),
             equity_usd=Decimal("800"),
         ),
-        # w1 on m2 (aave/eth/WBTC)
         dict(
             wallet_id=w1.wallet_id,
-            market_id=m2.market_id,
+            market_id=markets[1].market_id,
             position_key="pos-w1-m2",
             supplied_amount=Decimal("500"),
             supplied_usd=Decimal("500"),
@@ -168,10 +174,9 @@ def seeded_session(
             reward_apy=Decimal("0.005"),
             equity_usd=Decimal("400"),
         ),
-        # w2 on m3 (morpho/arb/USDC)
         dict(
             wallet_id=w2.wallet_id,
-            market_id=m3.market_id,
+            market_id=markets[2].market_id,
             position_key="pos-w2-m3",
             supplied_amount=Decimal("2000"),
             supplied_usd=Decimal("2000"),
@@ -182,10 +187,9 @@ def seeded_session(
             reward_apy=Decimal("0.02"),
             equity_usd=Decimal("1500"),
         ),
-        # w3 on m4 (morpho/arb)
         dict(
             wallet_id=w3.wallet_id,
-            market_id=m4.market_id,
+            market_id=markets[3].market_id,
             position_key="pos-w3-m4",
             supplied_amount=Decimal("300"),
             supplied_usd=Decimal("300"),
@@ -197,7 +201,7 @@ def seeded_session(
             equity_usd=Decimal("250"),
         ),
     ]
-    for ps_data in _pos_snapshots:
+    for snapshot_data in position_snapshots:
         for ts, block in [(sod_ts, "100"), (eod_ts, "200")]:
             session.add(
                 PositionSnapshot(
@@ -206,14 +210,13 @@ def seeded_session(
                     source="rpc",
                     health_factor=Decimal("1.5"),
                     ltv=Decimal("0.5"),
-                    **ps_data,
+                    **snapshot_data,
                 )
             )
 
-    # -- Market snapshots (SOD + EOD for 4 markets) --
-    _mkt_snapshots = [
+    market_snapshots = [
         dict(
-            market_id=m1.market_id,
+            market_id=markets[0].market_id,
             total_supply_usd=Decimal("10000"),
             total_borrow_usd=Decimal("5000"),
             utilization=Decimal("0.5"),
@@ -225,7 +228,7 @@ def seeded_session(
             liquidation_penalty=Decimal("0.05"),
         ),
         dict(
-            market_id=m2.market_id,
+            market_id=markets[1].market_id,
             total_supply_usd=Decimal("8000"),
             total_borrow_usd=Decimal("3000"),
             utilization=Decimal("0.375"),
@@ -237,7 +240,7 @@ def seeded_session(
             liquidation_penalty=Decimal("0.10"),
         ),
         dict(
-            market_id=m3.market_id,
+            market_id=markets[2].market_id,
             total_supply_usd=Decimal("20000"),
             total_borrow_usd=Decimal("12000"),
             utilization=Decimal("0.6"),
@@ -249,41 +252,35 @@ def seeded_session(
             liquidation_penalty=Decimal("0.08"),
         ),
         dict(
-            market_id=m4.market_id,
+            market_id=markets[3].market_id,
             total_supply_usd=Decimal("5000"),
             total_borrow_usd=Decimal("2000"),
             utilization=Decimal("0.4"),
             supply_apy=Decimal("0.03"),
             borrow_apy=Decimal("0.015"),
             available_liquidity_usd=Decimal("3000"),
-            max_ltv=None,
-            liquidation_threshold=None,
-            liquidation_penalty=None,
+            max_ltv=Decimal("0.6"),
+            liquidation_threshold=Decimal("0.7"),
+            liquidation_penalty=Decimal("0.1"),
         ),
     ]
-    for ms_data in _mkt_snapshots:
+    for snapshot_data in market_snapshots:
         for ts, block in [(sod_ts, "100"), (eod_ts, "200")]:
             session.add(
                 MarketSnapshot(
                     as_of_ts_utc=ts,
                     block_number_or_slot=block,
                     source="rpc",
-                    **ms_data,
+                    **snapshot_data,
                 )
             )
 
     session.commit()
 
-    # -- Run engines --
-    with Session(engine) as eng_session:
-        YieldEngine(eng_session).compute_daily(business_date=BUSINESS_DATE)
-        eng_session.commit()
+    with Session(engine) as engine_session:
+        YieldEngine(engine_session).compute_daily(business_date=BUSINESS_DATE)
+        engine_session.commit()
 
-    with Session(engine) as eng_session:
-        MarketEngine(eng_session).compute_daily(business_date=BUSINESS_DATE)
-        eng_session.commit()
-
-    # -- Seed alerts --
     with Session(engine) as alert_session:
         alert_session.add_all(
             [
@@ -292,8 +289,8 @@ def seeded_session(
                     alert_type="high_utilization",
                     severity="high",
                     entity_type="market",
-                    entity_id=str(m3.market_id),
-                    payload_json={"utilization": 0.6},
+                    entity_id=str(markets[2].market_id),
+                    payload_json={"utilization": "0.6"},
                     status="open",
                 ),
                 Alert(
@@ -302,23 +299,13 @@ def seeded_session(
                     severity="med",
                     entity_type="position",
                     entity_id="pos-w1-m1",
-                    payload_json={"health_factor": 1.5},
-                    status="open",
-                ),
-                Alert(
-                    ts_utc=datetime.now(UTC),
-                    alert_type="concentration_risk",
-                    severity="low",
-                    entity_type="market",
-                    entity_id=str(m1.market_id),
-                    payload_json={"share": 0.1},
-                    status="resolved",
+                    payload_json={"health_factor": "1.5"},
+                    status="ack",
                 ),
             ]
         )
         alert_session.commit()
 
-    # -- Seed data quality issues --
     with Session(engine) as dq_session:
         dq_session.add_all(
             [
@@ -336,26 +323,21 @@ def seeded_session(
                     protocol_code="morpho",
                     chain_code="arbitrum",
                     error_type="balance_mismatch",
-                    error_message="DeBank balance differs by >5%",
+                    error_message="Observed balance differs by more than threshold",
                 ),
             ]
         )
         dq_session.commit()
 
-    metadata = SeedMetadata(
-        business_date=BUSINESS_DATE,
-        chains=[chain_eth, chain_arb],
-        protocols=[proto_aave, proto_morpho],
-        products=[product_senior, product_junior, product_btc],
-        wallets=[w1, w2, w3],
-        markets=[m1, m2, m3, m4],
-        tokens=[token_usdc, token_wbtc],
-    )
+    with Session(engine) as served_session:
+        PortfolioViewEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
+        MarketViewEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
+        ExecutiveSummaryEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
+        served_session.commit()
 
-    # Re-open session for test use
     test_session = Session(engine)
     try:
-        yield test_session, metadata
+        yield test_session, SeedMetadata(business_date=BUSINESS_DATE)
     finally:
         test_session.close()
         engine.dispose()
@@ -365,7 +347,6 @@ def seeded_session(
 def api_client(
     seeded_session: tuple[Session, SeedMetadata],
 ) -> Generator[tuple[TestClient, SeedMetadata], None, None]:
-    """Return a TestClient with the seeded session injected."""
     session, metadata = seeded_session
     app = create_app()
 

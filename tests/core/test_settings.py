@@ -22,8 +22,11 @@ def test_settings_defaults(monkeypatch, tmp_path) -> None:
         settings.database_url
         == "postgresql+psycopg://postgres:postgres@localhost:5432/avant_exec_dashboard"
     )
+    assert settings.avant_api_base_url == "https://app.avantprotocol.com/api"
+    assert settings.bracket_graphql_url == "https://app.bracket.fi/api/vaults/graphql"
     assert settings.debank_cloud_base_url == "https://pro-openapi.debank.com"
     assert settings.debank_cloud_api_key is None
+    assert settings.pendle_api_base_url == "https://api-v2.pendle.finance/core"
 
 
 def test_settings_parses_environment(monkeypatch, tmp_path) -> None:
@@ -36,7 +39,10 @@ def test_settings_parses_environment(monkeypatch, tmp_path) -> None:
         "AVANT_DATABASE_URL",
         "postgresql+psycopg://app:secret@db.internal:6543/avant_exec_dashboard",
     )
+    monkeypatch.setenv("AVANT_AVANT_API_BASE_URL", "https://app.avantprotocol.test/api")
+    monkeypatch.setenv("AVANT_BRACKET_GRAPHQL_URL", "https://app.bracket.test/api/vaults/graphql")
     monkeypatch.setenv("AVANT_DEBANK_CLOUD_API_KEY", "debank-key")
+    monkeypatch.setenv("AVANT_PENDLE_API_BASE_URL", "https://api-v2.pendle.test/core")
 
     settings = Settings()
 
@@ -45,7 +51,10 @@ def test_settings_parses_environment(monkeypatch, tmp_path) -> None:
     assert settings.database_url == (
         "postgresql+psycopg://app:secret@db.internal:6543/avant_exec_dashboard"
     )
+    assert settings.avant_api_base_url == "https://app.avantprotocol.test/api"
+    assert settings.bracket_graphql_url == "https://app.bracket.test/api/vaults/graphql"
     assert settings.debank_cloud_api_key == "debank-key"
+    assert settings.pendle_api_base_url == "https://api-v2.pendle.test/core"
 
 
 @pytest.mark.parametrize(

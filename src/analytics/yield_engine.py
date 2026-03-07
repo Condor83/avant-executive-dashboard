@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -556,12 +556,20 @@ class YieldEngine:
         return business_date < current_denver_date
 
     def _load_snapshot_map(self, as_of_ts_utc: datetime) -> dict[str, SnapshotPoint]:
+        economic_supply_usd = case(
+            (
+                (PositionSnapshot.collateral_usd.is_not(None))
+                & (PositionSnapshot.collateral_usd > ZERO),
+                PositionSnapshot.collateral_usd,
+            ),
+            else_=PositionSnapshot.supplied_usd,
+        )
         rows = self.session.execute(
             select(
                 PositionSnapshot.position_key,
                 PositionSnapshot.wallet_id,
                 PositionSnapshot.market_id,
-                PositionSnapshot.supplied_usd,
+                economic_supply_usd.label("supplied_usd"),
                 PositionSnapshot.borrowed_usd,
                 PositionSnapshot.supply_apy,
                 PositionSnapshot.borrow_apy,

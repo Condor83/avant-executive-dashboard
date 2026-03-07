@@ -11,6 +11,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from analytics.market_exposures import ensure_market_exposures
 from core.config import (
     ConsumerMarketsConfig,
     MarketsConfig,
@@ -20,6 +21,7 @@ from core.config import (
     load_markets_config,
     load_wallet_products_config,
 )
+from core.dashboard_contracts import market_display_name
 from core.db.models import Chain, Market, Product, Protocol, Token, Wallet, WalletProductMap
 from core.db.session import get_engine
 
@@ -89,6 +91,9 @@ def _upsert_markets(session: Session, rows: list[dict[str, Any]]) -> TableSeedSt
     stmt = stmt.on_conflict_do_update(
         index_elements=[Market.chain_id, Market.protocol_id, Market.market_address],
         set_={
+            "native_market_key": stmt.excluded.native_market_key,
+            "market_kind": stmt.excluded.market_kind,
+            "display_name": stmt.excluded.display_name,
             "base_asset_token_id": stmt.excluded.base_asset_token_id,
             "collateral_token_id": stmt.excluded.collateral_token_id,
             "metadata_json": stmt.excluded.metadata_json,
@@ -220,6 +225,24 @@ def _collect_token_rows(
             add_token(chain_code, spark_market.asset, spark_market.symbol, spark_market.decimals)
 
     for chain_code, morpho_chain in markets.morpho.items():
+        for morpho_market in morpho_chain.markets:
+            if morpho_market.loan_token_address is not None:
+                add_token(
+                    chain_code,
+                    morpho_market.loan_token_address,
+                    morpho_market.loan_token,
+                    morpho_market.loan_decimals,
+                )
+            if (
+                morpho_market.collateral_token_address is not None
+                and morpho_market.collateral_decimals is not None
+            ):
+                add_token(
+                    chain_code,
+                    morpho_market.collateral_token_address,
+                    morpho_market.collateral_token,
+                    morpho_market.collateral_decimals,
+                )
         for morpho_vault in morpho_chain.vaults:
             if (
                 morpho_vault.asset_address is None
@@ -341,6 +364,8 @@ def _collect_market_rows(
         protocol_code: str,
         chain_code: str,
         market_address: str,
+        market_kind: str,
+        display_name: str,
         base_asset_token_id: int | None,
         collateral_token_id: int | None,
         metadata: dict[str, Any],
@@ -349,7 +374,10 @@ def _collect_market_rows(
             {
                 "protocol_id": protocol_ids[protocol_code],
                 "chain_id": chain_ids[chain_code],
+                "native_market_key": _normalize_token_address(market_address),
                 "market_address": _normalize_token_address(market_address),
+                "market_kind": market_kind,
+                "display_name": display_name,
                 "base_asset_token_id": base_asset_token_id,
                 "collateral_token_id": collateral_token_id,
                 "metadata_json": metadata,
@@ -363,6 +391,14 @@ def _collect_market_rows(
                 protocol_code="aave_v3",
                 chain_code=chain_code,
                 market_address=aave_market.asset,
+                market_kind="reserve",
+                display_name=market_display_name(
+                    protocol_code="aave_v3",
+                    base_symbol=aave_market.symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "reserve", "symbol": aave_market.symbol},
+                    market_address=aave_market.asset,
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -379,6 +415,14 @@ def _collect_market_rows(
                 protocol_code="spark",
                 chain_code=chain_code,
                 market_address=spark_market.asset,
+                market_kind="reserve",
+                display_name=market_display_name(
+                    protocol_code="spark",
+                    base_symbol=spark_market.symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "reserve", "symbol": spark_market.symbol},
+                    market_address=spark_market.asset,
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -390,19 +434,47 @@ def _collect_market_rows(
 
     for chain_code, morpho_chain in markets.morpho.items():
         for morpho_market in morpho_chain.markets:
-            loan_token_id = token_ids_by_symbol.get((chain_code, morpho_market.loan_token.upper()))
-            collateral_token_id = token_ids_by_symbol.get(
-                (chain_code, morpho_market.collateral_token.upper())
-            )
+            loan_token_id = None
+            if morpho_market.loan_token_address is not None:
+                loan_token_id = token_ids.get(
+                    (chain_code, _normalize_token_address(morpho_market.loan_token_address))
+                )
+            if loan_token_id is None:
+                loan_token_id = token_ids_by_symbol.get(
+                    (chain_code, morpho_market.loan_token.upper())
+                )
+
+            collateral_token_id = None
+            if morpho_market.collateral_token_address is not None:
+                collateral_token_id = token_ids.get(
+                    (
+                        chain_code,
+                        _normalize_token_address(morpho_market.collateral_token_address),
+                    )
+                )
+            if collateral_token_id is None:
+                collateral_token_id = token_ids_by_symbol.get(
+                    (chain_code, morpho_market.collateral_token.upper())
+                )
             add_market(
                 protocol_code="morpho",
                 chain_code=chain_code,
                 market_address=morpho_market.id,
+                market_kind="market",
+                display_name=market_display_name(
+                    protocol_code="morpho",
+                    base_symbol=morpho_market.loan_token,
+                    collateral_symbol=morpho_market.collateral_token,
+                    metadata_json={"kind": "market"},
+                    market_address=morpho_market.id,
+                ),
                 base_asset_token_id=loan_token_id,
                 collateral_token_id=collateral_token_id,
                 metadata={
                     "loan_token": morpho_market.loan_token,
                     "collateral_token": morpho_market.collateral_token,
+                    "loan_token_address": morpho_market.loan_token_address,
+                    "collateral_token_address": morpho_market.collateral_token_address,
                     "loan_decimals": morpho_market.loan_decimals,
                     "collateral_decimals": morpho_market.collateral_decimals,
                     "defillama_pool_id": morpho_market.defillama_pool_id,
@@ -419,6 +491,18 @@ def _collect_market_rows(
                 protocol_code="morpho",
                 chain_code=chain_code,
                 market_address=morpho_vault.address,
+                market_kind="vault",
+                display_name=market_display_name(
+                    protocol_code="morpho",
+                    base_symbol=morpho_vault.asset_symbol,
+                    collateral_symbol=None,
+                    metadata_json={
+                        "kind": "vault",
+                        "asset_symbol": morpho_vault.asset_symbol,
+                        "note": morpho_vault.note,
+                    },
+                    market_address=morpho_vault.address,
+                ),
                 base_asset_token_id=base_asset_token_id,
                 collateral_token_id=None,
                 metadata={
@@ -443,6 +527,14 @@ def _collect_market_rows(
                 protocol_code="euler_v2",
                 chain_code=chain_code,
                 market_address=euler_vault.address,
+                market_kind="vault",
+                display_name=market_display_name(
+                    protocol_code="euler_v2",
+                    base_symbol=euler_vault.asset_symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "vault", "symbol": euler_vault.symbol},
+                    market_address=euler_vault.address,
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -461,6 +553,14 @@ def _collect_market_rows(
                 protocol_code="dolomite",
                 chain_code=chain_code,
                 market_address=str(dolomite_market.id),
+                market_kind="market",
+                display_name=market_display_name(
+                    protocol_code="dolomite",
+                    base_symbol=dolomite_market.symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "market", "symbol": dolomite_market.symbol},
+                    market_address=str(dolomite_market.id),
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -486,6 +586,22 @@ def _collect_market_rows(
                 protocol_code="kamino",
                 chain_code=chain_code,
                 market_address=kamino_market.market_pubkey,
+                market_kind="market",
+                display_name=market_display_name(
+                    protocol_code="kamino",
+                    base_symbol=(
+                        kamino_market.borrow_token.symbol
+                        if kamino_market.borrow_token is not None
+                        else None
+                    ),
+                    collateral_symbol=(
+                        kamino_market.supply_token.symbol
+                        if kamino_market.supply_token is not None
+                        else None
+                    ),
+                    metadata_json={"kind": "market", "name": kamino_market.name},
+                    market_address=kamino_market.market_pubkey,
+                ),
                 # For dual-token markets we normalize borrow as base + supply as collateral.
                 base_asset_token_id=borrow_token_id,
                 collateral_token_id=supply_token_id,
@@ -514,6 +630,14 @@ def _collect_market_rows(
                 protocol_code="zest",
                 chain_code=chain_code,
                 market_address=zest_market.asset_contract,
+                market_kind="market",
+                display_name=market_display_name(
+                    protocol_code="zest",
+                    base_symbol=zest_market.symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "market", "symbol": zest_market.symbol},
+                    market_address=zest_market.asset_contract,
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -533,6 +657,14 @@ def _collect_market_rows(
                 protocol_code="wallet_balances",
                 chain_code=chain_code,
                 market_address=token_address,
+                market_kind="wallet_balance_token",
+                display_name=market_display_name(
+                    protocol_code="wallet_balances",
+                    base_symbol=token.symbol,
+                    collateral_symbol=None,
+                    metadata_json={"kind": "wallet_balance_token"},
+                    market_address=token_address,
+                ),
                 base_asset_token_id=token_id,
                 collateral_token_id=None,
                 metadata={
@@ -557,6 +689,14 @@ def _collect_market_rows(
                 protocol_code="traderjoe_lp",
                 chain_code=chain_code,
                 market_address=traderjoe_pool.pool_address,
+                market_kind="liquidity_book_pool",
+                display_name=market_display_name(
+                    protocol_code="traderjoe_lp",
+                    base_symbol=traderjoe_pool.token_y_symbol,
+                    collateral_symbol=traderjoe_pool.token_x_symbol,
+                    metadata_json={"kind": "liquidity_book_pool"},
+                    market_address=traderjoe_pool.pool_address,
+                ),
                 # Liquidity Book pools are dual-token; normalize token Y as base for leg matching.
                 base_asset_token_id=token_y_id,
                 collateral_token_id=token_x_id,
@@ -582,6 +722,14 @@ def _collect_market_rows(
                     protocol_code="stakedao",
                     chain_code=chain_code,
                     market_address=f"{vault_address}:{token_address}",
+                    market_kind="vault_underlying",
+                    display_name=market_display_name(
+                        protocol_code="stakedao",
+                        base_symbol=underlying.symbol,
+                        collateral_symbol=None,
+                        metadata_json={"kind": "vault_underlying"},
+                        market_address=f"{vault_address}:{token_address}",
+                    ),
                     base_asset_token_id=token_id,
                     collateral_token_id=None,
                     metadata={
@@ -609,6 +757,14 @@ def _collect_market_rows(
                 protocol_code="etherex",
                 chain_code=chain_code,
                 market_address=etherex_pool.pool_address,
+                market_kind="concentrated_liquidity_pool",
+                display_name=market_display_name(
+                    protocol_code="etherex",
+                    base_symbol=etherex_pool.token0_symbol,
+                    collateral_symbol=etherex_pool.token1_symbol,
+                    metadata_json={"kind": "concentrated_liquidity_pool"},
+                    market_address=etherex_pool.pool_address,
+                ),
                 base_asset_token_id=token0_id,
                 collateral_token_id=token1_id,
                 metadata={
@@ -639,6 +795,14 @@ def _collect_market_rows(
             protocol_code=consumer_market.protocol,
             chain_code=consumer_market.chain,
             market_address=consumer_market.market_address,
+            market_kind="consumer_market",
+            display_name=market_display_name(
+                protocol_code=consumer_market.protocol,
+                base_symbol=consumer_market.borrow_token.symbol,
+                collateral_symbol=consumer_market.collateral_token.symbol,
+                metadata_json={"kind": "consumer_market", "name": consumer_market.name},
+                market_address=consumer_market.market_address,
+            ),
             base_asset_token_id=base_token_id,
             collateral_token_id=collateral_token_id,
             metadata={
@@ -748,6 +912,7 @@ def seed_database(
         token_ids_by_symbol=token_ids_by_symbol,
     )
     stats["markets"] = _upsert_markets(session, market_rows)
+    ensure_market_exposures(session)
 
     wallet_product_rows = [
         {

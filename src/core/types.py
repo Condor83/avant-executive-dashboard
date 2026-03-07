@@ -51,6 +51,8 @@ class PositionSnapshotInput:
     block_number_or_slot: str | None = None
     health_factor: Decimal | None = None
     ltv: Decimal | None = None
+    collateral_amount: Decimal | None = None
+    collateral_usd: Decimal | None = None
 
 
 @dataclass(frozen=True)

@@ -1,11 +1,12 @@
 "use client";
 
-import { Suspense, useCallback } from "react";
+import { Suspense, useCallback, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { PageContainer } from "@/components/layout/page-container";
-import { ErrorState } from "@/components/shared/error-state";
-import { DecimalCell } from "@/components/shared/decimal-cell";
 import { DataTable, type Column } from "@/components/shared/data-table";
+import { DecimalCell } from "@/components/shared/decimal-cell";
+import { ErrorState } from "@/components/shared/error-state";
+import { KpiCard, KpiCardSkeleton } from "@/components/shared/kpi-card";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -15,185 +16,294 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChevronLeft, ChevronRight } from "lucide-react";
-import { useProducts } from "@/lib/hooks/use-products";
+import { usePortfolioSummary } from "@/lib/hooks/use-portfolio-summary";
 import { usePositions } from "@/lib/hooks/use-positions";
+import { useUiMetadata } from "@/lib/hooks/use-ui-metadata";
 import {
+  financialColor,
+  formatAPY,
+  formatRatio,
+  formatROE,
   formatUSD,
   formatUSDCompact,
-  formatAPY,
-  formatROE,
-  formatRatio,
 } from "@/lib/formatters";
-import { PRODUCT_DISPLAY_NAMES, POSITION_SORT_OPTIONS } from "@/lib/constants";
-import type { ProductRow, PositionRow, PositionFilters } from "@/lib/types";
+import type {
+  OptionItem,
+  PortfolioPositionRow,
+  PositionFilters,
+} from "@/lib/types";
 
-const PRODUCT_COLUMNS: Column<ProductRow>[] = [
-  {
-    key: "product_code",
-    header: "Product",
-    cell: (r) => PRODUCT_DISPLAY_NAMES[r.product_code] ?? r.product_code,
-  },
-  {
-    key: "yesterday_yield",
-    header: "Gross Yield (1D)",
-    align: "right",
-    cell: (r) => <DecimalCell value={r.yesterday.gross_yield_usd} formatter={formatUSDCompact} colored />,
-  },
-  {
-    key: "yesterday_roe",
-    header: "Gross ROE (1D)",
-    align: "right",
-    cell: (r) => <DecimalCell value={r.yesterday.gross_roe} formatter={formatROE} colored />,
-  },
-  {
-    key: "7d_yield",
-    header: "Net Yield (7D)",
-    align: "right",
-    cell: (r) => <DecimalCell value={r.trailing_7d.net_yield_usd} formatter={formatUSDCompact} colored />,
-  },
-  {
-    key: "30d_yield",
-    header: "Net Yield (30D)",
-    align: "right",
-    cell: (r) => <DecimalCell value={r.trailing_30d.net_yield_usd} formatter={formatUSDCompact} colored />,
-  },
-  {
-    key: "30d_roe",
-    header: "Net ROE (30D)",
-    align: "right",
-    cell: (r) => <DecimalCell value={r.trailing_30d.net_roe} formatter={formatROE} colored />,
-  },
-];
+const DUST_THRESHOLD_USD = 1_000;
+const ANNUALIZATION_DAYS = 365;
 
-function PositionColumns(): Column<PositionRow>[] {
+function filterValue(searchParams: URLSearchParams, key: string) {
+  return searchParams.get(key) ?? undefined;
+}
+
+function compactProtocolLabel(protocolCode: string) {
+  return protocolCode.replace(/_v\d+$/i, "").replaceAll("_", " ").trim().toLowerCase();
+}
+
+function compactChainLabel(chainCode: string) {
+  const aliases: Record<string, string> = {
+    ethereum: "eth",
+    arbitrum: "arb",
+    avalanche: "avax",
+  };
+  return aliases[chainCode] ?? chainCode.toLowerCase();
+}
+
+function compactProductLabel(productLabel: string | null) {
+  if (!productLabel) {
+    return "Unassigned";
+  }
+  return productLabel.split(" (")[0];
+}
+
+function decimalValue(value: string | null | undefined) {
+  if (!value) {
+    return 0;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function annualizeDailyRoe(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return String(parsed * ANNUALIZATION_DAYS);
+}
+
+function grossRoeDaily(row: PortfolioPositionRow) {
+  return row.roe?.gross_roe_daily ?? row.yield_daily.gross_roe ?? null;
+}
+
+function grossRoeAnnualized(row: PortfolioPositionRow) {
+  return row.roe?.gross_roe_annualized ?? annualizeDailyRoe(grossRoeDaily(row));
+}
+
+function healthDescriptor(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return `Health Rate ${parsed.toFixed(2)}`;
+}
+
+function positionTitle(row: PortfolioPositionRow) {
+  const borrowSymbols = row.borrow_legs
+    .map((leg) => leg.symbol)
+    .filter((symbol): symbol is string => Boolean(symbol));
+  if (borrowSymbols.length === 0) {
+    return row.supply_leg.symbol ?? row.display_name;
+  }
+  return `${row.supply_leg.symbol ?? "Unknown"}/${borrowSymbols.join("+")}`;
+}
+
+function totalBorrowUsd(row: PortfolioPositionRow) {
+  return row.borrow_legs.reduce(
+    (sum, leg) => sum + decimalValue(leg.usd_value),
+    0,
+  );
+}
+
+function isDustPosition(row: PortfolioPositionRow) {
+  const visibleSizeUsd = Math.max(
+    decimalValue(row.supply_leg.usd_value),
+    totalBorrowUsd(row),
+    Math.abs(decimalValue(row.net_equity_usd)),
+  );
+  return visibleSizeUsd < DUST_THRESHOLD_USD;
+}
+
+function debankProfileUrl(walletAddress: string) {
+  return `https://debank.com/profile/${encodeURIComponent(walletAddress)}`;
+}
+
+function positionColumns(): Column<PortfolioPositionRow>[] {
   return [
-    {
-      key: "position_key",
-      header: "Position",
-      cell: (r) => (
-        <span className="max-w-[140px] truncate text-xs font-mono" title={r.position_key}>
-          {r.position_key.slice(0, 16)}...
-        </span>
-      ),
-    },
     {
       key: "wallet",
       header: "Wallet",
-      cell: (r) => (
-        <span className="font-mono text-xs" title={r.wallet_address}>
-          {r.wallet_address.slice(0, 6)}...{r.wallet_address.slice(-4)}
-        </span>
+      headerClassName: "w-[120px]",
+      cellClassName: "w-[120px]",
+      cell: (row) => (
+        <a
+          href={debankProfileUrl(row.wallet_address)}
+          target="_blank"
+          rel="noreferrer"
+          className="block w-[96px] whitespace-normal rounded-sm outline-none transition-colors hover:text-violet-700 focus-visible:ring-2 focus-visible:ring-violet-300"
+        >
+          <div className="font-mono text-xs text-slate-700">{row.wallet_label ?? row.wallet_address}</div>
+          <div className="text-xs text-slate-500">{compactProductLabel(row.product_label)}</div>
+        </a>
       ),
     },
-    { key: "product_code", header: "Product", cell: (r) => r.product_code ?? "---" },
-    { key: "protocol_code", header: "Protocol", cell: (r) => r.protocol_code },
-    { key: "chain_code", header: "Chain", cell: (r) => r.chain_code },
     {
-      key: "supplied_usd",
-      header: "Supplied",
-      align: "right",
-      cell: (r) => <DecimalCell value={r.supplied_usd} formatter={formatUSD} />,
+      key: "position",
+      header: "Position",
+      headerClassName: "w-[170px]",
+      cellClassName: "w-[170px]",
+      cell: (row) => {
+        const health = healthDescriptor(row.health_factor);
+        return (
+          <div title={row.position_key} className="w-[150px] whitespace-normal">
+            <div className="font-medium text-slate-900">{positionTitle(row)}</div>
+            <div className="text-xs font-medium text-violet-600">
+              {compactChainLabel(row.chain_code)} - {compactProtocolLabel(row.protocol_code)}
+            </div>
+            <div className="text-xs text-slate-500">{row.position_kind}</div>
+            {health && <div className="text-xs text-slate-500">{health}</div>}
+          </div>
+        );
+      },
     },
     {
-      key: "borrowed_usd",
-      header: "Borrowed",
+      key: "supply_leg",
+      header: "Supply",
+      cell: (row) => (
+        <div className="space-y-0.5 text-right">
+          <div className="font-semibold text-slate-900">
+            {formatUSD(row.supply_leg.usd_value)}
+          </div>
+          <div className="text-xs text-slate-500">{row.supply_leg.symbol ?? "Unknown"}</div>
+          <div className="text-[11px] text-teal-700">{formatAPY(row.supply_leg.apy)}</div>
+        </div>
+      ),
       align: "right",
-      cell: (r) => <DecimalCell value={r.borrowed_usd} formatter={formatUSD} />,
     },
     {
-      key: "equity_usd",
-      header: "Equity",
+      key: "borrow_leg",
+      header: "Borrow",
+      cell: (row) =>
+        row.borrow_legs.length > 0 ? (
+          <div className="space-y-1 text-right">
+            <div className="font-semibold text-slate-900">
+              {formatUSD(totalBorrowUsd(row).toString())}
+            </div>
+            {row.borrow_legs.map((leg, index) => (
+              <div
+                key={`${row.position_key}-borrow-${leg.token_id ?? index}`}
+                className="text-xs text-slate-500"
+              >
+                <span>{leg.symbol ?? "Unknown"}</span>
+                <span className="ml-1 text-amber-700">{formatAPY(leg.apy)}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <span className="text-slate-400">No debt</span>
+        ),
       align: "right",
-      cell: (r) => <DecimalCell value={r.equity_usd} formatter={formatUSD} colored />,
     },
     {
-      key: "supply_apy",
-      header: "Supply APY",
+      key: "net_equity_usd",
+      header: "Net Equity",
       align: "right",
-      cell: (r) => <DecimalCell value={r.supply_apy} formatter={formatAPY} />,
+      cell: (row) => <DecimalCell value={row.net_equity_usd} formatter={formatUSD} colored />,
     },
     {
-      key: "health_factor",
-      header: "Health",
+      key: "leverage_ratio",
+      header: "Leverage",
       align: "right",
-      cell: (r) => <DecimalCell value={r.health_factor} formatter={formatRatio} />,
+      cell: (row) => <DecimalCell value={row.leverage_ratio} formatter={formatRatio} />,
     },
     {
-      key: "gross_yield_usd",
-      header: "Gross Yield",
+      key: "yield_mtd",
+      header: "Net Yield MTD",
       align: "right",
-      cell: (r) => <DecimalCell value={r.gross_yield_usd} formatter={formatUSDCompact} colored />,
+      cell: (row) => (
+        <DecimalCell value={row.yield_mtd.net_yield_usd} formatter={formatUSDCompact} colored />
+      ),
     },
     {
-      key: "gross_roe",
-      header: "Gross ROE",
+      key: "gross_roe_annualized",
+      header: "ROE",
       align: "right",
-      cell: (r) => <DecimalCell value={r.gross_roe} formatter={formatROE} colored />,
+      cell: (row) => (
+        <div className="space-y-0.5 text-right">
+          <DecimalCell
+            value={grossRoeAnnualized(row)}
+            formatter={formatROE}
+            colored
+          />
+          <div className="text-[11px] text-slate-500">
+            1D {formatROE(grossRoeDaily(row))}
+          </div>
+        </div>
+      ),
     },
   ];
 }
 
-function FilterBar({
-  filters,
-  setParam,
-}: {
-  filters: PositionFilters;
-  setParam: (key: string, val: string) => void;
-}) {
+function filterSelect(
+  placeholder: string,
+  value: string | undefined,
+  options: OptionItem[],
+  onChange: (value: string) => void,
+) {
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-3">
-      <FilterSelect
-        placeholder="Product"
-        value={filters.product_code}
-        options={["savUSD", "avUSDx", "savETH", "avETHx", "savBTC", "avBTCx"]}
-        onChange={(v) => setParam("product_code", v)}
-      />
-      <FilterSelect
-        placeholder="Sort by"
-        value={filters.sort_by ?? "equity_usd"}
-        options={POSITION_SORT_OPTIONS.map((o) => o.value)}
-        labels={Object.fromEntries(POSITION_SORT_OPTIONS.map((o) => [o.value, o.label]))}
-        onChange={(v) => setParam("sort_by", v)}
-      />
-      <FilterSelect
-        placeholder="Direction"
-        value={filters.sort_dir ?? "desc"}
-        options={["desc", "asc"]}
-        labels={{ desc: "Descending", asc: "Ascending" }}
-        onChange={(v) => setParam("sort_dir", v)}
-      />
-    </div>
-  );
-}
-
-function FilterSelect({
-  placeholder,
-  value,
-  options,
-  labels,
-  onChange,
-}: {
-  placeholder: string;
-  value?: string;
-  options: string[];
-  labels?: Record<string, string>;
-  onChange: (v: string) => void;
-}) {
-  return (
-    <Select value={value ?? ""} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[140px] text-xs">
+    <Select value={value ?? "__all__"} onValueChange={onChange}>
+      <SelectTrigger className="h-8 w-[170px] text-xs">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__all__">All</SelectItem>
-        {options.map((o) => (
-          <SelectItem key={o} value={o}>
-            {labels?.[o] ?? o}
+        <SelectItem value="__all__">{placeholder}</SelectItem>
+        {options.map((option) => (
+          <SelectItem key={option.value} value={option.value}>
+            {option.label}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function filterBar(
+  filters: PositionFilters,
+  metadata: ReturnType<typeof useUiMetadata>["data"],
+  showHidden: boolean,
+  hiddenCount: number,
+  setParam: (key: string, value: string) => void,
+) {
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-3">
+      {filterSelect("Product", filters.product_code, metadata?.products ?? [], (value) => setParam("product_code", value))}
+      {filterSelect("Protocol", filters.protocol_code, metadata?.protocols ?? [], (value) => setParam("protocol_code", value))}
+      {filterSelect("Chain", filters.chain_code, metadata?.chains ?? [], (value) => setParam("chain_code", value))}
+      {filterSelect("Wallet", filters.wallet_address, metadata?.wallets ?? [], (value) => setParam("wallet_address", value))}
+      {filterSelect("Sort By", filters.sort_by ?? "net_equity_usd", metadata?.position_sort_options ?? [], (value) => setParam("sort_by", value))}
+      <Select value={filters.sort_dir ?? "desc"} onValueChange={(value) => setParam("sort_dir", value)}>
+        <SelectTrigger className="h-8 w-[120px] text-xs">
+          <SelectValue placeholder="Direction" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="desc">Descending</SelectItem>
+          <SelectItem value="asc">Ascending</SelectItem>
+        </SelectContent>
+      </Select>
+      <Button
+        type="button"
+        variant={showHidden ? "secondary" : "outline"}
+        size="sm"
+        className="h-8 text-xs"
+        onClick={() => setParam("show_hidden", showHidden ? "" : "1")}
+      >
+        {showHidden
+          ? "Hide Dust"
+          : hiddenCount > 0
+            ? `Show Hidden (${hiddenCount})`
+            : "Show Hidden"}
+      </Button>
+    </div>
   );
 }
 
@@ -203,8 +313,8 @@ export default function PortfolioPage() {
       fallback={
         <PageContainer title="Portfolio">
           <div className="space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
+            {Array.from({ length: 5 }).map((_, index) => (
+              <Skeleton key={index} className="h-10 w-full" />
             ))}
           </div>
         </PageContainer>
@@ -220,28 +330,29 @@ function PortfolioContent() {
   const router = useRouter();
 
   const filters: PositionFilters = {
-    product_code: searchParams.get("product_code") ?? undefined,
-    protocol_code: searchParams.get("protocol_code") ?? undefined,
-    chain_code: searchParams.get("chain_code") ?? undefined,
-    wallet_address: searchParams.get("wallet_address") ?? undefined,
-    sort_by: searchParams.get("sort_by") ?? "equity_usd",
-    sort_dir: (searchParams.get("sort_dir") as "asc" | "desc") ?? "desc",
-    page: Number(searchParams.get("page")) || 1,
-    page_size: 50,
+    product_code: filterValue(searchParams, "product_code"),
+    protocol_code: filterValue(searchParams, "protocol_code"),
+    chain_code: filterValue(searchParams, "chain_code"),
+    wallet_address: filterValue(searchParams, "wallet_address"),
+    sort_by: filterValue(searchParams, "sort_by") ?? "net_equity_usd",
+    sort_dir: (filterValue(searchParams, "sort_dir") as "asc" | "desc") ?? "desc",
   };
+  const showHidden = filterValue(searchParams, "show_hidden") === "1";
 
-  const {
-    data: products,
-    isLoading: productsLoading,
-    error: productsError,
-    refetch: refetchProducts,
-  } = useProducts();
-  const {
-    data: positionsData,
-    isLoading: positionsLoading,
-    error: positionsError,
-    refetch: refetchPositions,
-  } = usePositions(filters);
+  const metadata = useUiMetadata();
+  const summary = usePortfolioSummary();
+  const positions = usePositions(filters);
+  const visiblePositions = useMemo(() => {
+    const rows = positions.data?.positions ?? [];
+    if (showHidden) {
+      return rows;
+    }
+    return rows.filter((row) => !isDustPosition(row));
+  }, [positions.data?.positions, showHidden]);
+  const hiddenCount = useMemo(() => {
+    const rows = positions.data?.positions ?? [];
+    return rows.filter(isDustPosition).length;
+  }, [positions.data?.positions]);
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -251,99 +362,56 @@ function PortfolioContent() {
       } else {
         params.set(key, value);
       }
-      if (key !== "page") params.set("page", "1");
       router.push(`/portfolio?${params.toString()}`);
     },
-    [searchParams, router],
+    [router, searchParams],
   );
 
-  const handleProductClick = useCallback(
-    (row: ProductRow) => {
-      const params = new URLSearchParams();
-      params.set("product_code", row.product_code);
-      router.push(`/portfolio?${params.toString()}`);
-    },
-    [router],
-  );
-
-  const totalPages = positionsData
-    ? Math.ceil(positionsData.total_count / positionsData.page_size)
-    : 0;
+  const hasError = metadata.error || summary.error || positions.error;
+  if (hasError) {
+    return (
+      <PageContainer title="Portfolio">
+        <ErrorState
+          onRetry={() => {
+            metadata.refetch();
+            summary.refetch();
+            positions.refetch();
+          }}
+        />
+      </PageContainer>
+    );
+  }
 
   return (
     <PageContainer title="Portfolio">
-      {/* Products Table */}
       <section className="mb-8">
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Products</h2>
-        {productsError ? (
-          <ErrorState onRetry={() => refetchProducts()} />
-        ) : (
-          <DataTable
-            columns={PRODUCT_COLUMNS}
-            data={products ?? []}
-            isLoading={productsLoading}
-            rowKey={(r) => String(r.product_id)}
-            onRowClick={handleProductClick}
-            emptyMessage="No products found"
-          />
-        )}
-      </section>
-
-      {/* Positions Table */}
-      <section>
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Positions</h2>
-        {positionsError ? (
-          <ErrorState onRetry={() => refetchPositions()} />
-        ) : positionsLoading ? (
-          <div className="space-y-2">
-            <div className="mb-4 flex gap-3">
-              <Skeleton className="h-8 w-[140px]" />
-              <Skeleton className="h-8 w-[140px]" />
-              <Skeleton className="h-8 w-[140px]" />
-            </div>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-10 w-full" />
+        {summary.isLoading || !summary.data ? (
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+            {Array.from({ length: 5 }).map((_, index) => (
+              <KpiCardSkeleton key={index} />
             ))}
           </div>
         ) : (
-          <>
-            <DataTable
-              columns={PositionColumns()}
-              data={positionsData?.positions ?? []}
-              rowKey={(r) => r.position_key}
-              emptyMessage="No positions match the current filters"
-              filterSlot={<FilterBar filters={filters} setParam={setParam} />}
-            />
-            {/* Pagination */}
-            {totalPages > 1 && (
-              <div className="mt-4 flex items-center justify-between text-sm text-slate-600">
-                <span>
-                  Page {positionsData?.page} of {totalPages} ({positionsData?.total_count} total)
-                </span>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={filters.page === 1}
-                    onClick={() => setParam("page", String((filters.page ?? 1) - 1))}
-                  >
-                    <ChevronLeft className="h-4 w-4" />
-                    Prev
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={filters.page === totalPages}
-                    onClick={() => setParam("page", String((filters.page ?? 1) + 1))}
-                  >
-                    Next
-                    <ChevronRight className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            )}
-          </>
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+            <KpiCard label="Net Equity" value={formatUSDCompact(summary.data.total_net_equity_usd)} valueClassName={financialColor(summary.data.total_net_equity_usd)} />
+            <KpiCard label="Supply" value={formatUSDCompact(summary.data.total_supply_usd)} />
+            <KpiCard label="Borrow" value={formatUSDCompact(summary.data.total_borrow_usd)} />
+            <KpiCard label="Net Yield MTD" value={formatUSDCompact(summary.data.total_net_yield_mtd_usd)} valueClassName={financialColor(summary.data.total_net_yield_mtd_usd)} />
+            <KpiCard label="Avg Leverage" value={formatRatio(summary.data.avg_leverage_ratio)} />
+          </div>
         )}
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-lg font-medium text-slate-800">Core Lending Positions</h2>
+        <DataTable
+          columns={positionColumns()}
+          data={visiblePositions}
+          isLoading={positions.isLoading || metadata.isLoading}
+          rowKey={(row) => row.position_key}
+          emptyMessage="No positions match the current filters"
+          filterSlot={filterBar(filters, metadata.data, showHidden, hiddenCount, setParam)}
+        />
       </section>
     </PageContainer>
   );

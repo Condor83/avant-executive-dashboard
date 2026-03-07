@@ -40,9 +40,21 @@ class Settings(BaseSettings):
         default="https://yields.llama.fi",
         description="DefiLlama base URL for pool yield requests",
     )
+    avant_api_base_url: str = Field(
+        default="https://app.avantprotocol.com/api",
+        description="Avant API base URL for native token APY requests",
+    )
+    bracket_graphql_url: str = Field(
+        default="https://app.bracket.fi/api/vaults/graphql",
+        description="Bracket GraphQL endpoint used for vault NAV history requests",
+    )
     merkl_base_url: str = Field(
         default="https://api.merkl.xyz",
         description="Merkl API base URL for reward campaign APY requests",
+    )
+    pendle_api_base_url: str = Field(
+        default="https://api-v2.pendle.finance/core",
+        description="Pendle API base URL used for market metadata and wallet trade history",
     )
     request_timeout_seconds: float = Field(
         default=15.0,

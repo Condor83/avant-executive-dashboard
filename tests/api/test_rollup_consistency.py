@@ -1,4 +1,4 @@
-"""Rollup consistency: summary totals == sum of product-level values."""
+"""Served summaries reconcile to served position and market rows."""
 
 from __future__ import annotations
 
@@ -8,64 +8,55 @@ from fastapi.testclient import TestClient
 
 from tests.api.conftest import SeedMetadata
 
-# Sub-dust tolerance for Numeric(38,18) aggregation rounding
 TOLERANCE = Decimal("1E-15")
 
 
-def _approx_eq(a: Decimal, b: Decimal) -> bool:
-    return abs(a - b) <= TOLERANCE
+def _approx_eq(left: Decimal, right: Decimal) -> bool:
+    return abs(left - right) <= TOLERANCE
 
 
-def test_product_yields_sum_to_summary_yesterday(
+def test_positions_sum_to_portfolio_summary(api_client: tuple[TestClient, SeedMetadata]) -> None:
+    client, _ = api_client
+    positions = client.get("/portfolio/positions/current").json()["positions"]
+    summary = client.get("/portfolio/summary").json()
+
+    total_equity = sum((Decimal(row["net_equity_usd"]) for row in positions), Decimal("0"))
+    total_supply = sum((Decimal(row["supply_leg"]["usd_value"]) for row in positions), Decimal("0"))
+    total_borrow = sum(
+        (
+            sum((Decimal(leg["usd_value"]) for leg in row["borrow_legs"]), Decimal("0"))
+            for row in positions
+        ),
+        Decimal("0"),
+    )
+
+    assert _approx_eq(total_equity, Decimal(summary["total_net_equity_usd"]))
+    assert _approx_eq(total_supply, Decimal(summary["total_supply_usd"]))
+    assert _approx_eq(total_borrow, Decimal(summary["total_borrow_usd"]))
+
+
+def test_executive_summary_matches_portfolio_and_market_summaries(
     api_client: tuple[TestClient, SeedMetadata],
 ) -> None:
     client, _ = api_client
-    summary = client.get("/summary").json()
-    products = client.get("/portfolio/products").json()
+    summary = client.get("/summary/executive").json()
+    portfolio_summary = client.get("/portfolio/summary").json()
+    market_summary = client.get("/markets/summary").json()
 
-    yesterday = summary["yield_yesterday"]
-    product_gross = sum(
-        (Decimal(p["yesterday"]["gross_yield_usd"]) for p in products), Decimal("0")
+    assert _approx_eq(
+        Decimal(summary["executive"]["portfolio_net_equity_usd"]),
+        Decimal(portfolio_summary["total_net_equity_usd"]),
     )
-    product_net = sum((Decimal(p["yesterday"]["net_yield_usd"]) for p in products), Decimal("0"))
-    product_equity = sum(
-        (Decimal(p["yesterday"]["avg_equity_usd"]) for p in products), Decimal("0")
+    assert _approx_eq(
+        Decimal(summary["executive"]["portfolio_aggregate_roe_daily"]),
+        Decimal(portfolio_summary["aggregate_roe_daily"]),
     )
-
-    assert _approx_eq(product_gross, Decimal(yesterday["gross_yield_usd"]))
-    assert _approx_eq(product_net, Decimal(yesterday["net_yield_usd"]))
-    assert _approx_eq(product_equity, Decimal(yesterday["avg_equity_usd"]))
-
-
-def test_product_yields_sum_to_summary_trailing_7d(
-    api_client: tuple[TestClient, SeedMetadata],
-) -> None:
-    client, _ = api_client
-    summary = client.get("/summary").json()
-    products = client.get("/portfolio/products").json()
-
-    trailing = summary["yield_trailing_7d"]
-    product_gross = sum(
-        (Decimal(p["trailing_7d"]["gross_yield_usd"]) for p in products), Decimal("0")
+    assert _approx_eq(
+        Decimal(summary["executive"]["portfolio_aggregate_roe_annualized"]),
+        Decimal(portfolio_summary["aggregate_roe_annualized"]),
     )
-    product_net = sum((Decimal(p["trailing_7d"]["net_yield_usd"]) for p in products), Decimal("0"))
-
-    assert _approx_eq(product_gross, Decimal(trailing["gross_yield_usd"]))
-    assert _approx_eq(product_net, Decimal(trailing["net_yield_usd"]))
-
-
-def test_product_yields_sum_to_summary_trailing_30d(
-    api_client: tuple[TestClient, SeedMetadata],
-) -> None:
-    client, _ = api_client
-    summary = client.get("/summary").json()
-    products = client.get("/portfolio/products").json()
-
-    trailing = summary["yield_trailing_30d"]
-    product_gross = sum(
-        (Decimal(p["trailing_30d"]["gross_yield_usd"]) for p in products), Decimal("0")
+    assert _approx_eq(
+        Decimal(summary["executive"]["market_total_supply_usd"]),
+        Decimal(market_summary["total_supply_usd"]),
     )
-    product_net = sum((Decimal(p["trailing_30d"]["net_yield_usd"]) for p in products), Decimal("0"))
-
-    assert _approx_eq(product_gross, Decimal(trailing["gross_yield_usd"]))
-    assert _approx_eq(product_net, Decimal(trailing["net_yield_usd"]))
+    assert summary["executive"]["markets_at_risk_count"] == market_summary["markets_at_risk_count"]

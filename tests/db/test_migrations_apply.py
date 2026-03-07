@@ -31,6 +31,7 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "tokens",
         "markets",
         "position_snapshots",
+        "position_fixed_yield_cache",
         "market_snapshots",
         "prices",
         "data_quality",
@@ -48,6 +49,16 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
     )
     yield_daily_columns = {column["name"] for column in inspector.get_columns("yield_daily")}
     assert "row_key" in yield_daily_columns
+    position_snapshot_columns = {
+        column["name"] for column in inspector.get_columns("position_snapshots")
+    }
+    assert {"collateral_amount", "collateral_usd"}.issubset(position_snapshot_columns)
+    fixed_yield_cache_columns = {
+        column["name"] for column in inspector.get_columns("position_fixed_yield_cache")
+    }
+    assert {"position_key", "fixed_apy", "position_size_native_at_refresh"}.issubset(
+        fixed_yield_cache_columns
+    )
 
     position_snapshot_constraints = {
         constraint["name"] for constraint in inspector.get_unique_constraints("position_snapshots")
@@ -69,6 +80,11 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         constraint["name"] for constraint in inspector.get_unique_constraints("yield_daily")
     }
     assert "uq_yield_daily_business_date_method_row_key" in yield_daily_constraints
+    fixed_yield_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("position_fixed_yield_cache")
+    }
+    assert "uq_position_fixed_yield_cache_position_key" in fixed_yield_constraints
 
     with engine.connect() as connection:
         alert_index_def = connection.execute(

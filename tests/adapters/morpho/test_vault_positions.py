@@ -11,6 +11,7 @@ from adapters.morpho.adapter import (
     MorphoMarketState,
     MorphoPosition,
 )
+from adapters.morpho.vault_yields import MorphoVaultApyQuote
 from core.config import MarketsConfig
 
 
@@ -86,6 +87,23 @@ class _StubMorphoClient:
         return shares
 
 
+class _StubVaultYieldClient:
+    def __init__(self, quote: MorphoVaultApyQuote | None = None, error: Exception | None = None):
+        self.quote = quote
+        self.error = error
+        self.calls: list[tuple[str, int, str]] = []
+
+    def close(self) -> None:
+        return None
+
+    def get_vault_apy(self, *, address: str, chain_id: int, lookback: str) -> MorphoVaultApyQuote:
+        self.calls.append((address, chain_id, lookback))
+        if self.error is not None:
+            raise self.error
+        assert self.quote is not None
+        return self.quote
+
+
 def _config() -> MarketsConfig:
     return MarketsConfig.model_validate(
         {
@@ -103,6 +121,9 @@ def _config() -> MarketsConfig:
                             "asset_address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
                             "asset_symbol": "USDC",
                             "asset_decimals": 6,
+                            "chain_id": 1,
+                            "apy_source": "morpho_api",
+                            "apy_lookback": "SIX_HOURS",
                         }
                     ],
                 }
@@ -117,7 +138,19 @@ def _config() -> MarketsConfig:
 
 
 def test_morpho_vault_positions_are_ingested_as_supply() -> None:
-    adapter = MorphoAdapter(markets_config=_config(), rpc_client=_StubMorphoClient())
+    vault_yield_client = _StubVaultYieldClient(
+        quote=MorphoVaultApyQuote(
+            net_apy=Decimal("0.10660328634479907"),
+            base_apy_excluding_rewards=Decimal("0.10352315677551797"),
+            reward_apy=Decimal("0.003080129569281099"),
+            lookback="SIX_HOURS",
+        )
+    )
+    adapter = MorphoAdapter(
+        markets_config=_config(),
+        rpc_client=_StubMorphoClient(),
+        vault_yield_client=vault_yield_client,
+    )
     as_of = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
 
     prices = {("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"): Decimal("1")}
@@ -132,3 +165,29 @@ def test_morpho_vault_positions_are_ingested_as_supply() -> None:
     assert position.borrowed_amount == Decimal("0")
     assert position.borrowed_usd == Decimal("0")
     assert position.equity_usd == Decimal("2")
+    assert position.supply_apy == Decimal("0.10352315677551797")
+    assert position.reward_apy == Decimal("0.003080129569281099")
+    assert position.borrow_apy == Decimal("0")
+    assert position.ltv is None
+    assert vault_yield_client.calls == [
+        ("0x951a9f4a2ce19b9dea6b37e691d076a345b6c0f8", 1, "SIX_HOURS")
+    ]
+
+
+def test_morpho_vault_positions_emit_dq_when_apy_fetch_fails() -> None:
+    adapter = MorphoAdapter(
+        markets_config=_config(),
+        rpc_client=_StubMorphoClient(),
+        vault_yield_client=_StubVaultYieldClient(error=RuntimeError("morpho unavailable")),
+    )
+    as_of = datetime(2026, 3, 4, 0, 0, tzinfo=UTC)
+
+    prices = {("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"): Decimal("1")}
+    positions, issues = adapter.collect_positions(as_of_ts_utc=as_of, prices_by_token=prices)
+
+    assert len(positions) == 1
+    position = positions[0]
+    assert position.supply_apy == Decimal("0")
+    assert position.reward_apy == Decimal("0")
+    assert position.borrow_apy == Decimal("0")
+    assert any(issue.error_type == "morpho_vault_apy_fetch_failed" for issue in issues)

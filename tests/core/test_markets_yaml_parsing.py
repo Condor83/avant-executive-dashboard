@@ -45,8 +45,22 @@ def test_markets_and_tokens_have_required_fields() -> None:
         for morpho_market in morpho_chain.markets:
             assert morpho_market.id
             assert morpho_market.loan_token
+            assert morpho_market.loan_token_address
             assert morpho_market.collateral_token
+            assert morpho_market.collateral_token_address
             assert morpho_market.loan_decimals >= 0
+            assert morpho_market.collateral_decimals is not None
+            assert morpho_market.collateral_decimals >= 0
+        for morpho_vault in morpho_chain.vaults:
+            assert morpho_vault.address
+            if morpho_vault.asset_address is not None:
+                assert morpho_vault.asset_symbol
+                assert morpho_vault.asset_decimals is not None
+                assert morpho_vault.asset_decimals >= 0
+            if morpho_vault.chain_id is not None:
+                assert morpho_vault.chain_id > 0
+            assert morpho_vault.apy_source == "morpho_api"
+            assert morpho_vault.apy_lookback
 
     for euler_chain in markets.euler_v2.values():
         for euler_vault in euler_chain.vaults:
@@ -119,3 +133,20 @@ def test_markets_and_tokens_have_required_fields() -> None:
             assert etherex_pool.token1_symbol
             assert etherex_pool.token1_decimals >= 0
             assert etherex_pool.fee >= 0
+
+
+def test_morpho_susde_pyusd_market_uses_susde_carry_fallback() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    target = next(
+        market
+        for market in markets.morpho["ethereum"].markets
+        if market.id.lower() == "0x90ef0c5a0dc7c4de4ad4585002d44e9d411d212d2f6258e94948beecf8b4c0d5"
+    )
+
+    assert target.collateral_token == "sUSDe"
+    assert target.collateral_token_address == "0x9d39a5de30e57443bff2a8307a4256c8797a3497"
+    assert target.loan_token == "PYUSD"
+    assert target.loan_token_address == "0x6c3ea9036406852006290770bedfcaba0e23a0e8"
+    assert target.collateral_decimals == 18
+    assert target.defillama_pool_id == "66985a81-9c51-46ca-9977-42b4fe7bc6df"

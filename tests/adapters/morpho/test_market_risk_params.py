@@ -96,8 +96,13 @@ def _config() -> MarketsConfig:
                         {
                             "id": market_id,
                             "loan_token": "USDC",
+                            "loan_token_address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
                             "collateral_token": "syrupUSDC",
+                            "collateral_token_address": (
+                                "0x80ac24aa929eaf5013f6436cda2a7ba190f5cc0b"
+                            ),
                             "loan_decimals": 6,
+                            "collateral_decimals": 6,
                         }
                     ],
                     "vaults": [],

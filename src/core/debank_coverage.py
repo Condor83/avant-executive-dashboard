@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Protocol
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session, aliased
 
 from core.config import MarketsConfig, canonical_address
@@ -446,13 +446,21 @@ def _load_db_legs(
 ) -> dict[LegKey, Decimal]:
     base_token = aliased(Token)
     collateral_token = aliased(Token)
+    economic_supply_usd = case(
+        (
+            (PositionSnapshot.collateral_usd.is_not(None))
+            & (PositionSnapshot.collateral_usd > Decimal("0")),
+            PositionSnapshot.collateral_usd,
+        ),
+        else_=PositionSnapshot.supplied_usd,
+    )
 
     rows = session.execute(
         select(
             Wallet.address,
             Chain.chain_code,
             ProtocolModel.protocol_code,
-            PositionSnapshot.supplied_usd,
+            economic_supply_usd.label("supplied_usd"),
             PositionSnapshot.borrowed_usd,
             Market.metadata_json,
             base_token.symbol,

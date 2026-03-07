@@ -11,15 +11,17 @@ from typing import Protocol
 
 import typer
 import yaml
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
 from adapters.aave_v3 import AaveV3Adapter, EvmRpcAaveV3Client
+from adapters.bracket import BracketNavYieldOracle
 from adapters.dolomite import DolomiteAdapter, EvmRpcDolomiteClient
 from adapters.etherex import EtherexAdapter, EvmRpcEtherexClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.kamino import KaminoAdapter, KaminoApiClient
-from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter
+from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter, MorphoVaultYieldClient
+from adapters.pendle import PendleHistoryClient
 from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.spark import EvmRpcSparkClient, SparkAdapter
 from adapters.stakedao import EvmRpcStakedaoClient, StakedaoAdapter
@@ -27,7 +29,10 @@ from adapters.traderjoe_lp import EvmRpcTraderJoeLpClient, TraderJoeLpAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from analytics.alerts import AlertEngine
+from analytics.executive_summary import ExecutiveSummaryEngine
 from analytics.market_engine import MarketEngine
+from analytics.market_views import MarketViewEngine
+from analytics.portfolio_views import PortfolioViewEngine
 from analytics.risk_engine import (
     RiskEngine,
     top_markets_by_kink_risk,
@@ -39,6 +44,7 @@ from core.config import (
     canonical_address,
     load_consumer_markets_config,
     load_markets_config,
+    load_pt_fixed_yield_overrides_config,
     load_risk_thresholds_config,
     load_wallet_products_config,
 )
@@ -62,7 +68,7 @@ from core.pricing import PriceOracle
 from core.runner import RunnerSummary, SnapshotRunner
 from core.settings import get_settings
 from core.stacks_client import StacksClient
-from core.yields import DefiLlamaYieldOracle
+from core.yields import AvantYieldOracle, DefiLlamaYieldOracle
 
 app = typer.Typer(add_completion=False, help="Avant executive dashboard command line interface.")
 sync_app = typer.Typer(help="Ingestion sync commands")
@@ -117,6 +123,7 @@ END_DATE_OPTION = typer.Option(
     "--end-date",
     help="Window end date (YYYY-MM-DD). Defaults to latest available business_date.",
 )
+PT_FIXED_YIELD_OVERRIDES_PATH = Path("config/pt_fixed_yield_overrides.yaml")
 COHORT_CHAIN_CODE_OPTION = typer.Option(
     "avalanche",
     "--chain-code",
@@ -228,6 +235,7 @@ def _build_runner(
     settings = get_settings()
     markets_config = load_markets_config(markets_path)
     consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    pt_fixed_yield_overrides = load_pt_fixed_yield_overrides_config(PT_FIXED_YIELD_OVERRIDES_PATH)
 
     balance_client = EvmRpcBalanceClient(
         rpc_urls=settings.evm_rpc_urls,
@@ -244,6 +252,9 @@ def _build_runner(
     morpho_client = EvmRpcMorphoClient(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
+    )
+    morpho_vault_yield_client = MorphoVaultYieldClient(
+        timeout_seconds=settings.request_timeout_seconds
     )
     euler_client = EvmRpcEulerV2Client(
         rpc_urls=settings.evm_rpc_urls,
@@ -269,6 +280,18 @@ def _build_runner(
         base_url=settings.defillama_yields_base_url,
         timeout_seconds=settings.request_timeout_seconds,
     )
+    avant_yield_oracle = AvantYieldOracle(
+        base_url=settings.avant_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    bracket_yield_oracle = BracketNavYieldOracle(
+        graphql_url=settings.bracket_graphql_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    pendle_history_client = PendleHistoryClient(
+        base_url=settings.pendle_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
 
     wallet_adapter = WalletBalancesAdapter(
         markets_config=markets_config, balance_client=balance_client
@@ -292,6 +315,9 @@ def _build_runner(
         rpc_client=morpho_client,
         defillama_timeout_seconds=settings.request_timeout_seconds,
         yield_oracle=yield_oracle,
+        avant_yield_oracle=avant_yield_oracle,
+        bracket_yield_oracle=bracket_yield_oracle,
+        vault_yield_client=morpho_vault_yield_client,
     )
     euler_adapter = EulerV2Adapter(markets_config=markets_config, rpc_client=euler_client)
     dolomite_adapter = DolomiteAdapter(markets_config=markets_config, rpc_client=dolomite_client)
@@ -348,6 +374,8 @@ def _build_runner(
         session=session,
         markets_config=markets_config,
         price_oracle=price_oracle,
+        pendle_history_client=pendle_history_client,
+        pt_fixed_yield_overrides=pt_fixed_yield_overrides,
         position_adapters=[
             wallet_adapter,
             aave_adapter,
@@ -378,6 +406,7 @@ def _build_runner(
         aave_client,
         spark_client,
         morpho_client,
+        morpho_vault_yield_client,
         euler_client,
         dolomite_client,
         traderjoe_client,
@@ -389,6 +418,9 @@ def _build_runner(
         silo_client,
         price_oracle,
         yield_oracle,
+        avant_yield_oracle,
+        bracket_yield_oracle,
+        pendle_history_client,
     ]
     return runner, session, closeables
 
@@ -926,6 +958,11 @@ def compute_daily(
             ).compute_daily(business_date=parsed_date)
         except ValueError as exc:
             raise typer.BadParameter(str(exc), param_hint="--boundary-policy") from exc
+        portfolio_summary = PortfolioViewEngine(session).compute_daily(
+            business_date=parsed_date,
+            as_of_ts_utc=summary.eod_ts_utc or summary.sod_ts_utc,
+        )
+        executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
         total_row = session.execute(
             select(
                 YieldDaily.gross_roe,
@@ -962,11 +999,17 @@ def compute_daily(
         f" post_strategy_fee_roe_total={post_strategy_fee_roe_total}"
         f" net_roe_total={net_roe_total}"
         f" avant_gop_roe_total={avant_gop_roe_total}"
+        f" portfolio_daily_rows={portfolio_summary.daily_rows_written}"
+        f" portfolio_current_rows={portfolio_summary.current_rows_written}"
+        f" executive_rows={executive_summary.rows_written}"
     )
 
 
 @compute_app.command("markets")
-def compute_markets(target_date: str = DATE_OPTION) -> None:
+def compute_markets(
+    target_date: str = DATE_OPTION,
+    thresholds_path: Path = RISK_THRESHOLDS_PATH_OPTION,
+) -> None:
     """Compute daily market overview metrics from canonical snapshots."""
 
     try:
@@ -974,9 +1017,18 @@ def compute_markets(target_date: str = DATE_OPTION) -> None:
     except ValueError as exc:
         raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
 
+    try:
+        thresholds = load_risk_thresholds_config(thresholds_path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--thresholds-path") from exc
+
     session = Session(get_engine())
     try:
         summary = MarketEngine(session).compute_daily(business_date=parsed_date)
+        market_view_summary = MarketViewEngine(session, thresholds=thresholds).compute_daily(
+            business_date=parsed_date
+        )
+        executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
         session.commit()
     finally:
         session.close()
@@ -986,6 +1038,9 @@ def compute_markets(target_date: str = DATE_OPTION) -> None:
         f" business_date={summary.business_date.isoformat()}"
         f" as_of_ts_utc={summary.as_of_ts_utc.isoformat()}"
         f" rows_written={summary.rows_written}"
+        f" health_rows={market_view_summary.health_rows_written}"
+        f" exposure_rows={market_view_summary.exposure_rows_written}"
+        f" executive_rows={executive_summary.rows_written}"
     )
 
 
@@ -1130,9 +1185,17 @@ def compute_capital_buckets(as_of: str | None = AS_OF_OPTION) -> None:
                     f"no position snapshots found at or before {requested.isoformat()}"
                 )
 
+        economic_supply_usd = case(
+            (
+                (PositionSnapshot.collateral_usd.is_not(None))
+                & (PositionSnapshot.collateral_usd > Decimal("0")),
+                PositionSnapshot.collateral_usd,
+            ),
+            else_=PositionSnapshot.supplied_usd,
+        )
         rows = session.execute(
             select(
-                PositionSnapshot.supplied_usd,
+                economic_supply_usd.label("supplied_usd"),
                 PositionSnapshot.borrowed_usd,
                 PositionSnapshot.equity_usd,
                 Market.metadata_json,

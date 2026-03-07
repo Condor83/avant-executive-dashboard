@@ -227,6 +227,189 @@ def test_compute_daily_rollups_match_position_rows(postgres_database_url: str) -
         _assert_metric_tuples_close(position_totals, total_totals)
 
 
+def test_compute_daily_yield_for_supply_only_vault_position(postgres_database_url: str) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    business_date = date(2026, 3, 5)
+    sod_ts, eod_ts = denver_business_bounds_utc(business_date)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="morpho")
+        wallet = Wallet(
+            address="0x5555555555555555555555555555555555555555", wallet_type="strategy"
+        )
+        product = Product(product_code="stablecoin_senior")
+        session.add_all([chain, protocol, wallet, product])
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0x951a9f4a2ce19b9dea6b37e691d076a345b6c0f8",
+            market_kind="vault",
+            display_name="MetaMorpho USDC Vault",
+            base_asset_token_id=None,
+            collateral_token_id=None,
+            metadata_json={"kind": "vault", "asset_symbol": "USDC"},
+        )
+        session.add(market)
+        session.flush()
+
+        session.add(WalletProductMap(wallet_id=wallet.wallet_id, product_id=product.product_id))
+        session.add_all(
+            [
+                PositionSnapshot(
+                    as_of_ts_utc=sod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="morpho-vault-pos",
+                    supplied_amount=Decimal("1712594.124167"),
+                    supplied_usd=Decimal("1712594.124167"),
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0.10352315677551797"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0.003080129569281099"),
+                    equity_usd=Decimal("1712594.124167"),
+                    source="rpc",
+                    block_number_or_slot="1",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=eod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="morpho-vault-pos",
+                    supplied_amount=Decimal("1712594.124167"),
+                    supplied_usd=Decimal("1712594.124167"),
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0.10352315677551797"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0.003080129569281099"),
+                    equity_usd=Decimal("1712594.124167"),
+                    source="rpc",
+                    block_number_or_slot="2",
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = YieldEngine(session).compute_daily(business_date=business_date)
+        session.commit()
+
+        assert summary.position_rows_written == 1
+        row = session.scalar(
+            select(YieldDaily).where(
+                YieldDaily.business_date == business_date,
+                YieldDaily.position_key == "morpho-vault-pos",
+            )
+        )
+        assert row is not None
+        assert row.gross_yield_usd > Decimal("0")
+        assert row.net_yield_usd > Decimal("0")
+        assert row.gross_roe is not None
+        assert row.net_roe is not None
+
+
+def test_compute_daily_yield_uses_collateral_usd_for_morpho_positions(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    business_date = date(2026, 3, 6)
+    sod_ts, eod_ts = denver_business_bounds_utc(business_date)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="morpho")
+        wallet = Wallet(
+            address="0x6666666666666666666666666666666666666666", wallet_type="strategy"
+        )
+        product = Product(product_code="stablecoin_senior")
+        session.add_all([chain, protocol, wallet, product])
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0x90ef0c5a0dc7c4de4ad4585002d44e9d411d212d2f6258e94948beecf8b4c0d5",
+            market_kind="market",
+            display_name="sUSDe / PYUSD",
+            base_asset_token_id=None,
+            collateral_token_id=None,
+            metadata_json={"kind": "market", "loan_token": "PYUSD", "collateral_token": "sUSDe"},
+        )
+        session.add(market)
+        session.flush()
+
+        session.add(WalletProductMap(wallet_id=wallet.wallet_id, product_id=product.product_id))
+        session.add_all(
+            [
+                PositionSnapshot(
+                    as_of_ts_utc=sod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="morpho-collateral-pos",
+                    supplied_amount=Decimal("0"),
+                    supplied_usd=Decimal("0"),
+                    collateral_amount=Decimal("100"),
+                    collateral_usd=Decimal("100"),
+                    borrowed_amount=Decimal("50"),
+                    borrowed_usd=Decimal("50"),
+                    supply_apy=Decimal("0.10"),
+                    borrow_apy=Decimal("0.02"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("50"),
+                    source="rpc",
+                    block_number_or_slot="1",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=eod_ts,
+                    wallet_id=wallet.wallet_id,
+                    market_id=market.market_id,
+                    position_key="morpho-collateral-pos",
+                    supplied_amount=Decimal("0"),
+                    supplied_usd=Decimal("0"),
+                    collateral_amount=Decimal("120"),
+                    collateral_usd=Decimal("120"),
+                    borrowed_amount=Decimal("60"),
+                    borrowed_usd=Decimal("60"),
+                    supply_apy=Decimal("0.12"),
+                    borrow_apy=Decimal("0.03"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("60"),
+                    source="rpc",
+                    block_number_or_slot="2",
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = YieldEngine(session).compute_daily(business_date=business_date)
+        session.commit()
+
+        assert summary.position_rows_written == 1
+        row = session.scalar(
+            select(YieldDaily).where(
+                YieldDaily.business_date == business_date,
+                YieldDaily.position_key == "morpho-collateral-pos",
+            )
+        )
+        assert row is not None
+
+        expected_gross_yield = Decimal("110") * Decimal("0.11") / Decimal("365") - Decimal(
+            "55"
+        ) * Decimal("0.025") / Decimal("365")
+        assert row.gross_yield_usd == expected_gross_yield.quantize(Decimal("0.000000000000000001"))
+        assert row.avg_equity_usd == Decimal("55")
+        assert row.gross_roe == (expected_gross_yield / Decimal("55")).quantize(
+            Decimal("0.0000000001")
+        )
+
+
 def test_window_rollups_equal_sum_of_daily_rows(postgres_database_url: str) -> None:
     _migrate_to_head(postgres_database_url)
     engine = create_engine(postgres_database_url)

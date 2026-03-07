@@ -11,23 +11,33 @@ import {
   Cell,
 } from "recharts";
 import { formatUSDCompact } from "@/lib/formatters";
-import type { YieldMetrics } from "@/lib/types";
+import type { YieldWindow } from "@/lib/types";
 
 interface FeeWaterfallChartProps {
-  metrics: YieldMetrics;
+  metrics: YieldWindow;
+  grossLabel: string;
+  feeLabel: string;
+  gopLabel: string;
+  netLabel: string;
 }
 
-export function FeeWaterfallChart({ metrics }: FeeWaterfallChartProps) {
+export function FeeWaterfallChart({
+  metrics,
+  grossLabel,
+  feeLabel,
+  gopLabel,
+  netLabel,
+}: FeeWaterfallChartProps) {
   const gross = Number(metrics.gross_yield_usd);
   const stratFee = Number(metrics.strategy_fee_usd);
   const gop = Number(metrics.avant_gop_usd);
   const net = Number(metrics.net_yield_usd);
 
   const data = [
-    { name: "Gross Yield", value: gross, color: "#2563EB" },
-    { name: "Strategy Fee (15%)", value: -stratFee, color: "#EF4444" },
-    { name: "Avant GOP (8.5%)", value: -gop, color: "#F59E0B" },
-    { name: "Net Yield (76.5%)", value: net, color: "#10B981" },
+    { name: grossLabel, value: gross, color: "#0f766e" },
+    { name: feeLabel, value: -stratFee, color: "#b91c1c" },
+    { name: gopLabel, value: -gop, color: "#b45309" },
+    { name: netLabel, value: net, color: "#155e75" },
   ];
 
   return (
@@ -42,12 +52,12 @@ export function FeeWaterfallChart({ metrics }: FeeWaterfallChartProps) {
         />
         <YAxis
           tick={{ fontSize: 11, fill: "#64748b" }}
-          tickFormatter={(v: number) => formatUSDCompact(String(Math.abs(v)))}
+          tickFormatter={(value: number) => formatUSDCompact(String(Math.abs(value)))}
           axisLine={false}
           tickLine={false}
         />
         <Tooltip
-          formatter={(v) => formatUSDCompact(String(Math.abs(Number(v))))}
+          formatter={(value) => formatUSDCompact(String(Math.abs(Number(value))))}
           contentStyle={{
             borderRadius: 8,
             border: "1px solid #e2e8f0",
@@ -55,8 +65,8 @@ export function FeeWaterfallChart({ metrics }: FeeWaterfallChartProps) {
           }}
         />
         <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-          {data.map((entry, i) => (
-            <Cell key={i} fill={entry.color} />
+          {data.map((entry, index) => (
+            <Cell key={index} fill={entry.color} />
           ))}
         </Bar>
       </BarChart>

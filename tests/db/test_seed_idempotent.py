@@ -86,5 +86,42 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
         assert base_token.symbol == "PYUSD"
         assert collateral_token.symbol == "syrupUSDC"
 
+        morpho_syrup_market = session.execute(
+            select(Market)
+            .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+            .join(Chain, Chain.chain_id == Market.chain_id)
+            .where(Protocol.protocol_code == "morpho")
+            .where(Chain.chain_code == "ethereum")
+            .where(
+                Market.market_address
+                == "0x729badf297ee9f2f6b3f717b96fd355fc6ec00422284ce1968e76647b258cf44"
+            )
+        ).scalar_one()
+        assert morpho_syrup_market.collateral_token_id is not None
+        assert morpho_syrup_market.base_asset_token_id is not None
+
+        morpho_syrup_collateral = session.get(Token, morpho_syrup_market.collateral_token_id)
+        morpho_syrup_base = session.get(Token, morpho_syrup_market.base_asset_token_id)
+        assert morpho_syrup_collateral is not None
+        assert morpho_syrup_base is not None
+        assert morpho_syrup_collateral.symbol == "syrupUSDC"
+        assert morpho_syrup_base.symbol == "USDC"
+
+        morpho_wbtc_market = session.execute(
+            select(Market)
+            .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+            .join(Chain, Chain.chain_id == Market.chain_id)
+            .where(Protocol.protocol_code == "morpho")
+            .where(Chain.chain_code == "ethereum")
+            .where(
+                Market.market_address
+                == "0x704e020b95cbf452e7a30545d5f72a241c4238eebf9d1c67657fdd4a488581e0"
+            )
+        ).scalar_one()
+        assert morpho_wbtc_market.collateral_token_id is not None
+        morpho_wbtc_collateral = session.get(Token, morpho_wbtc_market.collateral_token_id)
+        assert morpho_wbtc_collateral is not None
+        assert morpho_wbtc_collateral.symbol == "WBTC"
+
     assert first_counts == second_counts
     assert wallet_map_count == distinct_wallets

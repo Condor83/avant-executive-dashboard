@@ -20,6 +20,8 @@ export interface Column<T> {
   sortable?: boolean;
   align?: "left" | "right";
   sortFn?: (a: T, b: T) => number;
+  headerClassName?: string;
+  cellClassName?: string;
 }
 
 interface DataTableProps<T> {
@@ -85,6 +87,7 @@ export function DataTable<T>({
                   className={cn(
                     col.align === "right" && "text-right",
                     col.sortable && "cursor-pointer select-none",
+                    col.headerClassName,
                   )}
                   onClick={col.sortable ? () => handleSort(col.key) : undefined}
                 >
@@ -127,6 +130,7 @@ export function DataTable<T>({
                       className={cn(
                         "text-sm tabular-nums",
                         col.align === "right" && "text-right",
+                        col.cellClassName,
                       )}
                     >
                       {col.cell(row)}

@@ -1,33 +1,39 @@
-"""Response schema for GET /summary."""
+"""Response schemas for executive summary endpoints."""
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel
 
-from api.schemas.common import YieldMetrics
+from api.schemas.common import FreshnessSummary
+from api.schemas.markets import MarketSummaryResponse
+from api.schemas.portfolio import PortfolioSummaryResponse
 
 
-class PortfolioSnapshot(BaseModel):
-    total_supplied_usd: Decimal
-    total_borrowed_usd: Decimal
-    net_equity_usd: Decimal
-    collateralization_ratio: Decimal | None
-    leverage_ratio: Decimal | None
-
-
-class DataQualitySummary(BaseModel):
-    last_position_snapshot_utc: datetime | None
-    last_market_snapshot_utc: datetime | None
-    position_snapshot_age_hours: float | None
-    market_snapshot_age_hours: float | None
-    open_dq_issues_24h: int
+class ExecutiveSummarySnapshot(BaseModel):
+    business_date: date
+    nav_usd: Decimal
+    portfolio_net_equity_usd: Decimal
+    portfolio_aggregate_roe_daily: Decimal | None
+    portfolio_aggregate_roe_annualized: Decimal | None
+    total_gross_yield_daily_usd: Decimal
+    total_net_yield_daily_usd: Decimal
+    total_gross_yield_mtd_usd: Decimal
+    total_net_yield_mtd_usd: Decimal
+    total_strategy_fee_daily_usd: Decimal
+    total_avant_gop_daily_usd: Decimal
+    total_strategy_fee_mtd_usd: Decimal
+    total_avant_gop_mtd_usd: Decimal
+    market_total_supply_usd: Decimal
+    market_total_borrow_usd: Decimal
+    markets_at_risk_count: int
+    open_alert_count: int
+    customer_metrics_ready: bool
 
 
 class SummaryResponse(BaseModel):
-    as_of_date: date
-    portfolio: PortfolioSnapshot
-    yield_yesterday: YieldMetrics
-    yield_trailing_7d: YieldMetrics
-    yield_trailing_30d: YieldMetrics
-    data_quality: DataQualitySummary
+    business_date: date
+    executive: ExecutiveSummarySnapshot
+    portfolio_summary: PortfolioSummaryResponse | None
+    market_summary: MarketSummaryResponse | None
+    freshness: FreshnessSummary

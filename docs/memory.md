@@ -31,6 +31,11 @@ For each position and each day:
 
 > Note: APY moves intraday. MVP approximates with SOD + EOD rates; production can add time-weighted rate sampling.
 
+Economic supply note:
+- For standard lending positions, `supply_usd` is the lend-side supplied USD value.
+- For collateralized Morpho positions, Portfolio and yield analytics treat posted collateral as the economic supply side when `collateral_usd` is present.
+- Market concentration/share analytics still use lend-side `supplied_usd`, not collateral, so borrower exposure is not double-counted as market supply.
+
 ### ROE definition (strategy)
 
 ROE uses average deployed equity as denominator:
@@ -38,6 +43,11 @@ ROE uses average deployed equity as denominator:
 - equity_usd_SOD = supply_usd_SOD - borrow_usd_SOD
 - equity_usd_EOD = supply_usd_EOD - borrow_usd_EOD
 - avg_equity_usd = (equity_usd_SOD + equity_usd_EOD) / 2
+
+Morpho collateralized position note:
+- Canonical Morpho position facts store both lend-side supply and posted collateral separately.
+- For collateralized Morpho positions, `equity_usd = supplied_usd + collateral_usd - borrowed_usd`.
+- Yield and Portfolio ROE calculations use the economic supply side implied by that position shape.
 
 Daily ROE variants:
 
@@ -57,8 +67,23 @@ When `avg_equity_usd <= 0`, ROE values are null.
 ### Morpho collateral carry policy (current)
 
 - Morpho Blue market rates are protocol-native and still used for market-level risk/rate analytics.
-- For configured markets with `defillama_pool_id`, position-level `supply_apy` can represent collateral carry APY from DefiLlama.
+- For Avant-native collateral tokens, position-level `supply_apy` uses Avant's API as the primary carry source.
+- For `wbravUSDC`, position-level `supply_apy` uses Bracket's public UI-facing `apy_series` feed. Only if that feed is unavailable does the repo fall back to a trailing 30-day NAV-derived estimate.
+- For configured non-Avant markets with `defillama_pool_id`, position-level `supply_apy` can represent collateral carry APY from DefiLlama.
+- Plain unstaked `USDe` is not treated as a carry-bearing Morpho collateral token.
+- PT collateral is not treated like floating carry. It uses a fixed APY reconstructed from Pendle trade history and cached by position.
+- When Pendle wallet trade history is incomplete, a short-lived manual override keyed by `position_key` is acceptable. Those stopgaps live in `config/pt_fixed_yield_overrides.yaml` and should be replaced by transaction-based reconstruction later.
 - Position `borrow_apy` remains protocol-native Morpho borrow APY.
+- Yield-bearing collateral positions that lack a configured carry source emit `morpho_collateral_apy_source_missing` instead of silently reusing the wrong rate.
+- PT positions that cannot be resolved from Pendle history emit `pt_fixed_apy_unresolved` and fall back to zero carry rather than current market `supply_apy`.
+
+### Morpho vault wrapper policy (current)
+
+- MetaMorpho vault wrappers are modeled as unlevered, supply-only yield-bearing deposits.
+- Wrapper positions do not inherit borrower-side leverage or health factor semantics.
+- Wrapper APY is sourced from Morpho's official vault API using the configured lookback.
+- `avgNetApyExcludingRewards` maps to `supply_apy`; rewards map to `reward_apy`.
+- Internal vault allocations are look-through context only and are not counted as separate Portfolio positions in the current dashboard.
 
 ## Fee waterfall (always the same)
 

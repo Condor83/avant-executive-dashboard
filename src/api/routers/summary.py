@@ -1,4 +1,4 @@
-"""GET /summary — top-level executive dashboard snapshot."""
+"""Executive summary endpoints backed by served portfolio and markets tables."""
 
 from __future__ import annotations
 
@@ -9,125 +9,47 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from analytics.rollups import RollupMetrics, compute_window_rollups
 from api.deps import get_session
-from api.schemas.common import YieldMetrics
-from api.schemas.summary import (
-    DataQualitySummary,
-    PortfolioSnapshot,
-    SummaryResponse,
-)
+from api.schemas.common import FreshnessSummary
+from api.schemas.markets import MarketSummaryResponse
+from api.schemas.portfolio import PortfolioSummaryResponse
+from api.schemas.summary import ExecutiveSummarySnapshot, SummaryResponse
 from core.db.models import (
     DataQuality,
+    ExecutiveSummaryDaily,
     MarketSnapshot,
+    MarketSummaryDaily,
+    PortfolioSummaryDaily,
     PositionSnapshot,
-    Wallet,
-    YieldDaily,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/summary")
 
 ZERO = Decimal("0")
+ANNUALIZATION_DAYS = Decimal("365")
+ROE_QUANTUM = Decimal("0.0000000001")
 
 
-def _rollup_to_yield_metrics(m: RollupMetrics) -> YieldMetrics:
-    return YieldMetrics(
-        gross_yield_usd=m.gross_yield_usd,
-        strategy_fee_usd=m.strategy_fee_usd,
-        avant_gop_usd=m.avant_gop_usd,
-        net_yield_usd=m.net_yield_usd,
-        avg_equity_usd=m.avg_equity_usd,
-        gross_roe=m.gross_roe,
-        net_roe=m.net_roe,
-    )
+def _normalized_roe(value: Decimal | None) -> Decimal | None:
+    if value is None:
+        return None
+    return value.quantize(ROE_QUANTUM)
 
 
-def _yesterday_yield(session: Session) -> tuple[YieldMetrics, date | None]:
-    """Return yesterday's total yield and the business_date used."""
-    latest_date = session.scalar(
-        select(func.max(YieldDaily.business_date)).where(
-            YieldDaily.position_key.is_(None),
-            YieldDaily.wallet_id.is_(None),
-            YieldDaily.product_id.is_(None),
-            YieldDaily.protocol_id.is_(None),
-        )
-    )
-    if latest_date is None:
-        return YieldMetrics(
-            gross_yield_usd=ZERO,
-            strategy_fee_usd=ZERO,
-            avant_gop_usd=ZERO,
-            net_yield_usd=ZERO,
-            avg_equity_usd=ZERO,
-            gross_roe=None,
-            net_roe=None,
-        ), None
-
-    row = session.execute(
-        select(YieldDaily).where(
-            YieldDaily.business_date == latest_date,
-            YieldDaily.position_key.is_(None),
-            YieldDaily.wallet_id.is_(None),
-            YieldDaily.product_id.is_(None),
-            YieldDaily.protocol_id.is_(None),
-        )
-    ).scalar_one()
-
-    return YieldMetrics(
-        gross_yield_usd=row.gross_yield_usd,
-        strategy_fee_usd=row.strategy_fee_usd,
-        avant_gop_usd=row.avant_gop_usd,
-        net_yield_usd=row.net_yield_usd,
-        avg_equity_usd=row.avg_equity_usd or ZERO,
-        gross_roe=row.gross_roe,
-        net_roe=row.net_roe,
-    ), latest_date
+def _annualize_daily_roe(value: Decimal | None) -> Decimal | None:
+    normalized = _normalized_roe(value)
+    if normalized is None:
+        return None
+    return normalized * ANNUALIZATION_DAYS
 
 
-@router.get("/summary")
-def get_summary(session: Session = Depends(get_session)) -> SummaryResponse:
-    # 1. Portfolio snapshot from latest position_snapshots
-    latest_ps_ts = session.scalar(select(func.max(PositionSnapshot.as_of_ts_utc)))
-    if latest_ps_ts is not None:
-        portfolio_row = session.execute(
-            select(
-                func.coalesce(func.sum(PositionSnapshot.supplied_usd), 0),
-                func.coalesce(func.sum(PositionSnapshot.borrowed_usd), 0),
-                func.coalesce(func.sum(PositionSnapshot.equity_usd), 0),
-            )
-            .join(Wallet, Wallet.wallet_id == PositionSnapshot.wallet_id)
-            .where(
-                Wallet.wallet_type == "strategy",
-                PositionSnapshot.as_of_ts_utc == latest_ps_ts,
-            )
-        ).one()
-        supplied = portfolio_row[0]
-        borrowed = portfolio_row[1]
-        equity = portfolio_row[2]
-    else:
-        supplied = ZERO
-        borrowed = ZERO
-        equity = ZERO
-
-    portfolio = PortfolioSnapshot(
-        total_supplied_usd=supplied,
-        total_borrowed_usd=borrowed,
-        net_equity_usd=equity,
-        collateralization_ratio=supplied / borrowed if borrowed else None,
-        leverage_ratio=supplied / equity if equity else None,
-    )
-
-    # 2. Yesterday yield
-    yield_yesterday, latest_date = _yesterday_yield(session)
-
-    # 3. Trailing windows
-    rollup_7d = compute_window_rollups(session, window="7d")
-    rollup_30d = compute_window_rollups(session, window="30d")
-
-    # 4. Data quality summary
+def _freshness(session: Session) -> FreshnessSummary:
     now = datetime.now(UTC)
+    latest_ps_ts = session.scalar(select(func.max(PositionSnapshot.as_of_ts_utc)))
     latest_ms_ts = session.scalar(select(func.max(MarketSnapshot.as_of_ts_utc)))
-    dq_count = (
+    pos_age = (now - latest_ps_ts).total_seconds() / 3600 if latest_ps_ts else None
+    mkt_age = (now - latest_ms_ts).total_seconds() / 3600 if latest_ms_ts else None
+    issue_count_24h = (
         session.scalar(
             select(func.count())
             .select_from(DataQuality)
@@ -135,21 +57,145 @@ def get_summary(session: Session = Depends(get_session)) -> SummaryResponse:
         )
         or 0
     )
+    return FreshnessSummary(
+        last_position_snapshot_utc=latest_ps_ts,
+        last_market_snapshot_utc=latest_ms_ts,
+        position_snapshot_age_hours=round(pos_age, 2) if pos_age is not None else None,
+        market_snapshot_age_hours=round(mkt_age, 2) if mkt_age is not None else None,
+        open_dq_issues_24h=int(issue_count_24h),
+    )
 
-    pos_age = (now - latest_ps_ts).total_seconds() / 3600 if latest_ps_ts else None
-    mkt_age = (now - latest_ms_ts).total_seconds() / 3600 if latest_ms_ts else None
 
+def _portfolio_summary(session: Session, business_date: date) -> PortfolioSummaryResponse | None:
+    row = session.scalar(
+        select(PortfolioSummaryDaily).where(
+            PortfolioSummaryDaily.business_date == business_date,
+            PortfolioSummaryDaily.scope_segment == "strategy_only",
+        )
+    )
+    if row is None:
+        return None
+    return PortfolioSummaryResponse(
+        business_date=row.business_date,
+        scope_segment=row.scope_segment,
+        total_supply_usd=row.total_supply_usd,
+        total_borrow_usd=row.total_borrow_usd,
+        total_net_equity_usd=row.total_net_equity_usd,
+        aggregate_roe_daily=_normalized_roe(row.aggregate_roe),
+        aggregate_roe_annualized=_annualize_daily_roe(row.aggregate_roe),
+        total_gross_yield_daily_usd=row.total_gross_yield_daily_usd,
+        total_net_yield_daily_usd=row.total_net_yield_daily_usd,
+        total_gross_yield_mtd_usd=row.total_gross_yield_mtd_usd,
+        total_net_yield_mtd_usd=row.total_net_yield_mtd_usd,
+        total_strategy_fee_daily_usd=row.total_strategy_fee_daily_usd,
+        total_avant_gop_daily_usd=row.total_avant_gop_daily_usd,
+        total_strategy_fee_mtd_usd=row.total_strategy_fee_mtd_usd,
+        total_avant_gop_mtd_usd=row.total_avant_gop_mtd_usd,
+        avg_leverage_ratio=row.avg_leverage_ratio,
+        open_position_count=row.open_position_count,
+    )
+
+
+def _market_summary(session: Session, business_date: date) -> MarketSummaryResponse | None:
+    row = session.scalar(
+        select(MarketSummaryDaily).where(
+            MarketSummaryDaily.business_date == business_date,
+            MarketSummaryDaily.scope_segment == "strategy_only",
+        )
+    )
+    if row is None:
+        return None
+    return MarketSummaryResponse(
+        business_date=row.business_date,
+        scope_segment=row.scope_segment,
+        total_supply_usd=row.total_supply_usd,
+        total_borrow_usd=row.total_borrow_usd,
+        weighted_utilization=row.weighted_utilization,
+        total_available_liquidity_usd=row.total_available_liquidity_usd,
+        markets_at_risk_count=row.markets_at_risk_count,
+        markets_on_watchlist_count=row.markets_on_watchlist_count,
+    )
+
+
+def _empty_summary(today: date) -> SummaryResponse:
     return SummaryResponse(
-        as_of_date=latest_date or date.today(),
-        portfolio=portfolio,
-        yield_yesterday=yield_yesterday,
-        yield_trailing_7d=_rollup_to_yield_metrics(rollup_7d.total),
-        yield_trailing_30d=_rollup_to_yield_metrics(rollup_30d.total),
-        data_quality=DataQualitySummary(
-            last_position_snapshot_utc=latest_ps_ts,
-            last_market_snapshot_utc=latest_ms_ts,
-            position_snapshot_age_hours=round(pos_age, 2) if pos_age is not None else None,
-            market_snapshot_age_hours=round(mkt_age, 2) if mkt_age is not None else None,
-            open_dq_issues_24h=dq_count,
+        business_date=today,
+        executive=ExecutiveSummarySnapshot(
+            business_date=today,
+            nav_usd=ZERO,
+            portfolio_net_equity_usd=ZERO,
+            portfolio_aggregate_roe_daily=None,
+            portfolio_aggregate_roe_annualized=None,
+            total_gross_yield_daily_usd=ZERO,
+            total_net_yield_daily_usd=ZERO,
+            total_gross_yield_mtd_usd=ZERO,
+            total_net_yield_mtd_usd=ZERO,
+            total_strategy_fee_daily_usd=ZERO,
+            total_avant_gop_daily_usd=ZERO,
+            total_strategy_fee_mtd_usd=ZERO,
+            total_avant_gop_mtd_usd=ZERO,
+            market_total_supply_usd=ZERO,
+            market_total_borrow_usd=ZERO,
+            markets_at_risk_count=0,
+            open_alert_count=0,
+            customer_metrics_ready=False,
+        ),
+        portfolio_summary=None,
+        market_summary=None,
+        freshness=FreshnessSummary(
+            last_position_snapshot_utc=None,
+            last_market_snapshot_utc=None,
+            position_snapshot_age_hours=None,
+            market_snapshot_age_hours=None,
+            open_dq_issues_24h=0,
         ),
     )
+
+
+def _summary_payload(session: Session) -> SummaryResponse:
+    business_date = session.scalar(select(func.max(ExecutiveSummaryDaily.business_date)))
+    if business_date is None:
+        return _empty_summary(datetime.now(UTC).date())
+
+    executive = session.get(ExecutiveSummaryDaily, business_date)
+    if executive is None:
+        return _empty_summary(business_date)
+
+    return SummaryResponse(
+        business_date=business_date,
+        executive=ExecutiveSummarySnapshot(
+            business_date=executive.business_date,
+            nav_usd=executive.nav_usd,
+            portfolio_net_equity_usd=executive.portfolio_net_equity_usd,
+            portfolio_aggregate_roe_daily=_normalized_roe(executive.portfolio_aggregate_roe),
+            portfolio_aggregate_roe_annualized=_annualize_daily_roe(
+                executive.portfolio_aggregate_roe
+            ),
+            total_gross_yield_daily_usd=executive.total_gross_yield_daily_usd,
+            total_net_yield_daily_usd=executive.total_net_yield_daily_usd,
+            total_gross_yield_mtd_usd=executive.total_gross_yield_mtd_usd,
+            total_net_yield_mtd_usd=executive.total_net_yield_mtd_usd,
+            total_strategy_fee_daily_usd=executive.total_strategy_fee_daily_usd,
+            total_avant_gop_daily_usd=executive.total_avant_gop_daily_usd,
+            total_strategy_fee_mtd_usd=executive.total_strategy_fee_mtd_usd,
+            total_avant_gop_mtd_usd=executive.total_avant_gop_mtd_usd,
+            market_total_supply_usd=executive.market_total_supply_usd,
+            market_total_borrow_usd=executive.market_total_borrow_usd,
+            markets_at_risk_count=executive.markets_at_risk_count,
+            open_alert_count=executive.open_alert_count,
+            customer_metrics_ready=executive.customer_metrics_ready,
+        ),
+        portfolio_summary=_portfolio_summary(session, business_date),
+        market_summary=_market_summary(session, business_date),
+        freshness=_freshness(session),
+    )
+
+
+@router.get("")
+def get_summary(session: Session = Depends(get_session)) -> SummaryResponse:
+    return _summary_payload(session)
+
+
+@router.get("/executive")
+def get_executive_summary(session: Session = Depends(get_session)) -> SummaryResponse:
+    return _summary_payload(session)

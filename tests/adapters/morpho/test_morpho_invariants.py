@@ -92,8 +92,13 @@ def _config() -> MarketsConfig:
                         {
                             "id": market_id,
                             "loan_token": "USDC",
+                            "loan_token_address": "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
                             "collateral_token": "syrupUSDC",
+                            "collateral_token_address": (
+                                "0x80ac24aa929eaf5013f6436cda2a7ba190f5cc0b"
+                            ),
                             "loan_decimals": 6,
+                            "collateral_decimals": 6,
                             "defillama_pool_id": "43641cf5-a92e-416b-bce9-27113d3c0db6",
                         }
                     ],
@@ -131,9 +136,17 @@ def test_morpho_invariants_hold() -> None:
     epsilon = Decimal("1e-12")
     for position_row in positions:
         assert position_row.supplied_usd >= 0
+        assert (position_row.collateral_usd or Decimal("0")) >= 0
         assert position_row.borrowed_usd >= 0
         assert (
-            abs(position_row.equity_usd - (position_row.supplied_usd - position_row.borrowed_usd))
+            abs(
+                position_row.equity_usd
+                - (
+                    position_row.supplied_usd
+                    + (position_row.collateral_usd or Decimal("0"))
+                    - position_row.borrowed_usd
+                )
+            )
             <= epsilon
         )
 

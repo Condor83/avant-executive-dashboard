@@ -53,7 +53,9 @@ class MorphoMarket(ConfigModel):
     loan_token: str
     collateral_token: str
     loan_decimals: int = Field(ge=0, le=36)
+    loan_token_address: str | None = None
     collateral_decimals: int | None = Field(default=None, ge=0, le=36)
+    collateral_token_address: str | None = None
     defillama_pool_id: str | None = None
 
 
@@ -63,6 +65,9 @@ class MorphoVault(ConfigModel):
     asset_address: str | None = None
     asset_symbol: str | None = None
     asset_decimals: int | None = Field(default=None, ge=0, le=36)
+    chain_id: int | None = Field(default=None, ge=1)
+    apy_source: Literal["morpho_api"] = "morpho_api"
+    apy_lookback: str = Field(default="SIX_HOURS", min_length=1)
 
 
 class MorphoChainConfig(ConfigModel):
@@ -367,6 +372,32 @@ class RiskThresholdsConfig(ConfigModel):
     liquidity: LiquidityThresholdConfig
 
 
+class PTFixedYieldOverride(ConfigModel):
+    """Manual fixed-yield override for a single PT-backed position."""
+
+    position_key: str = Field(min_length=1)
+    fixed_apy: Decimal = Field(gt=Decimal("0"))
+    source: Literal["etherscan_manual", "pendle_manual"] = "etherscan_manual"
+    tx_hash: str = Field(min_length=1)
+    acquired_at_utc: str = Field(min_length=1)
+    note: str | None = None
+
+
+class PTFixedYieldOverridesConfig(ConfigModel):
+    """Collection of PT fixed-yield overrides keyed by position."""
+
+    overrides: list[PTFixedYieldOverride] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_position_keys(self) -> PTFixedYieldOverridesConfig:
+        seen: set[str] = set()
+        for override in self.overrides:
+            if override.position_key in seen:
+                raise ValueError(f"duplicate PT fixed-yield override for '{override.position_key}'")
+            seen.add(override.position_key)
+        return self
+
+
 LEGACY_PRODUCT_MAPPING: dict[str, tuple[str, ProductFamily, Tranche]] = {
     "savUSD": ("stablecoin_senior", "stablecoin", "senior"),
     "avUSD": ("stablecoin_senior", "stablecoin", "senior"),
@@ -469,3 +500,20 @@ def load_risk_thresholds_config(path: Path | str) -> RiskThresholdsConfig:
         return RiskThresholdsConfig.model_validate(raw)
     except ValidationError as exc:
         raise ValueError(f"invalid risk thresholds config at {path}: {exc}") from exc
+
+
+def load_pt_fixed_yield_overrides_config(
+    path: Path | str,
+) -> dict[str, PTFixedYieldOverride]:
+    """Load optional PT fixed-yield manual overrides."""
+
+    path_obj = Path(path)
+    if not path_obj.exists():
+        return {}
+
+    raw = _read_yaml(path_obj)
+    try:
+        parsed = PTFixedYieldOverridesConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise ValueError(f"invalid PT fixed-yield overrides config at {path}: {exc}") from exc
+    return {override.position_key: override for override in parsed.overrides}

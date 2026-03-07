@@ -1,4 +1,4 @@
-"""Markets overview consistency: API values match DB values."""
+"""Market exposure API values match served DB rows."""
 
 from __future__ import annotations
 
@@ -8,66 +8,48 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.db.models import MarketOverviewDaily
+from core.db.models import MarketExposureDaily
 from tests.api.conftest import SeedMetadata
 
 
-def test_overview_row_count_matches_db(
+def test_market_exposure_count_matches_db(
     api_client: tuple[TestClient, SeedMetadata],
     seeded_session: tuple[Session, SeedMetadata],
 ) -> None:
     client, meta = api_client
     session, _ = seeded_session
-    resp = client.get("/markets/overview")
-    assert resp.status_code == 200
-    api_rows = resp.json()
 
-    db_count = len(
-        session.scalars(
-            select(MarketOverviewDaily).where(
-                MarketOverviewDaily.business_date == meta.business_date
-            )
-        ).all()
-    )
-    assert len(api_rows) == db_count
-
-
-def test_overview_total_supply_matches_db(
-    api_client: tuple[TestClient, SeedMetadata],
-    seeded_session: tuple[Session, SeedMetadata],
-) -> None:
-    client, meta = api_client
-    session, _ = seeded_session
-    api_rows = client.get("/markets/overview").json()
-
+    api_rows = client.get("/markets/exposures").json()
     db_rows = session.scalars(
-        select(MarketOverviewDaily).where(MarketOverviewDaily.business_date == meta.business_date)
+        select(MarketExposureDaily).where(MarketExposureDaily.business_date == meta.business_date)
     ).all()
-    db_supply_by_market = {r.market_id: r.total_supply_usd for r in db_rows}
+
+    assert len(api_rows) == len(db_rows)
+
+
+def test_market_exposure_supply_matches_db(
+    api_client: tuple[TestClient, SeedMetadata],
+    seeded_session: tuple[Session, SeedMetadata],
+) -> None:
+    client, meta = api_client
+    session, _ = seeded_session
+
+    api_rows = client.get("/markets/exposures").json()
+    db_rows = session.scalars(
+        select(MarketExposureDaily).where(MarketExposureDaily.business_date == meta.business_date)
+    ).all()
+    db_by_exposure = {row.market_exposure_id: row.total_supply_usd for row in db_rows}
 
     for api_row in api_rows:
-        market_id = api_row["market_id"]
-        assert Decimal(api_row["total_supply_usd"]) == db_supply_by_market[market_id]
+        assert Decimal(api_row["total_supply_usd"]) == db_by_exposure[api_row["market_exposure_id"]]
 
 
-def test_overview_avant_supply_share_matches_db(
+def test_watch_only_filter_returns_alerting_rows(
     api_client: tuple[TestClient, SeedMetadata],
-    seeded_session: tuple[Session, SeedMetadata],
 ) -> None:
-    client, meta = api_client
-    session, _ = seeded_session
-    api_rows = client.get("/markets/overview").json()
+    client, _ = api_client
+    rows = client.get("/markets/exposures?watch_only=true").json()
 
-    db_rows = session.scalars(
-        select(MarketOverviewDaily).where(MarketOverviewDaily.business_date == meta.business_date)
-    ).all()
-    db_share_by_market = {r.market_id: r.avant_supply_share for r in db_rows}
-
-    for api_row in api_rows:
-        market_id = api_row["market_id"]
-        db_val = db_share_by_market[market_id]
-        api_val = api_row["avant_supply_share"]
-        if db_val is None:
-            assert api_val is None
-        else:
-            assert Decimal(api_val) == db_val
+    assert len(rows) == 1
+    assert rows[0]["active_alert_count"] == 1
+    assert rows[0]["watch_status"] == "alerting"

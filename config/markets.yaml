@@ -161,18 +161,27 @@ morpho:
     markets:
     - id: '0xf86f3edd6f16cd8211f4d206866dc4ecd41be6211063ac11f8508e1b7112ef40'
       loan_token: USDC
+      loan_token_address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831'
       collateral_token: syrupUSDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0x41ca7586cc1311807b4605fbb748a3b8862b42b5'
       defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
     - id: '0x8011beebfbc91832b0341639d3628764da458fe29a482a42880768db143a50a8'
       loan_token: USDT0
+      loan_token_address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9'
       collateral_token: syrupUSDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0x41ca7586cc1311807b4605fbb748a3b8862b42b5'
       defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
     - id: '0x571cb3ac535d61d92026c071ef1df4794d0bbbe1755f916ff640746f81b52af4'
       loan_token: USDT0
+      loan_token_address: '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9'
       collateral_token: syrupUSDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0x41ca7586cc1311807b4605fbb748a3b8862b42b5'
       defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
   ethereum:
     morpho: '0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb'
@@ -188,98 +197,163 @@ morpho:
     markets:
     - id: '0x729badf297ee9f2f6b3f717b96fd355fc6ec00422284ce1968e76647b258cf44'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: syrupUSDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0x80ac24aa929eaf5013f6436cda2a7ba190f5cc0b'
       defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
     - id: '0xc9629945524f3fde56c7e8854a6c3d48e76b9d97236abbe73c750fcc7aeb8501'
       loan_token: PYUSD
+      loan_token_address: '0x6c3ea9036406852006290770bedfcaba0e23a0e8'
       collateral_token: syrupUSDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0x80ac24aa929eaf5013f6436cda2a7ba190f5cc0b'
       defillama_pool_id: '43641cf5-a92e-416b-bce9-27113d3c0db6'
     - id: '0xf08d3de5dada3388281eda38fe364cb1a04867a61124d74d1cf1215b5b01b577'
       loan_token: PYUSD
+      loan_token_address: '0x6c3ea9036406852006290770bedfcaba0e23a0e8'
       collateral_token: USDe
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x4c9edd5852cd905f086c759e8383e09bff1e68b3'
     - id: '0x90ef0c5a0dc7c4de4ad4585002d44e9d411d212d2f6258e94948beecf8b4c0d5'
       loan_token: PYUSD
+      loan_token_address: '0x6c3ea9036406852006290770bedfcaba0e23a0e8'
       collateral_token: sUSDe
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x9d39a5de30e57443bff2a8307a4256c8797a3497'
+      defillama_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
     - id: '0xed808d36371491748eaa28b16533cafc270e705139e3ff807ea17ce60d6938c9'
       loan_token: frxUSD
+      loan_token_address: '0xcacd6fd266af91b8aed52accc382b4e165586e29'
       collateral_token: PT-savUSD-14MAY2026
       loan_decimals: 18
+      collateral_decimals: 18
+      collateral_token_address: '0x606b5c773dc4d6e625c411cf60565f8c30c467d2'
     - id: '0xe07d416323a1afbfe0bf2fe27ffb549ff565cf5c86d21b79fc60664038e597c9'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: savUSD
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0xb8d89678e75a973e74698c976716308abb8a46a4'
     - id: '0xc978f01522ff64adafd91856065d602c56e326a0368b895bd9244d5998e60076'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: PT-savUSD-14MAY2026
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x606b5c773dc4d6e625c411cf60565f8c30c467d2'
     - id: '0xbe29c9313655657b82c2e4e1e0eddb2fb581faf74a98eb6d3b7592ab78b26e86'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: USDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
     - id: '0xa2b4219c16c5430610bd10ed01cb3b852bad64e933d560a181d216bad9f3dc4d'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: USDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
     - id: '0x9c77e1b1d7ecc1de0b1f52c0a0ffe39d62edec877bdf87d8f324e1ff0c47f841'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: savUSD
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0xb8d89678e75a973e74698c976716308abb8a46a4'
     - id: '0x7e79c25831c97175922df132d09b02f93103a2306b1d71e57a7714ddd4c15d13'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: USDC
       loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
     - id: '0x7e32fa74340bd1ae6623618b76ef6c4d9023dae1fa16fe9783f6285e7215c110'
       loan_token: PYUSD
+      loan_token_address: '0x6c3ea9036406852006290770bedfcaba0e23a0e8'
       collateral_token: USDe
       loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x4c9edd5852cd905f086c759e8383e09bff1e68b3'
     - id: '0x704e020b95cbf452e7a30545d5f72a241c4238eebf9d1c67657fdd4a488581e0'
       loan_token: USDC
-      collateral_token: WBTC
-      loan_decimals: 6
-    - id: '0x66c19b7c49ce674e964eb917d117d987b693f508f2c1e3f71ac914454ed42e13'
-      loan_token: WETH
-      collateral_token: savETH
-      loan_decimals: 18
-    - id: '0xd98cd88ae5b336086b39fb1d62ba6171282e946105b010143f0e89f8fe7cff36'
-      loan_token: WETH
-      collateral_token: savETH
-      loan_decimals: 18
-    - id: '0x6b50b52c8221565d68441a2e5daa3fce8077cdf2e34ff69ef9716c22b4a8b138'
-      loan_token: USDC
-      collateral_token: USDC
-      loan_decimals: 6
-    - id: '0x6a8f296524b7f300b56e3653bbfc0ce4dd0dff225f1d5ec09c4fd190886ae53e'
-      loan_token: frxUSD
-      collateral_token: PT-avUSD-14MAY2026
-      loan_decimals: 18
-    - id: '0x3ba1ed5d949901d4fa4e53d9c02f7dc6d4eca723a21990bb7316430f17ef356a'
-      loan_token: USDC
-      collateral_token: PT-savUSD-14MAY2026
-      loan_decimals: 6
-    - id: '0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49'
-      loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: WBTC
       loan_decimals: 6
       collateral_decimals: 8
+      collateral_token_address: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599'
+    - id: '0x66c19b7c49ce674e964eb917d117d987b693f508f2c1e3f71ac914454ed42e13'
+      loan_token: WETH
+      loan_token_address: '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2'
+      collateral_token: savETH
+      loan_decimals: 18
+      collateral_decimals: 18
+      collateral_token_address: '0xda06ee2dacf9245aa80072a4407debdea0d7e341'
+    - id: '0xd98cd88ae5b336086b39fb1d62ba6171282e946105b010143f0e89f8fe7cff36'
+      loan_token: WETH
+      loan_token_address: '0xC02aaA39b223FE8D0A0E5C4F27eAD9083C756Cc2'
+      collateral_token: savETH
+      loan_decimals: 18
+      collateral_decimals: 18
+      collateral_token_address: '0xda06ee2dacf9245aa80072a4407debdea0d7e341'
+    - id: '0x6b50b52c8221565d68441a2e5daa3fce8077cdf2e34ff69ef9716c22b4a8b138'
+      loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      collateral_token: USDC
+      loan_decimals: 6
+      collateral_decimals: 6
+      collateral_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+    - id: '0x6a8f296524b7f300b56e3653bbfc0ce4dd0dff225f1d5ec09c4fd190886ae53e'
+      loan_token: frxUSD
+      loan_token_address: '0xcacd6fd266af91b8aed52accc382b4e165586e29'
+      collateral_token: PT-avUSD-14MAY2026
+      loan_decimals: 18
+      collateral_decimals: 18
+      collateral_token_address: '0xcc16cd49194e7aa3dca780c742580e2f9b418874'
+    - id: '0x3ba1ed5d949901d4fa4e53d9c02f7dc6d4eca723a21990bb7316430f17ef356a'
+      loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      collateral_token: PT-savUSD-14MAY2026
+      loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x606b5c773dc4d6e625c411cf60565f8c30c467d2'
+    - id: '0x3a85e619751152991742810df6ec69ce473daef99e28a64ab2340d7b7ccfee49'
+      loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
+      collateral_token: WBTC
+      loan_decimals: 6
+      collateral_decimals: 8
+      collateral_token_address: '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599'
     - id: '0x0a834fe24f42cf9cbf0644926c5637a9da42dbfae8c4c4ca0c2f2d9c712896d3'
       loan_token: USDC
+      loan_token_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       collateral_token: wbravUSDC
       loan_decimals: 6
       collateral_decimals: 6
+      collateral_token_address: '0x7309e1e2e74af170c69bde8fcb30397f8697d5ff'
     - id: '0x1036170c5ebeaf73da6b26e56a47a2a878ab65a06bbdd82ba490a74fc4f7063f'
       loan_token: frxUSD
+      loan_token_address: '0xcacd6fd266af91b8aed52accc382b4e165586e29'
       collateral_token: savUSD
       loan_decimals: 18
+      collateral_decimals: 18
+      collateral_token_address: '0xb8d89678e75a973e74698c976716308abb8a46a4'
     vaults:
     - address: '0x951a9f4A2cE19B9DeA6B37e691d076A345b6c0F8'
       note: MetaMorpho vault
       asset_address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'
       asset_symbol: USDC
       asset_decimals: 6
+      chain_id: 1
+      apy_source: morpho_api
+      apy_lookback: SIX_HOURS
 euler_v2:
   avalanche:
     wallets:

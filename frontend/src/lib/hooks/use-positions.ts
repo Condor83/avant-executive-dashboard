@@ -6,7 +6,7 @@ import type { PositionFilters } from "../types";
 
 export function usePositions(filters: PositionFilters = {}) {
   return useQuery({
-    queryKey: ["positions", filters],
+    queryKey: ["portfolio-positions", filters],
     queryFn: () => fetchPositions(filters),
   });
 }
