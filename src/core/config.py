@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
@@ -206,8 +207,21 @@ class StakedaoVault(ConfigModel):
     asset_address: str
     asset_decimals: int = Field(ge=0, le=36)
     underlyings: list[StakedaoUnderlyingToken]
+    apy_source: Literal["fixed_apy_override"] | None = None
+    fixed_apy: Decimal | None = Field(default=None, ge=0, le=10)
+    review_after: date | None = None
     include_in_yield: bool = False
     capital_bucket: str = "pending_deployment"
+
+    @model_validator(mode="after")
+    def validate_fixed_apy_override(self) -> StakedaoVault:
+        if self.apy_source == "fixed_apy_override" and self.fixed_apy is None:
+            raise ValueError("stakedao fixed_apy_override requires fixed_apy")
+        if self.fixed_apy is not None and self.apy_source != "fixed_apy_override":
+            raise ValueError("stakedao fixed_apy requires apy_source=fixed_apy_override")
+        if self.review_after is not None and self.fixed_apy is None:
+            raise ValueError("stakedao review_after requires fixed_apy")
+        return self
 
 
 class StakedaoChainConfig(ConfigModel):

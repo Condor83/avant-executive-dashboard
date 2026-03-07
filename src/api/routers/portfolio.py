@@ -332,6 +332,32 @@ def _synthetic_zest_position_key(row: Any) -> str:
     return f"paired-zest:{row.protocol_code}:{row.chain_code}:{row.wallet_address}:{product}"
 
 
+def _stakedao_vault_address(position_key: str) -> str | None:
+    parts = position_key.split(":", 4)
+    if len(parts) != 5 or parts[0] != "stakedao":
+        return None
+    return parts[3]
+
+
+def _stakedao_bucket_key(row: Any) -> tuple[str, str | None, str, str, str] | None:
+    vault_address = _stakedao_vault_address(row.position_key)
+    if vault_address is None:
+        return None
+    return (
+        row.wallet_address,
+        row.product_code,
+        row.protocol_code,
+        row.chain_code,
+        vault_address,
+    )
+
+
+def _synthetic_stakedao_position_key(row: Any, *, vault_address: str) -> str:
+    return (
+        f"curated-vault:{row.protocol_code}:{row.chain_code}:{row.wallet_address}:{vault_address}"
+    )
+
+
 def _is_split_position_row(row: Any) -> bool:
     return (row.supply_usd > ZERO and row.borrow_usd <= ZERO) or (
         row.supply_usd <= ZERO and row.borrow_usd > ZERO
@@ -370,6 +396,14 @@ def _is_pairable_zest_bucket(rows: list[Any]) -> bool:
     return bool(supply_rows and borrow_rows)
 
 
+def _is_groupable_stakedao_bucket(rows: list[Any]) -> bool:
+    if len(rows) <= 1 or any(row.protocol_code != "stakedao" for row in rows):
+        return False
+    if any(row.market_kind != "vault_underlying" for row in rows):
+        return False
+    return all(row.supply_usd > ZERO and row.borrow_usd <= ZERO for row in rows)
+
+
 def _singleton_position(row: Any) -> _PositionAggregate:
     supply_legs = (_build_supply_leg(row),)
     borrow_leg = _build_borrow_leg(row)
@@ -380,7 +414,7 @@ def _singleton_position(row: Any) -> _PositionAggregate:
         protocol_code=row.protocol_code,
         chain_code=row.chain_code,
     )
-    position_kind = "Curated Vault" if row.market_kind == "vault" else "Lend"
+    position_kind = "Curated Vault" if row.market_kind in {"vault", "vault_underlying"} else "Lend"
     if borrow_legs or row.health_factor is not None:
         position_kind = "Carry"
     return _PositionAggregate(
@@ -605,6 +639,67 @@ def _paired_zest_position(rows: list[Any], avg_equity: dict[str, Decimal]) -> _P
     )
 
 
+def _curated_vault_position(
+    rows: list[Any],
+    avg_equity: dict[str, Decimal],
+    *,
+    vault_address: str,
+) -> _PositionAggregate:
+    supply_rows = sorted(
+        (row for row in rows if row.supply_usd > ZERO),
+        key=lambda row: (row.supply_usd, row.position_key),
+        reverse=True,
+    )
+    supply_row = supply_rows[0]
+    supply_legs = tuple(_build_supply_leg(row) for row in supply_rows)
+    display_name = _display_name(
+        supply_legs=supply_legs,
+        borrow_legs=(),
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+    )
+    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
+    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
+    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
+    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
+    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
+    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
+    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
+    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
+    total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
+    total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
+    return _PositionAggregate(
+        position_id=supply_row.position_id,
+        position_key=_synthetic_stakedao_position_key(supply_row, vault_address=vault_address),
+        display_name=display_name,
+        wallet_address=supply_row.wallet_address,
+        product_code=supply_row.product_code,
+        protocol_code=supply_row.protocol_code,
+        chain_code=supply_row.chain_code,
+        position_kind="Curated Vault",
+        market_exposure_slug=None,
+        supply_legs=supply_legs,
+        borrow_legs=(),
+        net_equity_usd=total_net_equity_usd,
+        leverage_ratio=leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd),
+        health_factor=None,
+        gross_yield_daily_usd=gross_yield_daily_usd,
+        net_yield_daily_usd=net_yield_daily_usd,
+        gross_yield_mtd_usd=gross_yield_mtd_usd,
+        net_yield_mtd_usd=net_yield_mtd_usd,
+        strategy_fee_daily_usd=strategy_fee_daily_usd,
+        avant_gop_daily_usd=avant_gop_daily_usd,
+        strategy_fee_mtd_usd=strategy_fee_mtd_usd,
+        avant_gop_mtd_usd=avant_gop_mtd_usd,
+        gross_roe=(
+            gross_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None
+        ),
+        net_roe=net_yield_daily_usd / total_avg_equity_usd if total_avg_equity_usd > ZERO else None,
+        member_position_keys=tuple(sorted(row.position_key for row in rows)),
+    )
+
+
 def _sort_value(position: _PositionAggregate, sort_by: str) -> Decimal | None:
     if sort_by == "supply_usd":
         return _total_supply_usd(position.supply_legs)
@@ -641,6 +736,7 @@ def _group_positions(
     reserve_buckets: dict[tuple[str, str | None, str, str], list[Any]] = {}
     dolomite_buckets: dict[tuple[str, str | None, str, str, str], list[Any]] = {}
     zest_buckets: dict[tuple[str, str | None, str, str], list[Any]] = {}
+    stakedao_buckets: dict[tuple[str, str | None, str, str, str], list[Any]] = {}
     for row in rows:
         if row.market_kind == "reserve" and _is_split_position_row(row):
             reserve_buckets.setdefault(_reserve_bucket_key(row), []).append(row)
@@ -650,6 +746,9 @@ def _group_positions(
         zest_bucket = _zest_bucket_key(row)
         if zest_bucket is not None:
             zest_buckets.setdefault(zest_bucket, []).append(row)
+        stakedao_bucket = _stakedao_bucket_key(row)
+        if stakedao_bucket is not None:
+            stakedao_buckets.setdefault(stakedao_bucket, []).append(row)
 
     consumed: set[str] = set()
     grouped: list[_PositionAggregate] = []
@@ -669,6 +768,13 @@ def _group_positions(
         if not _is_pairable_zest_bucket(bucket_rows):
             continue
         grouped.append(_paired_zest_position(bucket_rows, avg_equity))
+        consumed.update(row.position_key for row in bucket_rows)
+    for stakedao_bucket, bucket_rows in stakedao_buckets.items():
+        if not _is_groupable_stakedao_bucket(bucket_rows):
+            continue
+        grouped.append(
+            _curated_vault_position(bucket_rows, avg_equity, vault_address=stakedao_bucket[-1])
+        )
         consumed.update(row.position_key for row in bucket_rows)
 
     for row in rows:

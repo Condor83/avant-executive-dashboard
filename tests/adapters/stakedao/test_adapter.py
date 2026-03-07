@@ -53,7 +53,38 @@ class _StubStakedaoRpcClient:
         raise AssertionError(index)
 
 
-def _config() -> MarketsConfig:
+def _config(
+    *,
+    apy_source: str | None = "fixed_apy_override",
+    fixed_apy: str | None = "0.10",
+    review_after: str | None = "2026-05-31",
+) -> MarketsConfig:
+    vault: dict[str, object] = {
+        "vault_address": "0xad1dcc6ca212673d2dfd403a905a1ec57666d910",
+        "asset_address": "0x2e1776968ec75bfd13dbc5b94ae57034d7e85fb9",
+        "asset_decimals": 18,
+        "underlyings": [
+            {
+                "symbol": "USDC",
+                "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                "decimals": 6,
+                "pool_index": 0,
+            },
+            {
+                "symbol": "savUSD",
+                "address": "0xb8D89678E75a973E74698c976716308abB8a46A4",
+                "decimals": 18,
+                "pool_index": 1,
+            },
+        ],
+    }
+    if apy_source is not None:
+        vault["apy_source"] = apy_source
+    if fixed_apy is not None:
+        vault["fixed_apy"] = fixed_apy
+    if review_after is not None:
+        vault["review_after"] = review_after
+
     return MarketsConfig.model_validate(
         {
             "aave_v3": {},
@@ -68,27 +99,7 @@ def _config() -> MarketsConfig:
             "stakedao": {
                 "ethereum": {
                     "wallets": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
-                    "vaults": [
-                        {
-                            "vault_address": "0xad1dcc6ca212673d2dfd403a905a1ec57666d910",
-                            "asset_address": "0x2e1776968ec75bfd13dbc5b94ae57034d7e85fb9",
-                            "asset_decimals": 18,
-                            "underlyings": [
-                                {
-                                    "symbol": "USDC",
-                                    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-                                    "decimals": 6,
-                                    "pool_index": 0,
-                                },
-                                {
-                                    "symbol": "savUSD",
-                                    "address": "0xb8D89678E75a973E74698c976716308abB8a46A4",
-                                    "decimals": 18,
-                                    "pool_index": 1,
-                                },
-                            ],
-                        }
-                    ],
+                    "vaults": [vault],
                 }
             },
         }
@@ -124,3 +135,43 @@ def test_stakedao_adapter_decomposes_vault_balance_into_underlyings() -> None:
     assert savusd_market in by_market
     assert by_market[usdc_market].supplied_amount == Decimal("200000")
     assert by_market[savusd_market].supplied_amount == Decimal("300")
+    assert by_market[usdc_market].supply_apy == Decimal("0.10")
+    assert by_market[savusd_market].supply_apy == Decimal("0.10")
+
+
+def test_stakedao_adapter_emits_missing_apy_issue_when_override_is_absent() -> None:
+    adapter = StakedaoAdapter(
+        markets_config=_config(apy_source=None, fixed_apy=None, review_after=None),
+        rpc_client=_StubStakedaoRpcClient(),
+    )
+
+    positions, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 4, 0, 0, tzinfo=UTC),
+        prices_by_token={
+            ("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"): Decimal("1"),
+            ("ethereum", "0xb8d89678e75a973e74698c976716308abb8a46a4"): Decimal("1"),
+        },
+    )
+
+    assert len(positions) == 2
+    assert {position.supply_apy for position in positions} == {Decimal("0")}
+    assert [issue.error_type for issue in issues] == ["stakedao_apy_missing"]
+
+
+def test_stakedao_adapter_emits_review_due_but_keeps_fixed_apy() -> None:
+    adapter = StakedaoAdapter(
+        markets_config=_config(review_after="2026-02-28"),
+        rpc_client=_StubStakedaoRpcClient(),
+    )
+
+    positions, issues = adapter.collect_positions(
+        as_of_ts_utc=datetime(2026, 3, 4, 0, 0, tzinfo=UTC),
+        prices_by_token={
+            ("ethereum", "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"): Decimal("1"),
+            ("ethereum", "0xb8d89678e75a973e74698c976716308abb8a46a4"): Decimal("1"),
+        },
+    )
+
+    assert len(positions) == 2
+    assert {position.supply_apy for position in positions} == {Decimal("0.10")}
+    assert [issue.error_type for issue in issues] == ["stakedao_apy_review_due"]

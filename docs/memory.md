@@ -109,6 +109,15 @@ When `avg_equity_usd <= 0`, ROE values are null.
 - Portfolio and yield analytics then use the collateral side as economic supply through the shared collateral-aware helpers.
 - `health_factor` should be a ratio derived from liquidation distance, not the raw Kamino `borrowLimit` USD field.
 
+### Stake DAO curated vault policy (current)
+
+- Stake DAO vault exposure is deployed strategy capital and should be included in Portfolio.
+- Canonical snapshots are still decomposed into underlying pool-token balances.
+- The served Portfolio view groups those underlying rows into one `Curated Vault` position per configured vault.
+- Current yield policy is a vault-level fixed APY override configured in `markets.yaml`.
+- The configured override is already APY, not APR.
+- If the configured review date has passed, the repo should emit a data-quality issue but continue using the override until it is updated.
+
 ## Fee waterfall (always the same)
 
 Fees are applied deterministically, even at wallet/position level:
@@ -162,5 +171,5 @@ Wallets are assigned to exactly one product+tranche via config (`config/wallet_p
 ## Special positions (do not confuse with strategy yield)
 
 - **Idle capital**: wallet balances not deployed into tracked strategies.
-- **Stability / buy wall ops** (for example Trader Joe LP, Etherex, some Stake DAO allocations): should be tagged as “ops” exposure.
+- **Stability / buy wall ops** (for example Trader Joe LP, Etherex): should be tagged as “ops” exposure.
   - In v1, do not include these in “strategy yield” unless explicitly modeled.

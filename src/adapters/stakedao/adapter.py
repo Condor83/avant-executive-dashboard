@@ -314,6 +314,43 @@ class StakedaoAdapter:
 
         return total_supply_raw, state
 
+    def _resolve_vault_apy(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        chain_code: str,
+        vault: StakedaoVault,
+    ) -> tuple[Decimal, list[DataQualityIssue]]:
+        vault_address = canonical_address(vault.vault_address)
+        issues: list[DataQualityIssue] = []
+        if vault.apy_source == "fixed_apy_override" and vault.fixed_apy is not None:
+            if vault.review_after is not None and as_of_ts_utc.date() > vault.review_after:
+                issues.append(
+                    self._issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        error_type="stakedao_apy_review_due",
+                        error_message="stakedao fixed APY override review date has passed",
+                        chain_code=chain_code,
+                        market_ref=vault_address,
+                        payload_json={
+                            "fixed_apy": str(vault.fixed_apy),
+                            "review_after": vault.review_after.isoformat(),
+                        },
+                    )
+                )
+            return vault.fixed_apy, issues
+
+        issues.append(
+            self._issue(
+                as_of_ts_utc=as_of_ts_utc,
+                error_type="stakedao_apy_missing",
+                error_message="no APY source configured for stakedao vault",
+                chain_code=chain_code,
+                market_ref=vault_address,
+            )
+        )
+        return Decimal("0"), issues
+
     def collect_positions(
         self,
         *,
@@ -339,6 +376,12 @@ class StakedaoAdapter:
 
             for vault in chain_config.vaults:
                 vault_address = canonical_address(vault.vault_address)
+                vault_apy, vault_issues = self._resolve_vault_apy(
+                    as_of_ts_utc=as_of_ts_utc,
+                    chain_code=chain_code,
+                    vault=vault,
+                )
+                issues.extend(vault_issues)
                 total_supply_raw, pool_state = self._load_pool_state(
                     as_of_ts_utc=as_of_ts_utc,
                     chain_code=chain_code,
@@ -438,7 +481,7 @@ class StakedaoAdapter:
                                 supplied_usd=supplied_usd,
                                 borrowed_amount=Decimal("0"),
                                 borrowed_usd=Decimal("0"),
-                                supply_apy=Decimal("0"),
+                                supply_apy=vault_apy,
                                 borrow_apy=Decimal("0"),
                                 reward_apy=Decimal("0"),
                                 equity_usd=supplied_usd,

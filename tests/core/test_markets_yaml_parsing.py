@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
-from core.config import load_markets_config
+import pytest
+
+from core.config import MarketsConfig, load_markets_config
 
 
 def test_markets_yaml_has_expected_protocol_keys() -> None:
@@ -126,6 +129,10 @@ def test_dolomite_weeth_market_uses_defillama_carry_fallback() -> None:
             assert stakedao_vault.vault_address
             assert stakedao_vault.asset_address
             assert stakedao_vault.asset_decimals >= 0
+            assert stakedao_vault.apy_source == "fixed_apy_override"
+            assert stakedao_vault.fixed_apy == Decimal("0.10")
+            assert stakedao_vault.review_after is not None
+            assert stakedao_vault.include_in_yield is True
             assert stakedao_vault.underlyings
             for underlying in stakedao_vault.underlyings:
                 assert underlying.symbol
@@ -172,3 +179,42 @@ def test_spark_weeth_market_uses_defillama_supply_fallback() -> None:
 
     assert target.asset == "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee"
     assert target.supply_apy_fallback_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"
+
+
+def test_stakedao_fixed_apy_override_requires_matching_source() -> None:
+    with pytest.raises(ValueError, match="fixed_apy requires apy_source"):
+        MarketsConfig.model_validate(
+            {
+                "aave_v3": {},
+                "spark": {},
+                "morpho": {},
+                "euler_v2": {},
+                "dolomite": {},
+                "kamino": {},
+                "zest": {},
+                "wallet_balances": {},
+                "traderjoe_lp": {},
+                "etherex": {},
+                "stakedao": {
+                    "ethereum": {
+                        "wallets": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                        "vaults": [
+                            {
+                                "vault_address": "0xad1dcc6ca212673d2dfd403a905a1ec57666d910",
+                                "asset_address": "0x2e1776968ec75bfd13dbc5b94ae57034d7e85fb9",
+                                "asset_decimals": 18,
+                                "fixed_apy": "0.10",
+                                "underlyings": [
+                                    {
+                                        "symbol": "USDC",
+                                        "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                                        "decimals": 6,
+                                        "pool_index": 0,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                },
+            }
+        )

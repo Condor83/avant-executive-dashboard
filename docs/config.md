@@ -205,11 +205,19 @@ Behavior:
     - `asset_address` (Curve LP)
     - `asset_decimals`
     - `underlyings` token list + `pool_index`
+    - optional fixed vault APY override:
+      - `apy_source` (`fixed_apy_override`)
+      - `fixed_apy` (already in APY units)
+      - `review_after` (optional review date)
     - `include_in_yield` (default `false`)
     - `capital_bucket` (default `pending_deployment`)
 
 Behavior:
 - Adapter decomposes vault share exposure into underlying pool token balances and writes supply-only rows per underlying token.
+- The served Portfolio view groups those per-underlying rows into one `Curated Vault` position per configured vault.
+- `stakedao` counts as deployed strategy capital for Portfolio inclusion.
+- The current configured Stake DAO vault also sets `include_in_yield: true`, so its fixed APY flows through `yield_daily` and Portfolio yield/ROE.
+- Current vault yield policy is a vault-level fixed APY override until a robust APR/APY source is wired for the exact configured vault.
 
 #### etherex
 - per chain:

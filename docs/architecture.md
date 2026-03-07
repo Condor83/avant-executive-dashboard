@@ -66,7 +66,9 @@ FastAPI -> Dashboard UI
 
 Notes:
 - `wallet_balances`, `traderjoe_lp`, `stakedao`, and `etherex` are position-only adapters.
-- Ops adapters (`traderjoe_lp`, `stakedao`, `etherex`) produce supply-side exposure snapshots and set APY fields to zero unless explicitly modeled in analytics policy.
+- Ops adapters (`traderjoe_lp`, `etherex`) produce supply-side exposure snapshots and set APY fields to zero unless explicitly modeled in analytics policy.
+- `stakedao` produces supply-side vault-underlying snapshots but is included in Portfolio as deployed strategy capital, grouped into a single `Curated Vault` row per configured vault.
+- Current Stake DAO yield is sourced from a vault-level fixed APY override, not from on-chain APR derivation.
 
 ## Data Quality Loop
 

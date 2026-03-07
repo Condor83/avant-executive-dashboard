@@ -84,6 +84,8 @@ def position_exposure_class(metadata_json: Any, protocol_code: str) -> str:
             return "lp"
         if raw in {"core_lending", "idle_cash", "ops", "other"}:
             return raw
+        if protocol_code == "stakedao":
+            return "core_lending"
         if metadata_json.get("include_in_yield") is False:
             return "other"
     if protocol_code in {"wallet_balances"}:

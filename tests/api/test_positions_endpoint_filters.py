@@ -1199,3 +1199,173 @@ def test_positions_current_groups_zest_multi_supply_carry_rows(
     assert row["position_kind"] == "Carry"
     assert [leg["symbol"] for leg in row["supply_legs"]] == ["sBTC", "aeUSDC"]
     assert [leg["symbol"] for leg in row["borrow_legs"]] == ["aeUSDC"]
+
+
+def test_positions_current_groups_stakedao_underlyings_into_curated_vault_row(
+    api_client: tuple[TestClient, SeedMetadata],
+    seeded_session: tuple[Session, SeedMetadata],
+) -> None:
+    client, meta = api_client
+    session, _ = seeded_session
+    wallet_address = "0xaa0d9205ae55dcf6321df019da9265b12ba41a7f"
+
+    chain_eth = session.scalar(select(Chain).where(Chain.chain_code == "ethereum"))
+    if chain_eth is None:
+        chain_eth = Chain(chain_code="ethereum")
+        session.add(chain_eth)
+        session.flush()
+    protocol = session.scalar(select(Protocol).where(Protocol.protocol_code == "stakedao"))
+    if protocol is None:
+        protocol = Protocol(protocol_code="stakedao")
+        session.add(protocol)
+        session.flush()
+    product = session.scalar(select(Product).where(Product.product_code == "stablecoin_senior"))
+    if product is None:
+        product = Product(product_code="stablecoin_senior")
+        session.add(product)
+        session.flush()
+    wallet = session.scalar(select(Wallet).where(Wallet.address == wallet_address))
+    if wallet is None:
+        wallet = Wallet(address=wallet_address, wallet_type="strategy")
+        session.add(wallet)
+        session.flush()
+
+    def _token(symbol: str, address: str, decimals: int) -> Token:
+        token = session.scalar(
+            select(Token).where(Token.chain_id == chain_eth.chain_id, Token.symbol == symbol)
+        )
+        if token is None:
+            token = Token(
+                chain_id=chain_eth.chain_id,
+                address_or_mint=address,
+                symbol=symbol,
+                decimals=decimals,
+            )
+            session.add(token)
+            session.flush()
+        return token
+
+    token_usdc = _token("USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48", 6)
+    token_savusd = _token("savUSD", "0xb8D89678E75a973E74698c976716308abB8a46A4", 18)
+
+    def _market(token: Token) -> Market:
+        native_market_key = (
+            f"0xad1dcc6ca212673d2dfd403a905a1ec57666d910:{token.address_or_mint.lower()}"
+        )
+        market = session.scalar(select(Market).where(Market.native_market_key == native_market_key))
+        if market is None:
+            market = Market(
+                chain_id=chain_eth.chain_id,
+                protocol_id=protocol.protocol_id,
+                native_market_key=native_market_key,
+                market_address=native_market_key,
+                market_kind="vault_underlying",
+                display_name=f"Structured {token.symbol}",
+                base_asset_token_id=token.token_id,
+            )
+            session.add(market)
+            session.flush()
+        return market
+
+    market_usdc = _market(token_usdc)
+    market_savusd = _market(token_savusd)
+    as_of_ts_utc = session.scalar(select(PortfolioPositionCurrent.as_of_ts_utc).limit(1))
+    assert as_of_ts_utc is not None
+
+    rows = [
+        {
+            "position_key": (
+                "stakedao:ethereum:"
+                f"{wallet_address}:"
+                "0xad1dcc6ca212673d2dfd403a905a1ec57666d910:"
+                "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+            ),
+            "market_id": market_usdc.market_id,
+            "supply_token_id": token_usdc.token_id,
+            "supply_amount": Decimal("513508.118589"),
+            "supply_usd": Decimal("513508.118589080781161246"),
+        },
+        {
+            "position_key": (
+                "stakedao:ethereum:"
+                f"{wallet_address}:"
+                "0xad1dcc6ca212673d2dfd403a905a1ec57666d910:"
+                "0xb8d89678e75a973e74698c976716308abb8a46a4"
+            ),
+            "market_id": market_savusd.market_id,
+            "supply_token_id": token_savusd.token_id,
+            "supply_amount": Decimal("474071.293750507199246758"),
+            "supply_usd": Decimal("474071.293750507199246758"),
+        },
+    ]
+
+    now = datetime.now(UTC)
+    positions: list[Position] = []
+    for row in rows:
+        position = Position(
+            position_key=row["position_key"],
+            wallet_id=wallet.wallet_id,
+            product_id=product.product_id,
+            protocol_id=protocol.protocol_id,
+            chain_id=chain_eth.chain_id,
+            market_id=row["market_id"],
+            exposure_class="core_lending",
+            status="open",
+            display_name="Stake DAO underlying",
+            opened_at_utc=now,
+            last_seen_at_utc=now,
+        )
+        positions.append(position)
+        session.add(position)
+    session.flush()
+
+    for position, row in zip(positions, rows, strict=True):
+        session.add(
+            PortfolioPositionCurrent(
+                position_id=position.position_id,
+                business_date=meta.business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                product_id=product.product_id,
+                protocol_id=protocol.protocol_id,
+                chain_id=chain_eth.chain_id,
+                market_exposure_id=None,
+                scope_segment="strategy_only",
+                supply_token_id=row["supply_token_id"],
+                borrow_token_id=None,
+                supply_amount=row["supply_amount"],
+                supply_usd=row["supply_usd"],
+                supply_apy=Decimal("0"),
+                reward_apy=Decimal("0"),
+                borrow_amount=Decimal("0"),
+                borrow_usd=Decimal("0"),
+                borrow_apy=Decimal("0"),
+                net_equity_usd=row["supply_usd"],
+                leverage_ratio=Decimal("1"),
+                health_factor=None,
+                gross_yield_daily_usd=Decimal("0"),
+                net_yield_daily_usd=Decimal("0"),
+                gross_yield_mtd_usd=Decimal("0"),
+                net_yield_mtd_usd=Decimal("0"),
+                strategy_fee_daily_usd=Decimal("0"),
+                avant_gop_daily_usd=Decimal("0"),
+                strategy_fee_mtd_usd=Decimal("0"),
+                avant_gop_mtd_usd=Decimal("0"),
+                gross_roe=None,
+                net_roe=None,
+            )
+        )
+    session.commit()
+
+    data = client.get(
+        f"/portfolio/positions/current?wallet_address={wallet_address}&protocol_code=stakedao"
+    ).json()
+
+    assert data["total_count"] == 1
+    row = data["positions"][0]
+    assert row["position_key"].startswith("curated-vault:stakedao:ethereum:")
+    assert row["display_name"] == "USDC + savUSD Stakedao-Ethereum"
+    assert row["position_kind"] == "Curated Vault"
+    assert [leg["symbol"] for leg in row["supply_legs"]] == ["USDC", "savUSD"]
+    assert row["borrow_legs"] == []
+    assert Decimal(row["net_equity_usd"]) == Decimal("987579.412339587980408004")

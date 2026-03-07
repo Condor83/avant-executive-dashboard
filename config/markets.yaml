@@ -564,7 +564,10 @@ stakedao:
       - vault_address: '0xad1dcc6ca212673d2dfd403a905a1ec57666d910'
         asset_address: '0x2e1776968ec75bfd13dbc5b94ae57034d7e85fb9'
         asset_decimals: 18
-        include_in_yield: false
+        apy_source: fixed_apy_override
+        fixed_apy: 0.10
+        review_after: '2026-05-31'
+        include_in_yield: true
         capital_bucket: strategy_deployed
         underlyings:
           - symbol: USDC
