@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from core.config import MarketsConfig, load_markets_config
+from core.config import (
+    MarketsConfig,
+    canonical_address,
+    load_consumer_markets_config,
+    load_markets_config,
+)
 
 
 def test_markets_yaml_has_expected_protocol_keys() -> None:
@@ -179,6 +184,39 @@ def test_spark_weeth_market_uses_defillama_supply_fallback() -> None:
 
     assert target.asset == "0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee"
     assert target.supply_apy_fallback_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"
+
+
+def test_euler_avalanche_btcb_vault_is_configured_for_monitored_pair() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    target = next(
+        vault
+        for vault in markets.euler_v2["avalanche"].vaults
+        if canonical_address(vault.address) == "0xf983f92bd962a94eac85a8c58237c1cc1cdfbbba"
+    )
+
+    assert target.symbol == "eBTC.b-33"
+    assert target.asset_symbol == "BTC.b"
+    assert target.asset_address == "0x152b9d0FdC40C096757F570A51E494bd4b943E50"
+    assert target.asset_decimals == 8
+    assert target.debt_supported is True
+
+
+def test_euler_consumer_markets_reference_configured_native_vaults() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+    consumer = load_consumer_markets_config(Path("config/consumer_markets.yaml"))
+
+    native_addresses = {
+        (chain_code, canonical_address(vault.address))
+        for chain_code, chain in markets.euler_v2.items()
+        for vault in chain.vaults
+    }
+
+    for market in consumer.markets:
+        if market.protocol != "euler_v2":
+            continue
+        for part in canonical_address(market.market_address).split("/"):
+            assert (market.chain, part) in native_addresses
 
 
 def test_stakedao_fixed_apy_override_requires_matching_source() -> None:

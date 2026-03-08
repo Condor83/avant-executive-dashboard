@@ -42,6 +42,14 @@ def _token(*, symbol: str, chain_id: int, address: str) -> Token:
     )
 
 
+class _StubAvantYieldOracle:
+    def __init__(self, mapping: dict[str, Decimal]) -> None:
+        self.mapping = {key.upper(): value for key, value in mapping.items()}
+
+    def get_token_apy(self, symbol: str) -> Decimal:
+        return self.mapping[symbol.upper()]
+
+
 def test_market_views_persist_large_utilization_ratios(postgres_database_url: str) -> None:
     _migrate_to_head(postgres_database_url)
     engine = create_engine(postgres_database_url)
@@ -385,7 +393,7 @@ def test_market_views_map_monitored_consumer_market_to_native_components(
                     total_supply_usd=Decimal("900"),
                     total_borrow_usd=Decimal("250"),
                     utilization=Decimal("0.2777777778"),
-                    supply_apy=Decimal("0.0745"),
+                    supply_apy=Decimal("0"),
                     borrow_apy=Decimal("0.09"),
                     available_liquidity_usd=Decimal("650"),
                     max_ltv=None,
@@ -435,9 +443,11 @@ def test_market_views_map_monitored_consumer_market_to_native_components(
         session.commit()
 
     with Session(engine) as session:
-        summary = MarketViewEngine(session, thresholds=None).compute_daily(
-            business_date=business_date
-        )
+        summary = MarketViewEngine(
+            session,
+            thresholds=None,
+            avant_yield_oracle=_StubAvantYieldOracle({"savUSD": Decimal("0.0745")}),
+        ).compute_daily(business_date=business_date)
         session.commit()
 
         assert summary.exposure_rows_written == 1

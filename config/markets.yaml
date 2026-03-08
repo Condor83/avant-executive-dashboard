@@ -392,6 +392,11 @@ euler_v2:
       asset_symbol: USDC
       asset_decimals: 6
       debt_supported: false
+    - address: '0xF983f92bd962A94EAc85a8c58237C1CC1cDfBBBa'
+      symbol: eBTC.b-33
+      asset_address: '0x152b9d0FdC40C096757F570A51E494bd4b943E50'
+      asset_symbol: BTC.b
+      asset_decimals: 8
   bera:
     wallets:
       - '0xC1d023141ad6935F81E5286E577768b75C9Ff8EB'

@@ -1047,16 +1047,24 @@ def compute_markets(
     except ValueError as exc:
         raise typer.BadParameter(str(exc), param_hint="--thresholds-path") from exc
 
+    settings = get_settings()
+    avant_yield_oracle = AvantYieldOracle(
+        base_url=settings.avant_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
     session = Session(get_engine())
     try:
         summary = MarketEngine(session).compute_daily(business_date=parsed_date)
-        market_view_summary = MarketViewEngine(session, thresholds=thresholds).compute_daily(
-            business_date=parsed_date
-        )
+        market_view_summary = MarketViewEngine(
+            session,
+            thresholds=thresholds,
+            avant_yield_oracle=avant_yield_oracle,
+        ).compute_daily(business_date=parsed_date)
         executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
         session.commit()
     finally:
         session.close()
+        avant_yield_oracle.close()
 
     typer.echo(
         "compute markets complete"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -27,7 +27,9 @@ from core.db.models import (
     MarketHealthDaily,
     MarketOverviewDaily,
     MarketSummaryDaily,
+    Token,
 )
+from core.yields import AVANT_APY_ENDPOINTS
 
 ZERO = Decimal("0")
 SEVERITY_RANK = {"normal": 0, "watch": 1, "elevated": 2, "critical": 3}
@@ -42,12 +44,24 @@ class MarketViewBuildSummary:
     summary_rows_written: int
 
 
+class _CollateralYieldOracle(Protocol):
+    def get_token_apy(self, symbol: str) -> Decimal:
+        """Return token APY in 0.0-1.0 units."""
+
+
 class MarketViewEngine:
     """Build persisted served markets views from market snapshots, risk, and portfolio usage."""
 
-    def __init__(self, session: Session, *, thresholds: RiskThresholdsConfig | None = None) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        thresholds: RiskThresholdsConfig | None = None,
+        avant_yield_oracle: _CollateralYieldOracle | None = None,
+    ) -> None:
         self.session = session
         self.thresholds = thresholds
+        self.avant_yield_oracle = avant_yield_oracle
 
     def compute_daily(self, *, business_date: date) -> MarketViewBuildSummary:
         ensure_market_exposures(self.session)
@@ -195,7 +209,11 @@ class MarketViewEngine:
             .where(MarketHealthDaily.business_date == business_date)
         ).all()
         exposure_rows = self.session.execute(
-            select(MarketExposure.market_exposure_id, MarketExposure.exposure_slug)
+            select(
+                MarketExposure.market_exposure_id,
+                MarketExposure.exposure_slug,
+                Token.symbol,
+            ).outerjoin(Token, Token.token_id == MarketExposure.supply_token_id)
         ).all()
         usage_by_slug = build_market_exposure_usage_metrics(self.session)
         usage_map = {
@@ -203,7 +221,11 @@ class MarketViewEngine:
                 str(exposure_slug),
                 (False, 0, ZERO, None),
             )
-            for market_exposure_id, exposure_slug in exposure_rows
+            for market_exposure_id, exposure_slug, _supply_symbol in exposure_rows
+        }
+        supply_symbol_by_exposure = {
+            int(market_exposure_id): str(supply_symbol) if supply_symbol is not None else None
+            for market_exposure_id, _exposure_slug, supply_symbol in exposure_rows
         }
 
         grouped: dict[int, list] = {}
@@ -264,6 +286,11 @@ class MarketViewEngine:
             )
             if collateral_yield_apy is not None:
                 weighted_supply_apy = collateral_yield_apy
+            elif strategy_position_count == 0:
+                weighted_supply_apy = self._fallback_monitored_collateral_yield(
+                    supply_symbol_by_exposure.get(exposure_id),
+                    weighted_supply_apy,
+                )
             customer_position_count = 1 if monitored else 0
             scope_segment = "strategy_only"
             if monitored and strategy_position_count:
@@ -294,6 +321,21 @@ class MarketViewEngine:
                 }
             )
         return output
+
+    def _fallback_monitored_collateral_yield(
+        self,
+        supply_symbol: str | None,
+        current_weighted_supply_apy: Decimal,
+    ) -> Decimal:
+        if supply_symbol is None or self.avant_yield_oracle is None:
+            return current_weighted_supply_apy
+        normalized = supply_symbol.strip().upper()
+        if normalized not in AVANT_APY_ENDPOINTS:
+            return current_weighted_supply_apy
+        try:
+            return self.avant_yield_oracle.get_token_apy(supply_symbol)
+        except Exception:
+            return current_weighted_supply_apy
 
     def _replace_exposure_rows(self, *, business_date: date, rows: list[dict[str, object]]) -> None:
         self.session.execute(
