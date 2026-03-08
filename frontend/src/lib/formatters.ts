@@ -22,6 +22,9 @@ export function formatUSDCompact(value: string | null | undefined): string {
   if (n === null) return FALLBACK;
   const sign = n < 0 ? "-" : "";
   const abs = Math.abs(n);
+  if (abs >= 1_000_000_000) {
+    return `${sign}$${(abs / 1_000_000_000).toFixed(2)}B`;
+  }
   if (abs >= 1_000_000) {
     return `${sign}$${(abs / 1_000_000).toFixed(2)}M`;
   }

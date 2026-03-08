@@ -470,6 +470,13 @@ class SparkAdapter:
                     "supply_apy_fallback_pool_id": reserve_runtime.supply_apy_fallback_pool_id,
                     "includes_rewards": "unknown",
                 }
+                optimal_usage_ratio = self.rpc_client.get_reserve_optimal_usage_ratio(
+                    chain_code,
+                    chain_config.pool_data_provider,
+                    market_ref,
+                )
+                if optimal_usage_ratio is not None:
+                    irm_params_json["optimal_usage_ratio"] = str(optimal_usage_ratio)
 
                 snapshots.append(
                     MarketSnapshotInput(

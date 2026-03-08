@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -12,17 +13,17 @@ from sqlalchemy.orm import Session
 
 from analytics.alerts import AlertEngine
 from analytics.market_engine import MarketEngine
-from analytics.market_exposures import ensure_market_exposures
+from analytics.market_exposures import build_market_exposure_usage, ensure_market_exposures
 from analytics.risk_engine import RiskComputationResult, RiskEngine
 from core.config import RiskThresholdsConfig
 from core.db.models import (
     Alert,
+    MarketExposure,
     MarketExposureComponent,
     MarketExposureDaily,
     MarketHealthDaily,
     MarketOverviewDaily,
     MarketSummaryDaily,
-    PortfolioPositionDaily,
 )
 
 ZERO = Decimal("0")
@@ -103,6 +104,14 @@ class MarketViewEngine:
             return "watch"
         return "normal"
 
+    @staticmethod
+    def _watch_status(*, risk_status: str, active_alert_count: int) -> str:
+        if active_alert_count > 0:
+            return "alerting"
+        if risk_status != "normal":
+            return "watch"
+        return "normal"
+
     def _build_market_health_rows(
         self,
         *,
@@ -165,10 +174,12 @@ class MarketViewEngine:
         health_rows = self.session.execute(
             select(
                 MarketExposureComponent.market_exposure_id,
+                MarketExposureComponent.component_role,
                 MarketHealthDaily.total_supply_usd,
                 MarketHealthDaily.total_borrow_usd,
                 MarketHealthDaily.supply_apy,
                 MarketHealthDaily.borrow_apy,
+                MarketHealthDaily.utilization,
                 MarketHealthDaily.available_liquidity_usd,
                 MarketHealthDaily.distance_to_kink,
                 MarketHealthDaily.active_alert_count,
@@ -180,23 +191,14 @@ class MarketViewEngine:
             )
             .where(MarketHealthDaily.business_date == business_date)
         ).all()
-        usage_rows = self.session.execute(
-            select(
-                PortfolioPositionDaily.market_exposure_id,
-                PortfolioPositionDaily.scope_segment,
-                func.count(),
-            )
-            .where(
-                PortfolioPositionDaily.business_date == business_date,
-                PortfolioPositionDaily.market_exposure_id.is_not(None),
-            )
-            .group_by(
-                PortfolioPositionDaily.market_exposure_id, PortfolioPositionDaily.scope_segment
-            )
+        exposure_rows = self.session.execute(
+            select(MarketExposure.market_exposure_id, MarketExposure.exposure_slug)
         ).all()
-        usage_map: dict[int, dict[str, int]] = {}
-        for exposure_id, scope_segment, count in usage_rows:
-            usage_map.setdefault(int(exposure_id), {})[str(scope_segment)] = int(count)
+        usage_by_slug = build_market_exposure_usage(self.session)
+        usage_map = {
+            int(market_exposure_id): usage_by_slug.get(str(exposure_slug), (False, 0))
+            for market_exposure_id, exposure_slug in exposure_rows
+        }
 
         grouped: dict[int, list] = {}
         for row in health_rows:
@@ -204,41 +206,62 @@ class MarketViewEngine:
 
         output: list[dict[str, object]] = []
         for exposure_id, rows in grouped.items():
-            total_supply_usd = sum((row.total_supply_usd for row in rows), ZERO)
-            total_borrow_usd = sum((row.total_borrow_usd for row in rows), ZERO)
-            total_available_liquidity_usd = sum((row.available_liquidity_usd for row in rows), ZERO)
+            primary_rows = [row for row in rows if row.component_role == "primary_market"]
+            supply_rows = [
+                row for row in rows if row.component_role in {"primary_market", "supply_market"}
+            ]
+            borrow_rows = [
+                row for row in rows if row.component_role in {"primary_market", "borrow_market"}
+            ]
+            liquidity_rows = borrow_rows or primary_rows
+
+            total_supply_usd = sum((row.total_supply_usd for row in supply_rows), ZERO)
+            total_borrow_usd = sum((row.total_borrow_usd for row in borrow_rows), ZERO)
+            total_available_liquidity_usd = sum(
+                (row.available_liquidity_usd for row in liquidity_rows),
+                ZERO,
+            )
             weighted_supply_apy = (
-                sum((row.supply_apy * row.total_supply_usd for row in rows), ZERO)
+                sum((row.supply_apy * row.total_supply_usd for row in supply_rows), ZERO)
                 / total_supply_usd
                 if total_supply_usd > ZERO
                 else ZERO
             )
             weighted_borrow_apy = (
-                sum((row.borrow_apy * row.total_borrow_usd for row in rows), ZERO)
+                sum((row.borrow_apy * row.total_borrow_usd for row in borrow_rows), ZERO)
                 / total_borrow_usd
                 if total_borrow_usd > ZERO
                 else ZERO
             )
-            utilization = total_borrow_usd / total_supply_usd if total_supply_usd > ZERO else ZERO
+            if borrow_rows and not primary_rows:
+                utilization = (
+                    sum((row.utilization * row.total_borrow_usd for row in borrow_rows), ZERO)
+                    / total_borrow_usd
+                    if total_borrow_usd > ZERO
+                    else ZERO
+                )
+            else:
+                utilization = (
+                    total_borrow_usd / total_supply_usd if total_supply_usd > ZERO else ZERO
+                )
             distance_values = [
-                row.distance_to_kink for row in rows if row.distance_to_kink is not None
+                row.distance_to_kink for row in liquidity_rows if row.distance_to_kink is not None
             ]
             distance_to_kink = min(distance_values) if distance_values else None
             active_alert_count = sum((int(row.active_alert_count) for row in rows), 0)
             risk_status = max(
                 (str(row.risk_status) for row in rows), key=lambda value: SEVERITY_RANK[value]
             )
-            strategy_position_count = usage_map.get(exposure_id, {}).get("strategy_only", 0)
-            customer_position_count = usage_map.get(exposure_id, {}).get("customer_only", 0)
+            monitored, strategy_position_count = usage_map.get(exposure_id, (False, 0))
+            customer_position_count = 1 if monitored else 0
             scope_segment = "strategy_only"
-            if strategy_position_count and customer_position_count:
+            if monitored and strategy_position_count:
                 scope_segment = "overlap"
-            elif customer_position_count and not strategy_position_count:
+            elif monitored and not strategy_position_count:
                 scope_segment = "customer_only"
-            watch_status = (
-                "alerting"
-                if active_alert_count > 0
-                else ("watch" if risk_status != "normal" else "normal")
+            watch_status = self._watch_status(
+                risk_status=risk_status,
+                active_alert_count=active_alert_count,
             )
             output.append(
                 {
@@ -273,20 +296,48 @@ class MarketViewEngine:
     ) -> list[dict[str, object]]:
         if not rows:
             return []
-        grouped: dict[str, list[dict[str, object]]] = {}
-        for row in rows:
-            grouped.setdefault(str(row["scope_segment"]), []).append(row)
+        scope_segments = {str(row["scope_segment"]) for row in rows}
+        component_rows = self.session.execute(
+            select(
+                MarketExposureDaily.scope_segment,
+                MarketHealthDaily.market_id,
+                MarketHealthDaily.total_supply_usd,
+                MarketHealthDaily.total_borrow_usd,
+                MarketHealthDaily.available_liquidity_usd,
+                MarketHealthDaily.risk_status,
+                MarketHealthDaily.active_alert_count,
+            )
+            .join(
+                MarketExposureComponent,
+                (
+                    MarketExposureComponent.market_exposure_id
+                    == MarketExposureDaily.market_exposure_id
+                ),
+            )
+            .join(
+                MarketHealthDaily,
+                (MarketHealthDaily.market_id == MarketExposureComponent.market_id)
+                & (MarketHealthDaily.business_date == business_date),
+            )
+            .where(MarketExposureDaily.business_date == business_date)
+        ).all()
+
+        grouped: dict[str, dict[int, Any]] = {}
+        for row in component_rows:
+            scope_segment = str(row.scope_segment)
+            if scope_segment not in scope_segments:
+                continue
+            grouped.setdefault(scope_segment, {})[int(row.market_id)] = row
 
         summaries: list[dict[str, object]] = []
-        for scope_segment, scope_rows in grouped.items():
-            total_supply_usd = sum(
-                (Decimal(str(row["total_supply_usd"])) for row in scope_rows), ZERO
-            )
-            total_borrow_usd = sum(
-                (Decimal(str(row["total_borrow_usd"])) for row in scope_rows), ZERO
-            )
+        for scope_segment in sorted(scope_segments):
+            scope_rows = list(grouped.get(scope_segment, {}).values())
+            if not scope_rows:
+                continue
+            total_supply_usd = sum((Decimal(str(row.total_supply_usd)) for row in scope_rows), ZERO)
+            total_borrow_usd = sum((Decimal(str(row.total_borrow_usd)) for row in scope_rows), ZERO)
             total_available_liquidity_usd = sum(
-                (Decimal(str(row["available_liquidity_usd"])) for row in scope_rows), ZERO
+                (Decimal(str(row.available_liquidity_usd)) for row in scope_rows), ZERO
             )
             weighted_utilization = (
                 total_borrow_usd / total_supply_usd if total_supply_usd > ZERO else None
@@ -300,10 +351,16 @@ class MarketViewEngine:
                     "weighted_utilization": weighted_utilization,
                     "total_available_liquidity_usd": total_available_liquidity_usd,
                     "markets_at_risk_count": sum(
-                        1 for row in scope_rows if row["risk_status"] in {"elevated", "critical"}
+                        1 for row in scope_rows if row.risk_status in {"elevated", "critical"}
                     ),
                     "markets_on_watchlist_count": sum(
-                        1 for row in scope_rows if row["watch_status"] != "normal"
+                        1
+                        for row in scope_rows
+                        if self._watch_status(
+                            risk_status=str(row.risk_status),
+                            active_alert_count=int(row.active_alert_count),
+                        )
+                        != "normal"
                     ),
                 }
             )

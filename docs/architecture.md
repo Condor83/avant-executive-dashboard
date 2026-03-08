@@ -12,6 +12,8 @@ The system has three layers:
 
 3) **Serving (API + Dashboard)**  
    Provides executive-grade UI and drilldowns; all numbers are traceable to stored snapshots.
+   The primary Markets table is a paired-exposure layer built from native market snapshots plus
+   live strategy usage / monitored customer pairings, not a raw native-market inventory.
 
 ## Data flow (snapshot-first)
 
@@ -30,6 +32,11 @@ derived tables (yield_daily, market_overview_daily, rollups, alerts, consumer me
             v
 FastAPI -> Dashboard UI
 ```
+
+Markets UI contract:
+- Reserve-style protocols are exposed as pair-monitor rows, not additive native reserve inventory.
+- Row-level collateral and borrow detail stay aligned to how Avant thinks about a market pair.
+- Top Markets summary cards are computed from deduped native component markets so global totals remain real.
 
 ### Why snapshot-first?
 

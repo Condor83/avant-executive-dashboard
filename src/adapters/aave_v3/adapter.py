@@ -32,6 +32,12 @@ GET_USER_RESERVE_DATA_SELECTOR = "0x28dd2d01"
 GET_USER_ACCOUNT_DATA_SELECTOR = "0xbf92857c"
 GET_RESERVE_CAPS_SELECTOR = "0x46fbe558"
 GET_RESERVE_CONFIGURATION_DATA_SELECTOR = "0x3e150141"
+GET_INTEREST_RATE_STRATEGY_ADDRESS_SELECTOR = "0x6744362a"
+GET_INTEREST_RATE_DATA_BPS_SELECTOR = "0xc79ce42e"
+GET_INTEREST_RATE_DATA_SELECTOR = "0x131e889c"
+GET_OPTIMAL_USAGE_RATIO_SELECTOR = "0xa8602e86"
+OPTIMAL_USAGE_RATIO_SELECTOR = "0x54c365c6"
+OPTIMAL_UTILIZATION_RATE_SELECTOR = "0xa15f30ac"
 
 
 def normalize_raw_amount(raw_amount: int, decimals: int) -> Decimal:
@@ -174,6 +180,14 @@ class AaveV3RpcClient(Protocol):
         asset: str,
     ) -> ReserveRiskConfiguration | None:
         """Return reserve-level LTV/liquidation parameters if available."""
+
+    def get_reserve_optimal_usage_ratio(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> Decimal | None:
+        """Return reserve-level optimal usage ratio in 0.0-1.0 units if available."""
 
 
 class EvmRpcAaveV3Client:
@@ -327,6 +341,72 @@ class EvmRpcAaveV3Client:
             liquidation_threshold_bps=int(words[2]),
             liquidation_bonus_bps=int(words[3]),
         )
+
+    @staticmethod
+    def _normalize_usage_ratio_word(raw_value: int) -> Decimal | None:
+        if raw_value <= 0:
+            return None
+        if raw_value <= int(BPS) * 100:
+            return Decimal(raw_value) / BPS
+        return Decimal(raw_value) / RAY
+
+    def _get_interest_rate_strategy_address(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> str | None:
+        try:
+            words = self._eth_call(
+                chain_code,
+                pool_data_provider,
+                _encode_call_data(GET_INTEREST_RATE_STRATEGY_ADDRESS_SELECTOR, asset),
+            )
+        except Exception:
+            return None
+
+        if not words:
+            return None
+        strategy_word = words[0]
+        if strategy_word <= 0:
+            return None
+        return f"0x{strategy_word:040x}"
+
+    def get_reserve_optimal_usage_ratio(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> Decimal | None:
+        strategy_address = self._get_interest_rate_strategy_address(
+            chain_code,
+            pool_data_provider,
+            asset,
+        )
+        if strategy_address is None:
+            return None
+
+        for selector, expects_asset_arg in (
+            (GET_INTEREST_RATE_DATA_BPS_SELECTOR, True),
+            (GET_INTEREST_RATE_DATA_SELECTOR, True),
+            (GET_OPTIMAL_USAGE_RATIO_SELECTOR, True),
+            (OPTIMAL_USAGE_RATIO_SELECTOR, False),
+            (OPTIMAL_UTILIZATION_RATE_SELECTOR, False),
+        ):
+            try:
+                call_data = _encode_call_data(selector, asset) if expects_asset_arg else selector
+                words = self._eth_call(chain_code, strategy_address, call_data)
+            except Exception:
+                continue
+
+            if not words:
+                continue
+
+            parsed = self._normalize_usage_ratio_word(int(words[0]))
+            if parsed is not None:
+                return parsed
+
+        return None
 
 
 @dataclass(frozen=True)
@@ -993,6 +1073,13 @@ class AaveV3Adapter:
                     "supply_apy_fallback_pool_id": reserve_runtime.supply_apy_fallback_pool_id,
                     "includes_rewards": "unknown",
                 }
+                optimal_usage_ratio = self.rpc_client.get_reserve_optimal_usage_ratio(
+                    chain_code,
+                    chain_config.pool_data_provider,
+                    market_ref,
+                )
+                if optimal_usage_ratio is not None:
+                    irm_params_json["optimal_usage_ratio"] = str(optimal_usage_ratio)
                 if self._is_merkl_reward_symbol(market.symbol):
                     symbol_lower = market.symbol.strip().lower()
                     merkl_reward_apy = Decimal("0")

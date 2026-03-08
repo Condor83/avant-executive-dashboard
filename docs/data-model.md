@@ -71,6 +71,13 @@ Business-facing paired exposure lens used by the dashboard.
 - exposure_slug (unique)
 - display_name
 
+Current contract:
+- Primary Markets rows should represent paired used-or-monitored exposures, not a 1:1 dump of native markets.
+- Exposures are built from two sources:
+  - live strategy usage inferred from the latest canonical position snapshots
+  - monitored customer pairings from `consumer_markets.yaml`
+- Single-sided ops surfaces and vault wrappers are intentionally excluded from the primary Markets table.
+
 ### market_exposure_components
 Mapping from dashboard exposures to the underlying protocol-native markets.
 
@@ -78,6 +85,12 @@ Mapping from dashboard exposures to the underlying protocol-native markets.
 - market_exposure_id
 - market_id
 - component_role: `supply_market` | `borrow_market` | `collateral_market` | `primary_market`
+
+Aggregation contract:
+- `primary_market` is used for genuinely paired native markets whose own snapshot already represents the full market.
+- `supply_market` and `borrow_market` are used when a paired exposure is synthesized from separate native markets (for example Aave/Spark reserve pairs or Euler consumer-market pairings mapped back to native vault markets).
+- `market_exposure_daily.total_supply_usd` and `weighted_supply_apy` aggregate only `primary_market` + `supply_market` components.
+- `market_exposure_daily.total_borrow_usd`, `weighted_borrow_apy`, `available_liquidity_usd`, and `distance_to_kink` aggregate only `primary_market` + `borrow_market` components.
 
 ### positions
 Stable unique position identity used for time series and served Portfolio views.
@@ -391,7 +404,14 @@ Primary served Markets dashboard table.
 - watch_status: `normal` | `watch` | `alerting`
 
 Note:
-- `utilization` may exceed `1.0` when aggregated supply is tiny or inconsistent relative to borrow totals; the raw ratio is preserved.
+- For reserve-style protocols, `utilization`, liquidity context, and kink distance are interpreted from the borrow-side native reserve, not from synthetic pair `borrow / supply`.
+- The primary Markets UI is a pair-monitor view layered on top of these rows. It may enrich the row with:
+  - collateral-side yield sourced from current Portfolio usage
+  - collateral cap / max LTV when available from the collateral reserve
+  - borrow cap / Avant borrow share from the borrow reserve and current Portfolio usage
+- Pair-monitor rows are not additive for reserve-style protocols because one native reserve can appear in multiple monitored pairs.
+- `strategy_position_count` is derived from the live exposure builder, not from `portfolio_position_daily.market_exposure_id`.
+- `customer_position_count` is currently config-driven from monitored customer exposures; it is not yet based on full customer-position ingestion.
 
 ### market_summary_daily
 Daily market rollup for the served Markets view.
@@ -406,7 +426,7 @@ Daily market rollup for the served Markets view.
 - markets_on_watchlist_count
 
 Note:
-- `weighted_utilization` may exceed `1.0` when aggregated supply is tiny or inconsistent relative to borrow totals; the raw ratio is preserved.
+- Summary cards are computed from deduped native component markets backing the visible exposure rows; they are not derived by summing the pair-monitor rows directly.
 
 ### executive_summary_daily
 Top-level served summary consumed by `/summary/executive`.

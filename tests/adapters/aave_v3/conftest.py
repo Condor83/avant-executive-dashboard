@@ -144,6 +144,15 @@ class FixtureAaveRpcClient(AaveV3RpcClient):
             liquidation_bonus_bps=10_500,
         )
 
+    def get_reserve_optimal_usage_ratio(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> Decimal:
+        del chain_code, pool_data_provider, asset
+        return Decimal("0.92")
+
 
 @pytest.fixture()
 def markets_config() -> MarketsConfig:

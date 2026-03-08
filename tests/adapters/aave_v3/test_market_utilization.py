@@ -38,3 +38,4 @@ def test_market_utilization_identity(
         assert snapshot.borrow_apy >= Decimal("0")
         assert snapshot.irm_params_json is not None
         assert "supply_rate" in snapshot.irm_params_json
+        assert snapshot.irm_params_json["optimal_usage_ratio"] == "0.92"

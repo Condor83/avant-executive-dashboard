@@ -166,9 +166,15 @@ export interface MarketExposureRow {
   total_supply_usd: string;
   total_borrow_usd: string;
   weighted_supply_apy: string;
+  collateral_yield_apy: string;
   weighted_borrow_apy: string;
+  spread_apy: string;
   utilization: string;
   available_liquidity_usd: string;
+  supply_cap_usd: string | null;
+  borrow_cap_usd: string | null;
+  collateral_max_ltv: string | null;
+  avant_borrow_share: string | null;
   distance_to_kink: string | null;
   strategy_position_count: number;
   customer_position_count: number;

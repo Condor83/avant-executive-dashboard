@@ -121,6 +121,15 @@ class _StubRpc:
             liquidation_bonus_bps=10_500,
         )
 
+    def get_reserve_optimal_usage_ratio(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> Decimal:
+        del chain_code, pool_data_provider, asset
+        return Decimal("0.92")
+
 
 def _markets() -> MarketsConfig:
     return MarketsConfig.model_validate(
@@ -247,6 +256,9 @@ def test_market_metadata_includes_merkl_context_for_usde_and_susde(monkeypatch) 
     assert usde_metadata is not None
     assert susde_metadata is not None
     assert usdt_metadata is not None
+    assert usde_metadata["optimal_usage_ratio"] == "0.92"
+    assert susde_metadata["optimal_usage_ratio"] == "0.92"
+    assert usdt_metadata["optimal_usage_ratio"] == "0.92"
 
     assert usde_metadata["merkl_reward_apy"] == "0.0356"
     assert usde_metadata["merkl_reward_source"] == "merkl_api_v4"

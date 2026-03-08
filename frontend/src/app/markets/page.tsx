@@ -21,6 +21,19 @@ import { useUiMetadata } from "@/lib/hooks/use-ui-metadata";
 import { formatAPY, formatPercent, formatUSDCompact } from "@/lib/formatters";
 import type { MarketExposureFilters, MarketExposureRow, OptionItem } from "@/lib/types";
 
+const MIN_VISIBLE_COLLATERAL_LTV = 0.001;
+
+function formatCollateralLtv(value: string | null | undefined): string {
+  if (!value) {
+    return "N/A";
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= MIN_VISIBLE_COLLATERAL_LTV) {
+    return "N/A";
+  }
+  return formatPercent(value);
+}
+
 function exposureColumns(): Column<MarketExposureRow>[] {
   return [
     {
@@ -30,70 +43,83 @@ function exposureColumns(): Column<MarketExposureRow>[] {
         <div>
           <div className="font-medium text-slate-900">{row.display_name}</div>
           <div className="text-xs text-slate-500">{row.protocol_code} / {row.chain_code}</div>
-        </div>
-      ),
-    },
-    {
-      key: "tokens",
-      header: "Tokens",
-      cell: (row) => (
-        <div className="text-xs text-slate-600">
-          <div>Supply: {row.supply_symbol ?? "---"}</div>
-          <div>Debt: {row.debt_symbol ?? "---"}</div>
+          <div className="mt-1">
+            <SeverityBadge
+              severity={
+                row.risk_status === "critical"
+                  ? "high"
+                  : row.risk_status === "elevated"
+                    ? "med"
+                    : "low"
+              }
+              label={row.risk_status}
+            />
+          </div>
         </div>
       ),
     },
     {
       key: "total_supply_usd",
-      header: "Total Supply",
-      align: "right",
-      cell: (row) => <DecimalCell value={row.total_supply_usd} formatter={formatUSDCompact} />,
+      header: "Collateral Detail",
+      cell: (row) => (
+        <div className="text-right">
+          <div>{formatUSDCompact(row.total_supply_usd)}</div>
+          <div className="text-xs text-slate-500">{row.supply_symbol ?? "---"}</div>
+          <div className="text-xs text-slate-500">
+            Yield {formatAPY(row.collateral_yield_apy)}
+          </div>
+          <div className="text-xs text-slate-500">
+            Max LTV {formatCollateralLtv(row.collateral_max_ltv)}
+          </div>
+        </div>
+      ),
     },
     {
       key: "total_borrow_usd",
-      header: "Total Borrow",
+      header: "Borrow Detail",
+      cell: (row) => (
+        <div className="text-right">
+          <div>{formatUSDCompact(row.total_borrow_usd)}</div>
+          <div className="text-xs text-slate-500">{row.debt_symbol ?? "---"}</div>
+          <div className="text-xs text-slate-500">
+            Cost {formatAPY(row.weighted_borrow_apy)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: "available_liquidity_usd",
+      header: "Available Liquidity",
       align: "right",
-      cell: (row) => <DecimalCell value={row.total_borrow_usd} formatter={formatUSDCompact} />,
+      cell: (row) => (
+        <div className="text-right">
+          <div>{formatUSDCompact(row.available_liquidity_usd)}</div>
+        </div>
+      ),
+    },
+    {
+      key: "spread_apy",
+      header: "Spread",
+      align: "right",
+      cell: (row) => <DecimalCell value={row.spread_apy} formatter={formatAPY} />,
+    },
+    {
+      key: "avant_borrow_share",
+      header: "Avant Exposure",
+      align: "right",
+      cell: (row) => <DecimalCell value={row.avant_borrow_share} formatter={formatPercent} />,
     },
     {
       key: "utilization",
-      header: "Utilization",
+      header: "Borrow Utilization Rate",
       align: "right",
       cell: (row) => <DecimalCell value={row.utilization} formatter={formatPercent} />,
-    },
-    {
-      key: "weighted_supply_apy",
-      header: "Supply APY",
-      align: "right",
-      cell: (row) => <DecimalCell value={row.weighted_supply_apy} formatter={formatAPY} />,
     },
     {
       key: "distance_to_kink",
       header: "Distance To Kink",
       align: "right",
       cell: (row) => <DecimalCell value={row.distance_to_kink} formatter={formatPercent} />,
-    },
-    {
-      key: "risk_status",
-      header: "Risk",
-      cell: (row) => (
-        <SeverityBadge
-          severity={
-            row.risk_status === "critical"
-              ? "high"
-              : row.risk_status === "elevated"
-                ? "med"
-                : "low"
-          }
-          label={row.risk_status}
-        />
-      ),
-    },
-    {
-      key: "active_alert_count",
-      header: "Alerts",
-      align: "right",
-      cell: (row) => String(row.active_alert_count),
     },
   ];
 }

@@ -86,6 +86,15 @@ class _StubRpc:
             liquidation_bonus_bps=10_500,
         )
 
+    def get_reserve_optimal_usage_ratio(
+        self,
+        chain_code: str,
+        pool_data_provider: str,
+        asset: str,
+    ) -> Decimal:
+        del chain_code, pool_data_provider, asset
+        return Decimal("0.92")
+
 
 def _markets_with_fallback() -> MarketsConfig:
     return MarketsConfig.model_validate(
@@ -146,3 +155,4 @@ def test_market_snapshot_metadata_records_fallback_source(monkeypatch) -> None:
     assert snapshots[0].irm_params_json is not None
     assert snapshots[0].irm_params_json["supply_apy_source"] == "defillama_pool_fallback"
     assert snapshots[0].irm_params_json["supply_apy_fallback_pool_id"] == pool_id
+    assert snapshots[0].irm_params_json["optimal_usage_ratio"] == "0.92"

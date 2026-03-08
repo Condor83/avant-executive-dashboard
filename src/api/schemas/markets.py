@@ -20,9 +20,15 @@ class MarketExposureRow(BaseModel):
     total_supply_usd: Decimal
     total_borrow_usd: Decimal
     weighted_supply_apy: Decimal
+    collateral_yield_apy: Decimal
     weighted_borrow_apy: Decimal
+    spread_apy: Decimal
     utilization: Decimal
     available_liquidity_usd: Decimal
+    supply_cap_usd: Decimal | None
+    borrow_cap_usd: Decimal | None
+    collateral_max_ltv: Decimal | None
+    avant_borrow_share: Decimal | None
     distance_to_kink: Decimal | None
     strategy_position_count: int
     customer_position_count: int
@@ -46,6 +52,7 @@ class MarketExposureHistoryPoint(BaseModel):
 
 class NativeMarketComponent(BaseModel):
     market_id: int
+    component_role: str | None = None
     display_name: str
     market_kind: str
     protocol_code: str

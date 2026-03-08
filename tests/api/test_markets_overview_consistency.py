@@ -8,7 +8,17 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from core.db.models import MarketExposureDaily
+from analytics.market_exposures import build_market_exposure_usage_metrics
+from core.db.models import (
+    Chain,
+    Market,
+    MarketExposureDaily,
+    MarketSnapshot,
+    PortfolioPositionCurrent,
+    Price,
+    Protocol,
+    Token,
+)
 from tests.api.conftest import SeedMetadata
 
 
@@ -53,3 +63,115 @@ def test_watch_only_filter_returns_alerting_rows(
     assert len(rows) == 1
     assert rows[0]["active_alert_count"] == 1
     assert rows[0]["watch_status"] == "alerting"
+
+
+def test_market_exposure_enriches_pair_monitor_fields(
+    api_client: tuple[TestClient, SeedMetadata],
+    seeded_session: tuple[Session, SeedMetadata],
+) -> None:
+    client, meta = api_client
+    session, _ = seeded_session
+
+    protocol_id = session.scalar(
+        select(Protocol.protocol_id).where(Protocol.protocol_code == "aave_v3")
+    )
+    chain_id = session.scalar(select(Chain.chain_id).where(Chain.chain_code == "ethereum"))
+    wbtc_token_id = session.scalar(
+        select(Token.token_id).where(Token.chain_id == chain_id).where(Token.symbol == "WBTC")
+    )
+    usdc_token_id = session.scalar(
+        select(Token.token_id).where(Token.chain_id == chain_id).where(Token.symbol == "USDC")
+    )
+    wbtc_market_id = session.scalar(
+        select(Market.market_id)
+        .where(Market.protocol_id == protocol_id)
+        .where(Market.base_asset_token_id == wbtc_token_id)
+    )
+    usdc_market_id = session.scalar(
+        select(Market.market_id)
+        .where(Market.protocol_id == protocol_id)
+        .where(Market.base_asset_token_id == usdc_token_id)
+    )
+
+    latest_ts = session.scalar(
+        select(MarketSnapshot.as_of_ts_utc).order_by(MarketSnapshot.as_of_ts_utc.desc()).limit(1)
+    )
+    assert latest_ts is not None
+
+    wbtc_snapshot = session.scalar(
+        select(MarketSnapshot)
+        .where(MarketSnapshot.market_id == wbtc_market_id)
+        .where(MarketSnapshot.as_of_ts_utc == latest_ts)
+    )
+    usdc_snapshot = session.scalar(
+        select(MarketSnapshot)
+        .where(MarketSnapshot.market_id == usdc_market_id)
+        .where(MarketSnapshot.as_of_ts_utc == latest_ts)
+    )
+    assert wbtc_snapshot is not None
+    assert usdc_snapshot is not None
+    wbtc_snapshot.caps_json = {"supply_cap": "10", "borrow_cap": "1"}
+    usdc_snapshot.caps_json = {"supply_cap": "20000", "borrow_cap": "10000"}
+
+    session.add_all(
+        [
+            Price(
+                ts_utc=latest_ts,
+                token_id=wbtc_token_id,
+                price_usd=Decimal("100"),
+                source="rpc",
+                confidence=Decimal("1"),
+            ),
+            Price(
+                ts_utc=latest_ts,
+                token_id=usdc_token_id,
+                price_usd=Decimal("1"),
+                source="rpc",
+                confidence=Decimal("1"),
+            ),
+        ]
+    )
+    session.commit()
+
+    rows = client.get("/markets/exposures?protocol_code=aave_v3").json()
+    row = next(
+        item
+        for item in rows
+        if item["protocol_code"] == "aave_v3"
+        and item["supply_symbol"] == "WBTC"
+        and item["debt_symbol"] == "USDC"
+    )
+
+    expected_positions = session.scalars(
+        select(PortfolioPositionCurrent).where(
+            PortfolioPositionCurrent.business_date == meta.business_date,
+            PortfolioPositionCurrent.market_exposure_id == row["market_exposure_id"],
+        )
+    ).all()
+    expected_supply_usd = sum(
+        (position.supply_usd for position in expected_positions),
+        Decimal("0"),
+    )
+    usage_metrics = build_market_exposure_usage_metrics(session)
+    expected_borrow_usd = usage_metrics[row["exposure_slug"]][2]
+    expected_collateral_yield = (
+        sum(
+            (
+                (position.supply_apy + position.reward_apy) * position.supply_usd
+                for position in expected_positions
+            ),
+            Decimal("0"),
+        )
+        / expected_supply_usd
+    )
+
+    assert Decimal(row["collateral_yield_apy"]) == expected_collateral_yield
+    assert Decimal(row["spread_apy"]) == expected_collateral_yield - Decimal(
+        row["weighted_borrow_apy"]
+    )
+    assert Decimal(row["avant_borrow_share"]) == expected_borrow_usd / Decimal(
+        row["total_borrow_usd"]
+    )
+    assert Decimal(row["supply_cap_usd"]) == Decimal("1000")
+    assert Decimal(row["borrow_cap_usd"]) == Decimal("10000")
+    assert Decimal(row["collateral_max_ltv"]) == Decimal("0.7000000000")
