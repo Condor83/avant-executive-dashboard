@@ -51,6 +51,30 @@ Recommended reconciliation flow:
 4. Resolve high-USD configured-surface misses first (config gaps, account ids/numbers, adapter parsing).
 5. Classify non-config mismatches (ops exposures, reward-only protocols, DeBank token-label semantics).
 
+### 5) Served contract audits (operational product QA)
+
+After ingestion and reconciliation are healthy, audit the served Portfolio and Markets contracts
+protocol-by-protocol.
+
+Recommended audit flow:
+1. Confirm coverage first:
+   - `sync coverage-report`
+   - `sync debank-coverage-audit`
+2. Inspect the live served rows for one protocol at a time.
+3. Verify:
+   - pairing / grouping shape
+   - supply-side underlying yield
+   - borrow cost
+   - net equity / TVL semantics
+   - liquidity / utilization / kink semantics
+   - whether the row is additive or monitor-only
+4. Fix canonical ingestion or serving semantics before changing UI presentation.
+5. Record enduring UI/API semantics in `docs/dashboard-contracts.md`.
+
+Important:
+- DeBank remains a completeness and discovery surface, not a source-of-truth override.
+- Markets should be audited as pair-monitor rows, not by naively summing visible rows for reserve-style protocols.
+
 ## External call recording
 
 - Use `vcrpy` for HTTP APIs (DeBank, DefiLlama).

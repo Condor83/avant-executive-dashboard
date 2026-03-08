@@ -12,6 +12,33 @@ An executive-grade dashboard and API that surfaces:
 
 Consumer analytics is intentionally deferred until Portfolio and Markets views are stable.
 
+## Current Implementation Note
+
+This sprint doc is historical planning context. The current live implementation has evolved beyond
+the original MVP shape after the Portfolio and Markets audit passes.
+
+Current primary routes/surfaces:
+- `/summary/executive`
+- `/portfolio/summary`
+- `/portfolio/positions/current`
+- `/portfolio/positions/{position_key}/history`
+- `/wallets/current`
+- `/markets/exposures`
+- `/markets/exposures/{slug}`
+- `/markets/native/{market_id}`
+- `/alerts`
+- `/data-quality`
+
+Current dashboard pages:
+- Summary
+- Portfolio
+- Wallets
+- Markets
+- Risk
+
+Use `docs/dashboard-contracts.md` for current served semantics. Keep this sprint file as the
+original intent and dependency record.
+
 ## Scope
 
 ### In

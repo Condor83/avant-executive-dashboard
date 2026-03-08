@@ -384,6 +384,18 @@ Daily Portfolio rollup used by `/portfolio/summary` and executive summary.
 - avg_leverage_ratio (nullable)
 - open_position_count
 
+### Wallets served view
+
+`/wallets/current` is currently derived from `portfolio_positions_current`; there is no dedicated
+wallet summary table yet.
+
+Current aggregation contract:
+- one row per live strategy wallet under the current wallet/product config
+- `total_supply_usd = sum(supply_usd)`
+- `total_borrow_usd = sum(borrow_usd)`
+- `total_tvl_usd = sum(net_equity_usd)`
+- zero-exposure wallets are excluded
+
 ### market_exposure_daily
 Primary served Markets dashboard table.
 
@@ -406,12 +418,20 @@ Primary served Markets dashboard table.
 Note:
 - For reserve-style protocols, `utilization`, liquidity context, and kink distance are interpreted from the borrow-side native reserve, not from synthetic pair `borrow / supply`.
 - The primary Markets UI is a pair-monitor view layered on top of these rows. It may enrich the row with:
-  - collateral-side yield sourced from current Portfolio usage
-  - collateral cap / max LTV when available from the collateral reserve
-  - borrow cap / Avant borrow share from the borrow reserve and current Portfolio usage
+  - collateral-side yield sourced from current Portfolio usage or token-level yield resolution
+  - collateral max LTV when available from the collateral reserve
+  - Avant borrow share from the borrow reserve and current Portfolio usage
 - Pair-monitor rows are not additive for reserve-style protocols because one native reserve can appear in multiple monitored pairs.
 - `strategy_position_count` is derived from the live exposure builder, not from `portfolio_position_daily.market_exposure_id`.
 - `customer_position_count` is currently config-driven from monitored customer exposures; it is not yet based on full customer-position ingestion.
+- The main Markets table currently emphasizes:
+  - `Collateral Detail`
+  - `Borrow Detail`
+  - `Available Liquidity`
+  - `Spread`
+  - `Avant Exposure`
+  - `Borrow Utilization Rate`
+  - `Distance to Kink`
 
 ### market_summary_daily
 Daily market rollup for the served Markets view.
