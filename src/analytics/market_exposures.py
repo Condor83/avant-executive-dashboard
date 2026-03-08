@@ -87,6 +87,8 @@ class _LivePositionRow:
     supplied_usd: Decimal
     collateral_usd: Decimal | None
     borrowed_usd: Decimal
+    supply_apy: Decimal
+    reward_apy: Decimal
 
 
 @dataclass
@@ -103,6 +105,8 @@ class _ExposureState:
     usage_keys: set[str] = field(default_factory=set)
     component_roles: set[tuple[int, str]] = field(default_factory=set)
     borrow_usd: Decimal = ZERO
+    collateral_yield_weighted_usd: Decimal = ZERO
+    collateral_yield_weighted_sum: Decimal = ZERO
 
 
 BASE_TOKEN = aliased(Token)
@@ -172,6 +176,8 @@ def _load_live_position_rows(session: Session) -> list[_LivePositionRow]:
             PositionSnapshot.supplied_usd,
             PositionSnapshot.collateral_usd,
             PositionSnapshot.borrowed_usd,
+            PositionSnapshot.supply_apy,
+            PositionSnapshot.reward_apy,
         )
         .join(Market, Market.market_id == PositionSnapshot.market_id)
         .join(Protocol, Protocol.protocol_id == Market.protocol_id)
@@ -193,9 +199,18 @@ def _load_live_position_rows(session: Session) -> list[_LivePositionRow]:
             supplied_usd=row.supplied_usd,
             collateral_usd=row.collateral_usd,
             borrowed_usd=row.borrowed_usd,
+            supply_apy=row.supply_apy,
+            reward_apy=row.reward_apy,
         )
         for row in rows
     ]
+
+
+def _economic_supply_usd(row: _LivePositionRow) -> Decimal:
+    collateral_usd = row.collateral_usd or ZERO
+    if collateral_usd > ZERO:
+        return collateral_usd
+    return row.supplied_usd
 
 
 def _build_market_label(record: _MarketRecord) -> str:
@@ -244,6 +259,8 @@ def _upsert_state(
     usage_key: str | None,
     components: list[tuple[int, str]],
     borrow_usd: Decimal = ZERO,
+    collateral_yield_apy: Decimal | None = None,
+    collateral_yield_weight_usd: Decimal = ZERO,
 ) -> None:
     exposure_kind = market_exposure_kind(
         market_kind_value=market_kind_value,
@@ -279,6 +296,9 @@ def _upsert_state(
         state.usage_keys.add(usage_key)
     state.component_roles.update(components)
     state.borrow_usd += borrow_usd
+    if collateral_yield_apy is not None and collateral_yield_weight_usd > ZERO:
+        state.collateral_yield_weighted_sum += collateral_yield_apy * collateral_yield_weight_usd
+        state.collateral_yield_weighted_usd += collateral_yield_weight_usd
 
 
 def _component_address_parts(record: _MarketRecord) -> tuple[str, str] | None:
@@ -367,6 +387,8 @@ def _iter_direct_live_states(
             usage_key=row.position_key,
             components=[(record.market_id, "primary_market")],
             borrow_usd=row.borrowed_usd,
+            collateral_yield_apy=row.supply_apy + row.reward_apy,
+            collateral_yield_weight_usd=_economic_supply_usd(row),
         )
 
 
@@ -459,6 +481,8 @@ def _iter_bucketed_live_states(
                     (borrow_record.market_id, "borrow_market"),
                 ],
                 borrow_usd=borrow_row.borrowed_usd,
+                collateral_yield_apy=supply_row.supply_apy + supply_row.reward_apy,
+                collateral_yield_weight_usd=_economic_supply_usd(supply_row),
             )
 
     for bucket in dolomite_buckets.values():
@@ -501,6 +525,8 @@ def _iter_bucketed_live_states(
                     (borrow_record.market_id, "borrow_market"),
                 ],
                 borrow_usd=borrow_row.borrowed_usd,
+                collateral_yield_apy=supply_row.supply_apy + supply_row.reward_apy,
+                collateral_yield_weight_usd=_economic_supply_usd(supply_row),
             )
 
     for bucket in zest_buckets.values():
@@ -534,6 +560,8 @@ def _iter_bucketed_live_states(
                     (borrow_record.market_id, "borrow_market"),
                 ],
                 borrow_usd=borrow_row.borrowed_usd,
+                collateral_yield_apy=supply_row.supply_apy + supply_row.reward_apy,
+                collateral_yield_weight_usd=_economic_supply_usd(supply_row),
             )
 
 
@@ -662,19 +690,29 @@ def build_market_exposure_usage(session: Session) -> dict[str, tuple[bool, int]]
     metrics = build_market_exposure_usage_metrics(session)
     return {
         slug: (monitored, strategy_position_count)
-        for slug, (monitored, strategy_position_count, _borrow_usd) in metrics.items()
+        for slug, (
+            monitored,
+            strategy_position_count,
+            _borrow_usd,
+            _collateral_yield_apy,
+        ) in metrics.items()
     }
 
 
 def build_market_exposure_usage_metrics(
     session: Session,
-) -> dict[str, tuple[bool, int, Decimal]]:
+) -> dict[str, tuple[bool, int, Decimal, Decimal | None]]:
     states = _build_exposure_states(session)
     return {
         state.market_exposure_slug: (
             state.monitored,
             len(state.usage_keys),
             state.borrow_usd,
+            (
+                state.collateral_yield_weighted_sum / state.collateral_yield_weighted_usd
+                if state.collateral_yield_weighted_usd > ZERO
+                else None
+            ),
         )
         for state in states.values()
     }

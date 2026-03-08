@@ -33,7 +33,6 @@ from core.db.models import (
     MarketOverviewDaily,
     MarketSnapshot,
     MarketSummaryDaily,
-    PortfolioPositionCurrent,
     Price,
     Protocol,
     Token,
@@ -118,46 +117,6 @@ def _load_latest_price_map(session: Session, token_ids: set[int]) -> dict[int, D
     return prices
 
 
-def _load_position_usage_by_exposure(
-    session: Session,
-    *,
-    business_date: date,
-    exposure_ids: list[int],
-) -> tuple[bool, dict[int, Any]]:
-    has_rows = (
-        session.scalar(
-            select(func.count())
-            .select_from(PortfolioPositionCurrent)
-            .where(PortfolioPositionCurrent.business_date == business_date)
-        )
-        or 0
-    ) > 0
-    if not exposure_ids:
-        return has_rows, {}
-    rows = session.execute(
-        select(
-            PortfolioPositionCurrent.market_exposure_id,
-            func.sum(PortfolioPositionCurrent.supply_usd).label("total_supply_usd"),
-            func.sum(PortfolioPositionCurrent.borrow_usd).label("total_borrow_usd"),
-            (
-                func.sum(
-                    (PortfolioPositionCurrent.supply_apy + PortfolioPositionCurrent.reward_apy)
-                    * PortfolioPositionCurrent.supply_usd
-                )
-                / func.nullif(func.sum(PortfolioPositionCurrent.supply_usd), 0)
-            ).label("collateral_yield_apy"),
-        )
-        .where(
-            PortfolioPositionCurrent.business_date == business_date,
-            PortfolioPositionCurrent.market_exposure_id.in_(exposure_ids),
-        )
-        .group_by(PortfolioPositionCurrent.market_exposure_id)
-    ).all()
-    return has_rows, {
-        int(row.market_exposure_id): row for row in rows if row.market_exposure_id is not None
-    }
-
-
 def _load_borrow_usage_by_exposure(
     session: Session,
     *,
@@ -176,7 +135,7 @@ def _load_borrow_usage_by_exposure(
         metrics = metrics_by_slug.get(str(exposure_slug))
         if metrics is None:
             continue
-        _monitored, _strategy_position_count, borrow_usd = metrics
+        _monitored, _strategy_position_count, borrow_usd, _collateral_yield_apy = metrics
         output[int(market_exposure_id)] = borrow_usd
     return output
 
@@ -255,9 +214,16 @@ def _build_exposure_context(
     component_rows_by_exposure = _load_component_context(
         session, business_date=business_date, exposure_ids=exposure_ids
     )
-    portfolio_has_rows, usage_by_exposure = _load_position_usage_by_exposure(
-        session, business_date=business_date, exposure_ids=exposure_ids
-    )
+    metrics_by_slug = build_market_exposure_usage_metrics(session)
+    exposure_slug_rows = session.execute(
+        select(MarketExposure.market_exposure_id, MarketExposure.exposure_slug).where(
+            MarketExposure.market_exposure_id.in_(exposure_ids)
+        )
+    ).all()
+    metrics_by_exposure = {
+        int(market_exposure_id): metrics_by_slug.get(str(exposure_slug))
+        for market_exposure_id, exposure_slug in exposure_slug_rows
+    }
     borrow_usage_by_exposure = _load_borrow_usage_by_exposure(
         session,
         exposure_ids=exposure_ids,
@@ -331,10 +297,10 @@ def _build_exposure_context(
             if max_ltv > ZERO:
                 collateral_max_ltv = max_ltv
 
-        usage_row = usage_by_exposure.get(exposure_id)
+        usage_metrics = metrics_by_exposure.get(exposure_id)
         collateral_yield_apy = (
-            Decimal(str(usage_row.collateral_yield_apy))
-            if usage_row is not None and usage_row.collateral_yield_apy is not None
+            Decimal(str(usage_metrics[3]))
+            if usage_metrics is not None and usage_metrics[3] is not None
             else None
         )
         avant_borrow_usd = borrow_usage_by_exposure.get(exposure_id, ZERO)
@@ -343,7 +309,7 @@ def _build_exposure_context(
             "borrow_cap_usd": borrow_cap_usd,
             "collateral_max_ltv": collateral_max_ltv,
             "collateral_yield_apy": collateral_yield_apy,
-            "avant_borrow_usd": avant_borrow_usd if portfolio_has_rows else None,
+            "avant_borrow_usd": avant_borrow_usd,
         }
     return output
 

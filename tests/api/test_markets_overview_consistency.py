@@ -14,7 +14,6 @@ from core.db.models import (
     Market,
     MarketExposureDaily,
     MarketSnapshot,
-    PortfolioPositionCurrent,
     Price,
     Protocol,
     Token,
@@ -142,30 +141,12 @@ def test_market_exposure_enriches_pair_monitor_fields(
         and item["debt_symbol"] == "USDC"
     )
 
-    expected_positions = session.scalars(
-        select(PortfolioPositionCurrent).where(
-            PortfolioPositionCurrent.business_date == meta.business_date,
-            PortfolioPositionCurrent.market_exposure_id == row["market_exposure_id"],
-        )
-    ).all()
-    expected_supply_usd = sum(
-        (position.supply_usd for position in expected_positions),
-        Decimal("0"),
-    )
     usage_metrics = build_market_exposure_usage_metrics(session)
     expected_borrow_usd = usage_metrics[row["exposure_slug"]][2]
-    expected_collateral_yield = (
-        sum(
-            (
-                (position.supply_apy + position.reward_apy) * position.supply_usd
-                for position in expected_positions
-            ),
-            Decimal("0"),
-        )
-        / expected_supply_usd
-    )
+    expected_collateral_yield = usage_metrics[row["exposure_slug"]][3]
+    assert expected_collateral_yield is not None
 
-    assert Decimal(row["collateral_yield_apy"]) == expected_collateral_yield
+    assert Decimal(row["collateral_yield_apy"]) == Decimal(str(expected_collateral_yield))
     assert Decimal(row["spread_apy"]) == expected_collateral_yield - Decimal(
         row["weighted_borrow_apy"]
     )

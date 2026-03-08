@@ -13,7 +13,10 @@ from sqlalchemy.orm import Session
 
 from analytics.alerts import AlertEngine
 from analytics.market_engine import MarketEngine
-from analytics.market_exposures import build_market_exposure_usage, ensure_market_exposures
+from analytics.market_exposures import (
+    build_market_exposure_usage_metrics,
+    ensure_market_exposures,
+)
 from analytics.risk_engine import RiskComputationResult, RiskEngine
 from core.config import RiskThresholdsConfig
 from core.db.models import (
@@ -194,9 +197,12 @@ class MarketViewEngine:
         exposure_rows = self.session.execute(
             select(MarketExposure.market_exposure_id, MarketExposure.exposure_slug)
         ).all()
-        usage_by_slug = build_market_exposure_usage(self.session)
+        usage_by_slug = build_market_exposure_usage_metrics(self.session)
         usage_map = {
-            int(market_exposure_id): usage_by_slug.get(str(exposure_slug), (False, 0))
+            int(market_exposure_id): usage_by_slug.get(
+                str(exposure_slug),
+                (False, 0, ZERO, None),
+            )
             for market_exposure_id, exposure_slug in exposure_rows
         }
 
@@ -252,7 +258,12 @@ class MarketViewEngine:
             risk_status = max(
                 (str(row.risk_status) for row in rows), key=lambda value: SEVERITY_RANK[value]
             )
-            monitored, strategy_position_count = usage_map.get(exposure_id, (False, 0))
+            monitored, strategy_position_count, _borrow_usd, collateral_yield_apy = usage_map.get(
+                exposure_id,
+                (False, 0, ZERO, None),
+            )
+            if collateral_yield_apy is not None:
+                weighted_supply_apy = collateral_yield_apy
             customer_position_count = 1 if monitored else 0
             scope_segment = "strategy_only"
             if monitored and strategy_position_count:
