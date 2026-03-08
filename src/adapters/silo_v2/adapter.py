@@ -12,6 +12,7 @@ import httpx
 
 from core.config import ConsumerMarket, ConsumerMarketsConfig, MarketsConfig, canonical_address
 from core.types import DataQualityIssue, MarketSnapshotInput, PositionSnapshotInput
+from core.yields import AVANT_APY_ENDPOINTS, AvantYieldOracle
 
 WAD = Decimal("1000000000000000000")
 QueryPrimitive = str | int | float | bool | None
@@ -67,6 +68,8 @@ class SiloMarketHealth:
     supply_apy: Decimal
     borrow_apy: Decimal
     utilization: Decimal | None
+    available_liquidity_raw: int | None = None
+    max_ltv: Decimal | None = None
     block_number_or_slot: str | None = None
     raw_payload: dict[str, object] | None = None
 
@@ -101,7 +104,14 @@ class SiloClient(Protocol):
     def close(self) -> None:
         """Close transport resources."""
 
-    def get_market_health(self, *, chain_code: str, market_ref: str) -> SiloMarketHealth:
+    def get_market_health(
+        self,
+        *,
+        chain_code: str,
+        market_ref: str,
+        collateral_token_address: str,
+        borrow_token_address: str,
+    ) -> SiloMarketHealth:
         """Return normalized market-level health metrics."""
 
     def get_wallet_position(
@@ -314,6 +324,17 @@ class SiloApiClient:
                 return silo_obj
         return None
 
+    @staticmethod
+    def _wad_ratio_to_unit(value: object) -> Decimal | None:
+        if value is None:
+            return None
+        parsed = _to_decimal(value)
+        if parsed > Decimal("1"):
+            parsed = parsed / WAD
+            if parsed > Decimal("1"):
+                parsed = parsed / Decimal("100")
+        return parsed
+
     def get_wallet_position(
         self,
         *,
@@ -355,25 +376,63 @@ class SiloApiClient:
             raw_payload=market_payload,
         )
 
-    def get_market_health(self, *, chain_code: str, market_ref: str) -> SiloMarketHealth:
+    def get_market_health(
+        self,
+        *,
+        chain_code: str,
+        market_ref: str,
+        collateral_token_address: str,
+        borrow_token_address: str,
+    ) -> SiloMarketHealth:
         market_payload = self._get_lending_market_payload(
             chain_code=chain_code,
             market_ref=market_ref,
         )
-        debt_silo = self._pick_debt_silo(market_payload)
+        collateral_silo = self._find_silo_for_token(market_payload, collateral_token_address)
+        if collateral_silo is None:
+            raise SiloTokenMappingError(
+                "configured collateral token address missing from Silo market payload"
+            )
+        debt_silo = self._find_silo_for_token(market_payload, borrow_token_address)
+        if debt_silo is None:
+            raise SiloTokenMappingError(
+                "configured borrow token address missing from Silo market payload"
+            )
 
-        total_supply_raw_obj = debt_silo.get("collateralAccruedAssets")
-        if total_supply_raw_obj is None:
-            total_supply_raw_obj = debt_silo.get("collateralStoredAssets")
+        collateral_assets_obj = collateral_silo.get("collateralAccruedAssets")
+        if collateral_assets_obj is None:
+            collateral_assets_obj = collateral_silo.get("collateralStoredAssets")
+        protected_assets_obj = collateral_silo.get("protectedAssets")
         total_borrow_raw_obj = debt_silo.get("debtAccruedAssets")
         if total_borrow_raw_obj is None:
             total_borrow_raw_obj = debt_silo.get("debtStoredAssets")
+        available_liquidity_raw_obj = debt_silo.get("liquidity")
+        if available_liquidity_raw_obj is None:
+            debt_silo_assets_obj = debt_silo.get("collateralAccruedAssets")
+            if debt_silo_assets_obj is None:
+                debt_silo_assets_obj = debt_silo.get("collateralStoredAssets")
+            if debt_silo_assets_obj is not None and total_borrow_raw_obj is not None:
+                available_liquidity_raw_obj = max(
+                    int(str(debt_silo_assets_obj)) - int(str(total_borrow_raw_obj)),
+                    0,
+                )
 
-        total_supply_raw = (
-            int(str(total_supply_raw_obj)) if total_supply_raw_obj is not None else None
+        collateral_assets_raw = (
+            int(str(collateral_assets_obj)) if collateral_assets_obj is not None else 0
         )
+        protected_assets_raw = (
+            int(str(protected_assets_obj)) if protected_assets_obj is not None else 0
+        )
+        total_supply_raw = None
+        if collateral_assets_obj is not None or protected_assets_obj is not None:
+            total_supply_raw = collateral_assets_raw + protected_assets_raw
         total_borrow_raw = (
             int(str(total_borrow_raw_obj)) if total_borrow_raw_obj is not None else None
+        )
+        available_liquidity_raw = (
+            int(str(available_liquidity_raw_obj))
+            if available_liquidity_raw_obj is not None
+            else None
         )
 
         earn_pool = self._find_earn_silo_pool(
@@ -392,12 +451,8 @@ class SiloApiClient:
         supply_apy = normalize_rate_to_unit(supply_apy_obj if supply_apy_obj is not None else 0)
         borrow_apy = normalize_rate_to_unit(borrow_apy_obj if borrow_apy_obj is not None else 0)
 
-        utilization_obj = debt_silo.get("utilization")
-        utilization = _to_decimal(utilization_obj) if utilization_obj is not None else None
-        if utilization is not None and utilization > Decimal("1"):
-            utilization = utilization / WAD
-            if utilization > Decimal("1"):
-                utilization = utilization / Decimal("100")
+        utilization = self._wad_ratio_to_unit(debt_silo.get("utilization"))
+        max_ltv = self._wad_ratio_to_unit(collateral_silo.get("maxLtv"))
 
         return SiloMarketHealth(
             total_supply_raw=total_supply_raw,
@@ -407,6 +462,8 @@ class SiloApiClient:
             supply_apy=supply_apy,
             borrow_apy=borrow_apy,
             utilization=utilization,
+            available_liquidity_raw=available_liquidity_raw,
+            max_ltv=max_ltv,
             block_number_or_slot=None,
             raw_payload=market_payload,
         )
@@ -530,12 +587,18 @@ class SiloV2Adapter:
         client: SiloClient,
         top_holders_limit: int = 50,
         include_strategy_wallets: bool = True,
+        avant_yield_oracle: AvantYieldOracle | None = None,
     ) -> None:
         self.markets_config = markets_config
         self.consumer_markets_config = consumer_markets_config
         self.client = client
         self.top_holders_limit = top_holders_limit
         self.include_strategy_wallets = include_strategy_wallets
+        self.avant_yield_oracle = avant_yield_oracle
+
+    @staticmethod
+    def _supports_avant_native_yield(symbol: str) -> bool:
+        return symbol.strip().upper() in AVANT_APY_ENDPOINTS
 
     @staticmethod
     def _utilization(total_supply: Decimal, total_borrow: Decimal) -> Decimal:
@@ -627,6 +690,8 @@ class SiloV2Adapter:
                 market_health = self.client.get_market_health(
                     chain_code=chain_code,
                     market_ref=market_ref,
+                    collateral_token_address=market.collateral_token.address,
+                    borrow_token_address=market.borrow_token.address,
                 )
             except Exception:
                 market_health = None
@@ -722,6 +787,32 @@ class SiloV2Adapter:
 
                 supplied_usd = supplied_amount * collateral_price
                 borrowed_usd = borrowed_amount * borrow_price
+                position_supply_apy = supply_apy
+                if (
+                    supplied_amount > 0
+                    and self.avant_yield_oracle is not None
+                    and self._supports_avant_native_yield(market.collateral_token.symbol)
+                ):
+                    try:
+                        position_supply_apy = self.avant_yield_oracle.get_token_apy(
+                            market.collateral_token.symbol
+                        )
+                    except Exception as exc:
+                        issues.append(
+                            self._issue(
+                                as_of_ts_utc=as_of_ts_utc,
+                                stage="sync_snapshot",
+                                error_type="silo_underlying_apy_fetch_failed",
+                                error_message=str(exc),
+                                chain_code=chain_code,
+                                wallet_address=wallet_address,
+                                market_ref=market_ref,
+                                payload_json={
+                                    "symbol": market.collateral_token.symbol,
+                                    "source": "avant_api",
+                                },
+                            )
+                        )
 
                 positions.append(
                     PositionSnapshotInput(
@@ -735,7 +826,7 @@ class SiloV2Adapter:
                         supplied_usd=supplied_usd,
                         borrowed_amount=borrowed_amount,
                         borrowed_usd=borrowed_usd,
-                        supply_apy=supply_apy,
+                        supply_apy=position_supply_apy,
                         borrow_apy=borrow_apy,
                         reward_apy=Decimal("0"),
                         equity_usd=supplied_usd - borrowed_usd,
@@ -760,7 +851,12 @@ class SiloV2Adapter:
             market_ref = market.market_address
 
             try:
-                health = self.client.get_market_health(chain_code=chain_code, market_ref=market_ref)
+                health = self.client.get_market_health(
+                    chain_code=chain_code,
+                    market_ref=market_ref,
+                    collateral_token_address=market.collateral_token.address,
+                    borrow_token_address=market.borrow_token.address,
+                )
             except Exception as exc:
                 issues.append(
                     self._issue(
@@ -784,6 +880,7 @@ class SiloV2Adapter:
 
             total_supply_usd: Decimal
             total_borrow_usd: Decimal
+            available_liquidity_usd: Decimal | None = None
             if health.total_supply_usd is not None and health.total_borrow_usd is not None:
                 total_supply_usd = health.total_supply_usd
                 total_borrow_usd = health.total_borrow_usd
@@ -828,6 +925,14 @@ class SiloV2Adapter:
                     )
                     * borrow_price
                 )
+                if health.available_liquidity_raw is not None:
+                    available_liquidity_usd = (
+                        normalize_raw_amount(
+                            health.available_liquidity_raw,
+                            market.borrow_token.decimals,
+                        )
+                        * borrow_price
+                    )
             else:
                 issues.append(
                     self._issue(
@@ -846,6 +951,8 @@ class SiloV2Adapter:
                 if health.utilization is not None
                 else self._utilization(total_supply_usd, total_borrow_usd)
             )
+            if available_liquidity_usd is None:
+                available_liquidity_usd = max(total_supply_usd - total_borrow_usd, Decimal("0"))
 
             snapshots.append(
                 MarketSnapshotInput(
@@ -860,7 +967,8 @@ class SiloV2Adapter:
                     borrow_apy=max(health.borrow_apy, Decimal("0")),
                     source="rpc",
                     block_number_or_slot=health.block_number_or_slot,
-                    available_liquidity_usd=max(total_supply_usd - total_borrow_usd, Decimal("0")),
+                    available_liquidity_usd=max(available_liquidity_usd, Decimal("0")),
+                    max_ltv=health.max_ltv,
                     irm_params_json={
                         "market_name": market.name,
                         "collateral_symbol": market.collateral_token.symbol,

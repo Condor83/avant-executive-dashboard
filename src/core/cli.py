@@ -375,6 +375,7 @@ def _build_runner(
         client=silo_client,
         top_holders_limit=settings.silo_top_holders_limit,
         include_strategy_wallets=True,
+        avant_yield_oracle=avant_yield_oracle,
     )
 
     price_oracle = PriceOracle(

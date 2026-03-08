@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any
+from typing import Protocol as TypingProtocol
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -29,6 +30,9 @@ from core.db.models import (
     MarketSummaryDaily,
     Token,
 )
+from core.db.models import (
+    Protocol as ProtocolModel,
+)
 from core.yields import AVANT_APY_ENDPOINTS
 
 ZERO = Decimal("0")
@@ -44,7 +48,7 @@ class MarketViewBuildSummary:
     summary_rows_written: int
 
 
-class _CollateralYieldOracle(Protocol):
+class _CollateralYieldOracle(TypingProtocol):
     def get_token_apy(self, symbol: str) -> Decimal:
         """Return token APY in 0.0-1.0 units."""
 
@@ -217,8 +221,11 @@ class MarketViewEngine:
             select(
                 MarketExposure.market_exposure_id,
                 MarketExposure.exposure_slug,
+                ProtocolModel.protocol_code,
                 Token.symbol,
-            ).outerjoin(Token, Token.token_id == MarketExposure.supply_token_id)
+            )
+            .join(ProtocolModel, ProtocolModel.protocol_id == MarketExposure.protocol_id)
+            .outerjoin(Token, Token.token_id == MarketExposure.supply_token_id)
         ).all()
         usage_by_slug = build_market_exposure_usage_metrics(
             self.session,
@@ -229,11 +236,15 @@ class MarketViewEngine:
                 str(exposure_slug),
                 (False, 0, ZERO, None),
             )
-            for market_exposure_id, exposure_slug, _supply_symbol in exposure_rows
+            for market_exposure_id, exposure_slug, _protocol_code, _supply_symbol in exposure_rows
         }
         supply_symbol_by_exposure = {
             int(market_exposure_id): str(supply_symbol) if supply_symbol is not None else None
-            for market_exposure_id, _exposure_slug, supply_symbol in exposure_rows
+            for market_exposure_id, _exposure_slug, _protocol_code, supply_symbol in exposure_rows
+        }
+        protocol_by_exposure = {
+            int(market_exposure_id): str(protocol_code)
+            for market_exposure_id, _exposure_slug, protocol_code, _supply_symbol in exposure_rows
         }
 
         grouped: dict[int, list] = {}
@@ -269,7 +280,15 @@ class MarketViewEngine:
                 if total_borrow_usd > ZERO
                 else ZERO
             )
-            if borrow_rows and not primary_rows:
+            protocol_code = protocol_by_exposure.get(exposure_id)
+            if protocol_code == "silo_v2":
+                utilization = (
+                    sum((row.utilization * row.total_borrow_usd for row in rows), ZERO)
+                    / total_borrow_usd
+                    if total_borrow_usd > ZERO
+                    else ZERO
+                )
+            elif borrow_rows and not primary_rows:
                 utilization = (
                     sum((row.utilization * row.total_borrow_usd for row in borrow_rows), ZERO)
                     / total_borrow_usd

@@ -725,3 +725,109 @@ def test_market_summary_dedupes_shared_borrow_reserve_components(
         assert summary_row.total_borrow_usd == Decimal("1300")
         assert summary_row.weighted_utilization == Decimal("0.541666666666666667")
         assert summary_row.total_available_liquidity_usd == Decimal("1100")
+
+
+def test_market_views_preserve_silo_primary_market_utilization(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+
+    business_date = date(2026, 3, 7)
+    sod_ts_utc, _ = denver_business_bounds_utc(business_date)
+    as_of_ts_utc = sod_ts_utc + timedelta(hours=9)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="avalanche")
+        protocol = Protocol(protocol_code="silo_v2")
+        wallet = Wallet(
+            address="0x7777777777777777777777777777777777777777",
+            wallet_type="strategy",
+        )
+        session.add_all([chain, protocol, wallet])
+        session.flush()
+
+        collateral_token = _token(
+            symbol="savUSD",
+            chain_id=chain.chain_id,
+            address="0x0000000000000000000000000000000000008000",
+        )
+        borrow_token = _token(
+            symbol="USDC",
+            chain_id=chain.chain_id,
+            address="0x0000000000000000000000000000000000008001",
+        )
+        session.add_all([collateral_token, borrow_token])
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_kind="consumer_market",
+            market_address="142",
+            display_name="savUSD / USDC",
+            base_asset_token_id=borrow_token.token_id,
+            collateral_token_id=collateral_token.token_id,
+            metadata_json={"kind": "consumer_market"},
+        )
+        session.add(market)
+        session.flush()
+
+        session.add(
+            MarketSnapshot(
+                as_of_ts_utc=as_of_ts_utc,
+                block_number_or_slot="1",
+                market_id=market.market_id,
+                total_supply_usd=Decimal("516859.25"),
+                total_borrow_usd=Decimal("2474292.92"),
+                utilization=Decimal("0.7603312593"),
+                supply_apy=Decimal("0.0508804159"),
+                borrow_apy=Decimal("0.0743671563"),
+                available_liquidity_usd=Decimal("779961.58"),
+                max_ltv=Decimal("0.92"),
+                liquidation_threshold=Decimal("0.95"),
+                liquidation_penalty=None,
+                caps_json=None,
+                irm_params_json=None,
+                source="rpc",
+            )
+        )
+        session.add(
+            PositionSnapshot(
+                as_of_ts_utc=as_of_ts_utc,
+                block_number_or_slot="1",
+                wallet_id=wallet.wallet_id,
+                market_id=market.market_id,
+                position_key="silo_v2:avalanche:test-wallet:142",
+                supplied_amount=Decimal("10"),
+                supplied_usd=Decimal("10"),
+                borrowed_amount=Decimal("4"),
+                borrowed_usd=Decimal("4"),
+                supply_apy=Decimal("0.0508804159"),
+                borrow_apy=Decimal("0.0743671563"),
+                reward_apy=Decimal("0"),
+                equity_usd=Decimal("6"),
+                health_factor=None,
+                ltv=None,
+                source="rpc",
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = MarketViewEngine(
+            session,
+            thresholds=None,
+            avant_yield_oracle=_StubAvantYieldOracle({"savUSD": Decimal("0.0745")}),
+        ).compute_daily(business_date=business_date)
+        session.commit()
+
+        assert summary.exposure_rows_written == 1
+        exposure_row = session.scalar(
+            select(MarketExposureDaily).where(MarketExposureDaily.business_date == business_date)
+        )
+        assert exposure_row is not None
+        assert exposure_row.total_supply_usd == Decimal("516859.25")
+        assert exposure_row.total_borrow_usd == Decimal("2474292.92")
+        assert exposure_row.available_liquidity_usd == Decimal("779961.58")
+        assert exposure_row.utilization == Decimal("0.7603312593")
