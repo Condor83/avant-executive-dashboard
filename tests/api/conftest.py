@@ -59,6 +59,7 @@ def seeded_session(
     chain_arb = Chain(chain_code="arbitrum")
     proto_aave = Protocol(protocol_code="aave_v3")
     proto_morpho = Protocol(protocol_code="morpho")
+    proto_traderjoe = Protocol(protocol_code="traderjoe_lp")
     product_senior = Product(product_code="stablecoin_senior")
     product_junior = Product(product_code="stablecoin_junior")
     product_btc = Product(product_code="btc_senior")
@@ -71,6 +72,7 @@ def seeded_session(
             chain_arb,
             proto_aave,
             proto_morpho,
+            proto_traderjoe,
             product_senior,
             product_junior,
             product_btc,
@@ -280,6 +282,48 @@ def seeded_session(
     with Session(engine) as engine_session:
         YieldEngine(engine_session).compute_daily(business_date=BUSINESS_DATE)
         engine_session.commit()
+
+    with Session(engine) as ops_session:
+        ops_market = Market(
+            chain_id=chain_eth.chain_id,
+            protocol_id=proto_traderjoe.protocol_id,
+            native_market_key="traderjoe-buy-wall",
+            market_address="0xops1",
+            market_kind="liquidity_book_pool",
+            display_name="USDC / WBTC Pool",
+            base_asset_token_id=token_wbtc.token_id,
+            collateral_token_id=token_usdc.token_id,
+            metadata_json={
+                "kind": "liquidity_book_pool",
+                "capital_bucket": "market_stability_ops",
+                "include_in_yield": False,
+                "exposure_class": "ops_buy_wall",
+            },
+        )
+        ops_session.add(ops_market)
+        ops_session.flush()
+        for ts, block in [(sod_ts, "150"), (eod_ts, "250")]:
+            ops_session.add(
+                PositionSnapshot(
+                    as_of_ts_utc=ts,
+                    block_number_or_slot=block,
+                    wallet_id=w1.wallet_id,
+                    market_id=ops_market.market_id,
+                    position_key="ops-w1-buy-wall",
+                    supplied_amount=Decimal("600"),
+                    supplied_usd=Decimal("600"),
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("600"),
+                    health_factor=None,
+                    ltv=None,
+                    source="rpc",
+                )
+            )
+        ops_session.commit()
 
     with Session(engine) as alert_session:
         alert_session.add_all(

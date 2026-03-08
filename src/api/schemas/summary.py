@@ -14,6 +14,7 @@ class ExecutiveSummarySnapshot(BaseModel):
     business_date: date
     nav_usd: Decimal
     portfolio_net_equity_usd: Decimal
+    market_stability_ops_net_equity_usd: Decimal
     portfolio_aggregate_roe_daily: Decimal | None
     portfolio_aggregate_roe_annualized: Decimal | None
     total_gross_yield_daily_usd: Decimal

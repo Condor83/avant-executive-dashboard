@@ -927,6 +927,9 @@ class ExecutiveSummaryDaily(Base):
     business_date: Mapped[date] = mapped_column(primary_key=True)
     nav_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     portfolio_net_equity_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
+    market_stability_ops_net_equity_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False
+    )
     portfolio_aggregate_roe: Mapped[Decimal | None] = mapped_column(Numeric(20, 10), nullable=True)
     total_gross_yield_daily_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)
     total_net_yield_daily_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False)

@@ -20,6 +20,7 @@ export interface Column<T> {
   sortable?: boolean;
   align?: "left" | "right";
   sortFn?: (a: T, b: T) => number;
+  sortValue?: (row: T) => number | string | null | undefined;
   headerClassName?: string;
   cellClassName?: string;
 }
@@ -32,6 +33,18 @@ interface DataTableProps<T> {
   onRowClick?: (row: T) => void;
   filterSlot?: ReactNode;
   rowKey: (row: T) => string;
+  initialSortKey?: string;
+  initialSortDir?: "asc" | "desc";
+}
+
+function compareSortValues(
+  left: number | string,
+  right: number | string,
+): number {
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  return String(left).localeCompare(String(right));
 }
 
 export function DataTable<T>({
@@ -42,13 +55,38 @@ export function DataTable<T>({
   onRowClick,
   filterSlot,
   rowKey,
+  initialSortKey,
+  initialSortDir = "desc",
 }: DataTableProps<T>) {
-  const [sortKey, setSortKey] = useState<string | null>(null);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sortKey, setSortKey] = useState<string | null>(initialSortKey ?? null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initialSortDir);
 
   const sorted = useMemo(() => {
     if (!sortKey) return data;
     const col = columns.find((c) => c.key === sortKey);
+    if (col?.sortValue) {
+      const sortableRows: T[] = [];
+      const nullRows: T[] = [];
+
+      for (const row of data) {
+        const value = col.sortValue(row);
+        if (value === null || value === undefined || value === "") {
+          nullRows.push(row);
+        } else {
+          sortableRows.push(row);
+        }
+      }
+
+      const sortedRows = [...sortableRows].sort((a, b) => {
+        const left = col.sortValue!(a);
+        const right = col.sortValue!(b);
+        return compareSortValues(left as number | string, right as number | string);
+      });
+      if (sortDir === "desc") {
+        sortedRows.reverse();
+      }
+      return [...sortedRows, ...nullRows];
+    }
     if (!col?.sortFn) return data;
     const mul = sortDir === "asc" ? 1 : -1;
     return [...data].sort((a, b) => mul * col.sortFn!(a, b));

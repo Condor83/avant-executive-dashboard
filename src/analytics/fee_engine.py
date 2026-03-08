@@ -24,6 +24,14 @@ class FeeBreakdown:
 def apply_fee_waterfall(gross_yield_usd: Decimal) -> FeeBreakdown:
     """Apply the fixed performance-fee waterfall to a gross yield amount."""
 
+    if gross_yield_usd <= Decimal("0"):
+        return FeeBreakdown(
+            gross_yield_usd=gross_yield_usd,
+            strategy_fee_usd=Decimal("0"),
+            avant_gop_usd=Decimal("0"),
+            net_yield_usd=gross_yield_usd,
+        )
+
     strategy_fee = gross_yield_usd * STRATEGY_FEE_RATE
     remainder = gross_yield_usd - strategy_fee
     avant_gop = remainder * AVANT_GOP_REMAINDER_RATE

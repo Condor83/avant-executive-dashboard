@@ -68,6 +68,14 @@ function decimalValue(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function sortableNumber(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function annualizeDailyRoe(value: string | null | undefined) {
   if (!value) {
     return null;
@@ -186,6 +194,8 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
     {
       key: "supply_leg",
       header: "Supply",
+      sortable: true,
+      sortValue: (row) => totalSupplyUsd(row),
       cell: (row) => (
         <div className="space-y-1 text-right">
           <div className="font-semibold text-slate-900">
@@ -207,6 +217,8 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
     {
       key: "borrow_leg",
       header: "Borrow",
+      sortable: true,
+      sortValue: (row) => totalBorrowUsd(row),
       cell: (row) =>
         row.borrow_legs.length > 0 ? (
           <div className="space-y-1 text-right">
@@ -232,26 +244,62 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       key: "net_equity_usd",
       header: "Net Equity",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.net_equity_usd),
       cell: (row) => <DecimalCell value={row.net_equity_usd} formatter={formatUSD} colored />,
     },
     {
       key: "leverage_ratio",
       header: "Leverage",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.leverage_ratio),
       cell: (row) => <DecimalCell value={row.leverage_ratio} formatter={formatRatio} />,
     },
     {
-      key: "yield_mtd",
-      header: "Net Yield MTD",
+      key: "daily_net_yield",
+      header: "Daily Net Yield",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.yield_daily.net_yield_usd),
       cell: (row) => (
-        <DecimalCell value={row.yield_mtd.net_yield_usd} formatter={formatUSDCompact} colored />
+        <DecimalCell value={row.yield_daily.net_yield_usd} formatter={formatUSDCompact} colored />
+      ),
+    },
+    {
+      key: "daily_performance_fee",
+      header: "Daily Performance Fee",
+      align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.yield_daily.strategy_fee_usd),
+      cell: (row) => (
+        <DecimalCell
+          value={row.yield_daily.strategy_fee_usd}
+          formatter={formatUSDCompact}
+          colored
+        />
+      ),
+    },
+    {
+      key: "daily_gop",
+      header: "Daily GOP",
+      align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.yield_daily.avant_gop_usd),
+      cell: (row) => (
+        <DecimalCell
+          value={row.yield_daily.avant_gop_usd}
+          formatter={formatUSDCompact}
+          colored
+        />
       ),
     },
     {
       key: "gross_roe_annualized",
       header: "ROE",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(grossRoeAnnualized(row)),
       cell: (row) => (
         <div className="space-y-0.5 text-right">
           <DecimalCell
@@ -304,16 +352,6 @@ function filterBar(
       {filterSelect("Protocol", filters.protocol_code, metadata?.protocols ?? [], (value) => setParam("protocol_code", value))}
       {filterSelect("Chain", filters.chain_code, metadata?.chains ?? [], (value) => setParam("chain_code", value))}
       {filterSelect("Wallet", filters.wallet_address, metadata?.wallets ?? [], (value) => setParam("wallet_address", value))}
-      {filterSelect("Sort By", filters.sort_by ?? "net_equity_usd", metadata?.position_sort_options ?? [], (value) => setParam("sort_by", value))}
-      <Select value={filters.sort_dir ?? "desc"} onValueChange={(value) => setParam("sort_dir", value)}>
-        <SelectTrigger className="h-8 w-[120px] text-xs">
-          <SelectValue placeholder="Direction" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="desc">Descending</SelectItem>
-          <SelectItem value="asc">Ascending</SelectItem>
-        </SelectContent>
-      </Select>
       <Button
         type="button"
         variant={showHidden ? "secondary" : "outline"}
@@ -358,8 +396,6 @@ function PortfolioContent() {
     protocol_code: filterValue(searchParams, "protocol_code"),
     chain_code: filterValue(searchParams, "chain_code"),
     wallet_address: filterValue(searchParams, "wallet_address"),
-    sort_by: filterValue(searchParams, "sort_by") ?? "net_equity_usd",
-    sort_dir: (filterValue(searchParams, "sort_dir") as "asc" | "desc") ?? "desc",
   };
   const showHidden = filterValue(searchParams, "show_hidden") === "1";
 
@@ -410,17 +446,19 @@ function PortfolioContent() {
     <PageContainer title="Portfolio">
       <section className="mb-8">
         {summary.isLoading || !summary.data ? (
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-            {Array.from({ length: 5 }).map((_, index) => (
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-7">
+            {Array.from({ length: 7 }).map((_, index) => (
               <KpiCardSkeleton key={index} />
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-4 lg:grid-cols-7">
             <KpiCard label="Net Equity" value={formatUSDCompact(summary.data.total_net_equity_usd)} valueClassName={financialColor(summary.data.total_net_equity_usd)} />
             <KpiCard label="Supply" value={formatUSDCompact(summary.data.total_supply_usd)} />
             <KpiCard label="Borrow" value={formatUSDCompact(summary.data.total_borrow_usd)} />
-            <KpiCard label="Net Yield MTD" value={formatUSDCompact(summary.data.total_net_yield_mtd_usd)} valueClassName={financialColor(summary.data.total_net_yield_mtd_usd)} />
+            <KpiCard label="Daily Net Yield" value={formatUSDCompact(summary.data.total_net_yield_daily_usd)} valueClassName={financialColor(summary.data.total_net_yield_daily_usd)} />
+            <KpiCard label="Daily Performance Fee" value={formatUSDCompact(summary.data.total_strategy_fee_daily_usd)} valueClassName={financialColor(summary.data.total_strategy_fee_daily_usd)} />
+            <KpiCard label="Daily GOP" value={formatUSDCompact(summary.data.total_avant_gop_daily_usd)} valueClassName={financialColor(summary.data.total_avant_gop_daily_usd)} />
             <KpiCard label="Avg Leverage" value={formatRatio(summary.data.avg_leverage_ratio)} />
           </div>
         )}
@@ -435,6 +473,8 @@ function PortfolioContent() {
           rowKey={(row) => row.position_key}
           emptyMessage="No positions match the current filters"
           filterSlot={filterBar(filters, metadata.data, showHidden, hiddenCount, setParam)}
+          initialSortKey="net_equity_usd"
+          initialSortDir="desc"
         />
       </section>
     </PageContainer>

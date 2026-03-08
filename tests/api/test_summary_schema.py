@@ -31,6 +31,7 @@ def test_summary_executive_fields_are_populated(
 
     assert float(executive["nav_usd"]) > 0
     assert float(executive["portfolio_net_equity_usd"]) > 0
+    assert float(executive["market_stability_ops_net_equity_usd"]) > 0
     assert float(executive["total_net_yield_mtd_usd"]) > 0
     assert float(executive["portfolio_aggregate_roe_annualized"]) > 0
     assert executive["open_alert_count"] == 1

@@ -31,6 +31,7 @@ export interface ExecutiveSummarySnapshot {
   business_date: string;
   nav_usd: string;
   portfolio_net_equity_usd: string;
+  market_stability_ops_net_equity_usd: string;
   portfolio_aggregate_roe?: string | null;
   portfolio_aggregate_roe_daily: string | null;
   portfolio_aggregate_roe_annualized: string | null;

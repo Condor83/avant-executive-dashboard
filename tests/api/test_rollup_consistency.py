@@ -62,6 +62,18 @@ def test_executive_summary_matches_portfolio_and_market_summaries(
         Decimal(portfolio_summary["aggregate_roe_annualized"]),
     )
     assert _approx_eq(
+        Decimal(summary["portfolio_summary"]["avg_leverage_ratio"]),
+        Decimal(portfolio_summary["avg_leverage_ratio"]),
+    )
+    assert (
+        summary["portfolio_summary"]["open_position_count"]
+        == portfolio_summary["open_position_count"]
+    )
+    assert _approx_eq(
+        Decimal(summary["executive"]["market_stability_ops_net_equity_usd"]),
+        Decimal("600"),
+    )
+    assert _approx_eq(
         Decimal(summary["executive"]["market_total_supply_usd"]),
         Decimal(market_summary["total_supply_usd"]),
     )

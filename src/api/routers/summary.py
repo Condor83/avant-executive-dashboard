@@ -124,6 +124,7 @@ def _empty_summary(today: date) -> SummaryResponse:
             business_date=today,
             nav_usd=ZERO,
             portfolio_net_equity_usd=ZERO,
+            market_stability_ops_net_equity_usd=ZERO,
             portfolio_aggregate_roe_daily=None,
             portfolio_aggregate_roe_annualized=None,
             total_gross_yield_daily_usd=ZERO,
@@ -167,6 +168,7 @@ def _summary_payload(session: Session) -> SummaryResponse:
             business_date=executive.business_date,
             nav_usd=executive.nav_usd,
             portfolio_net_equity_usd=executive.portfolio_net_equity_usd,
+            market_stability_ops_net_equity_usd=executive.market_stability_ops_net_equity_usd,
             portfolio_aggregate_roe_daily=_normalized_roe(executive.portfolio_aggregate_roe),
             portfolio_aggregate_roe_annualized=_annualize_daily_roe(
                 executive.portfolio_aggregate_roe

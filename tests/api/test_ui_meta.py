@@ -12,6 +12,8 @@ def test_ui_metadata_contains_products_protocols_and_alert_labels(
 ) -> None:
     client, _ = api_client
     data = client.get("/meta/ui").json()
+    sort_option_values = {option["value"] for option in data["position_sort_options"]}
+    sort_option_labels = {option["label"] for option in data["position_sort_options"]}
 
     assert len(data["products"]) == 3
     assert any(option["value"] == "stablecoin_senior" for option in data["products"])
@@ -30,3 +32,9 @@ def test_ui_metadata_contains_products_protocols_and_alert_labels(
         option["value"] == "ack" and option["label"] == "Acknowledged"
         for option in data["alert_status_options"]
     )
+    assert "strategy_fee_daily_usd" in sort_option_values
+    assert "avant_gop_daily_usd" in sort_option_values
+    assert "gross_yield_mtd_usd" not in sort_option_values
+    assert "net_yield_mtd_usd" not in sort_option_values
+    assert "Daily Performance Fee" in sort_option_labels
+    assert "Daily GOP" in sort_option_labels

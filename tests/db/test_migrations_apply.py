@@ -38,6 +38,7 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "yield_daily",
         "alerts",
         "market_overview_daily",
+        "executive_summary_daily",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
 
@@ -59,6 +60,10 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
     assert {"position_key", "fixed_apy", "position_size_native_at_refresh"}.issubset(
         fixed_yield_cache_columns
     )
+    executive_summary_columns = {
+        column["name"] for column in inspector.get_columns("executive_summary_daily")
+    }
+    assert "market_stability_ops_net_equity_usd" in executive_summary_columns
 
     position_snapshot_constraints = {
         constraint["name"] for constraint in inspector.get_unique_constraints("position_snapshots")

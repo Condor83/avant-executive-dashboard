@@ -454,6 +454,7 @@ Top-level served summary consumed by `/summary/executive`.
 - business_date (pk)
 - nav_usd
 - portfolio_net_equity_usd
+- market_stability_ops_net_equity_usd
 - portfolio_aggregate_roe (nullable)
 - total_gross_yield_daily_usd
 - total_net_yield_daily_usd

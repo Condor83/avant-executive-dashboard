@@ -85,9 +85,14 @@ Important:
 ## Non-negotiable tests for yield
 
 - Fee waterfall identity:
-  - strategy_fee = 0.15 * gross_yield
-  - avant_gop = 0.085 * gross_yield
-  - net_yield = 0.765 * gross_yield
+  - when gross_yield > 0:
+    - strategy_fee = 0.15 * gross_yield
+    - avant_gop = 0.085 * gross_yield
+    - net_yield = 0.765 * gross_yield
+  - when gross_yield <= 0:
+    - strategy_fee = 0
+    - avant_gop = 0
+    - net_yield = gross_yield
 - Timezone boundary correctness (Denver):
   - business_date mapping for UTC timestamps
   - DST regression test

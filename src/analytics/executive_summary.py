@@ -3,14 +3,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from core.db.models import Alert, ExecutiveSummaryDaily, MarketSummaryDaily, PortfolioSummaryDaily
+from analytics.yield_engine import denver_business_bounds_utc
+from core.db.models import (
+    Alert,
+    ExecutiveSummaryDaily,
+    Market,
+    MarketSummaryDaily,
+    PortfolioPositionDaily,
+    PortfolioSummaryDaily,
+    PositionSnapshot,
+    Wallet,
+)
 
 ZERO = Decimal("0")
 
@@ -27,6 +37,50 @@ class ExecutiveSummaryEngine:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def _resolve_business_date_snapshot(self, *, business_date: date) -> datetime | None:
+        summary_snapshot = self.session.scalar(
+            select(func.max(PortfolioPositionDaily.as_of_ts_utc)).where(
+                PortfolioPositionDaily.business_date == business_date
+            )
+        )
+        if summary_snapshot is not None:
+            return summary_snapshot
+
+        start_utc, end_utc = denver_business_bounds_utc(business_date)
+        in_day = self.session.scalar(
+            select(func.max(PositionSnapshot.as_of_ts_utc)).where(
+                PositionSnapshot.as_of_ts_utc >= start_utc,
+                PositionSnapshot.as_of_ts_utc < end_utc,
+            )
+        )
+        if in_day is not None:
+            return in_day
+
+        return self.session.scalar(
+            select(func.max(PositionSnapshot.as_of_ts_utc)).where(
+                PositionSnapshot.as_of_ts_utc <= end_utc
+            )
+        )
+
+    def _market_stability_ops_net_equity(self, *, business_date: date) -> Decimal:
+        snapshot_ts = self._resolve_business_date_snapshot(business_date=business_date)
+        if snapshot_ts is None:
+            return ZERO
+
+        return (
+            self.session.scalar(
+                select(func.coalesce(func.sum(PositionSnapshot.equity_usd), ZERO))
+                .join(Market, Market.market_id == PositionSnapshot.market_id)
+                .join(Wallet, Wallet.wallet_id == PositionSnapshot.wallet_id)
+                .where(
+                    PositionSnapshot.as_of_ts_utc == snapshot_ts,
+                    Wallet.wallet_type == "strategy",
+                    Market.metadata_json["capital_bucket"].as_string() == "market_stability_ops",
+                )
+            )
+            or ZERO
+        )
+
     def compute_daily(self, *, business_date: date) -> ExecutiveSummaryBuildSummary:
         portfolio = self.session.scalar(
             select(PortfolioSummaryDaily).where(
@@ -40,7 +94,10 @@ class ExecutiveSummaryEngine:
                 MarketSummaryDaily.scope_segment == "strategy_only",
             )
         )
-        if portfolio is None and markets is None:
+        market_stability_ops_net_equity = self._market_stability_ops_net_equity(
+            business_date=business_date
+        )
+        if portfolio is None and markets is None and market_stability_ops_net_equity == ZERO:
             self.session.execute(
                 delete(ExecutiveSummaryDaily).where(
                     ExecutiveSummaryDaily.business_date == business_date
@@ -58,6 +115,7 @@ class ExecutiveSummaryEngine:
             "portfolio_net_equity_usd": (
                 portfolio.total_net_equity_usd if portfolio is not None else ZERO
             ),
+            "market_stability_ops_net_equity_usd": market_stability_ops_net_equity,
             "portfolio_aggregate_roe": portfolio.aggregate_roe if portfolio is not None else None,
             "total_gross_yield_daily_usd": (
                 portfolio.total_gross_yield_daily_usd if portfolio is not None else ZERO
@@ -95,6 +153,9 @@ class ExecutiveSummaryEngine:
             set_={
                 "nav_usd": stmt.excluded.nav_usd,
                 "portfolio_net_equity_usd": stmt.excluded.portfolio_net_equity_usd,
+                "market_stability_ops_net_equity_usd": (
+                    stmt.excluded.market_stability_ops_net_equity_usd
+                ),
                 "portfolio_aggregate_roe": stmt.excluded.portfolio_aggregate_roe,
                 "total_gross_yield_daily_usd": stmt.excluded.total_gross_yield_daily_usd,
                 "total_net_yield_daily_usd": stmt.excluded.total_net_yield_daily_usd,

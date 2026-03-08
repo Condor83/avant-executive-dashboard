@@ -29,6 +29,7 @@ from core.db.models import (
     MarketExposure,
     PortfolioPositionCurrent,
     PortfolioPositionDaily,
+    PortfolioSummaryDaily,
     Position,
     Product,
     Protocol,
@@ -707,6 +708,10 @@ def _sort_value(position: _PositionAggregate, sort_by: str) -> Decimal | None:
         return sum((leg.usd_value for leg in position.borrow_legs), ZERO)
     if sort_by == "gross_yield_daily_usd":
         return position.gross_yield_daily_usd
+    if sort_by == "strategy_fee_daily_usd":
+        return position.strategy_fee_daily_usd
+    if sort_by == "avant_gop_daily_usd":
+        return position.avant_gop_daily_usd
     if sort_by == "net_yield_daily_usd":
         return position.net_yield_daily_usd
     if sort_by == "gross_yield_mtd_usd":
@@ -1025,11 +1030,37 @@ def get_portfolio_summary(session: Session = Depends(get_session)) -> PortfolioS
     if business_date is None:
         today = datetime.now(UTC).date()
         return _summary_from_positions(business_date=today, positions=[])
-    return _summary_from_positions(
-        business_date=business_date,
-        positions=_grouped_positions(
-            session,
+    row = session.scalar(
+        select(PortfolioSummaryDaily).where(
+            PortfolioSummaryDaily.business_date == business_date,
+            PortfolioSummaryDaily.scope_segment == "strategy_only",
+        )
+    )
+    if row is None:
+        return _summary_from_positions(
             business_date=business_date,
-            scope_segment="strategy_only",
-        ),
+            positions=_grouped_positions(
+                session,
+                business_date=business_date,
+                scope_segment="strategy_only",
+            ),
+        )
+    return PortfolioSummaryResponse(
+        business_date=row.business_date,
+        scope_segment=row.scope_segment,
+        total_supply_usd=row.total_supply_usd,
+        total_borrow_usd=row.total_borrow_usd,
+        total_net_equity_usd=row.total_net_equity_usd,
+        aggregate_roe_daily=_normalized_roe(row.aggregate_roe),
+        aggregate_roe_annualized=_annualize_daily_roe(row.aggregate_roe),
+        total_gross_yield_daily_usd=row.total_gross_yield_daily_usd,
+        total_net_yield_daily_usd=row.total_net_yield_daily_usd,
+        total_gross_yield_mtd_usd=row.total_gross_yield_mtd_usd,
+        total_net_yield_mtd_usd=row.total_net_yield_mtd_usd,
+        total_strategy_fee_daily_usd=row.total_strategy_fee_daily_usd,
+        total_avant_gop_daily_usd=row.total_avant_gop_daily_usd,
+        total_strategy_fee_mtd_usd=row.total_strategy_fee_mtd_usd,
+        total_avant_gop_mtd_usd=row.total_avant_gop_mtd_usd,
+        avg_leverage_ratio=row.avg_leverage_ratio,
+        open_position_count=row.open_position_count,
     )

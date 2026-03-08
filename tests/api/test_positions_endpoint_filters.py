@@ -68,6 +68,26 @@ def test_sort_by_gross_yield_mtd_asc(api_client: tuple[TestClient, SeedMetadata]
     assert yields == sorted(yields)
 
 
+def test_sort_by_strategy_fee_daily_asc(api_client: tuple[TestClient, SeedMetadata]) -> None:
+    client, _ = api_client
+    data = client.get(
+        "/portfolio/positions/current?sort_by=strategy_fee_daily_usd&sort_dir=asc"
+    ).json()
+    fees = [float(row["yield_daily"]["strategy_fee_usd"]) for row in data["positions"]]
+
+    assert fees == sorted(fees)
+
+
+def test_sort_by_avant_gop_daily_desc(api_client: tuple[TestClient, SeedMetadata]) -> None:
+    client, _ = api_client
+    data = client.get(
+        "/portfolio/positions/current?sort_by=avant_gop_daily_usd&sort_dir=desc"
+    ).json()
+    gops = [float(row["yield_daily"]["avant_gop_usd"]) for row in data["positions"]]
+
+    assert gops == sorted(gops, reverse=True)
+
+
 def test_position_history_returns_position_and_series(
     api_client: tuple[TestClient, SeedMetadata],
 ) -> None:

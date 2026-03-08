@@ -122,14 +122,24 @@ When `avg_equity_usd <= 0`, ROE values are null.
 
 Fees are applied deterministically, even at wallet/position level:
 
-- Strategy firm performance fee = **15% of gross yield**
-- Remaining = 85% of gross yield
-- Avant keeps **10% of the remainder** as gross operating profit (GOP)
+- For positive gross yield:
+  - Strategy firm performance fee = **15% of gross yield**
+  - Remaining = 85% of gross yield
+  - Avant keeps **10% of the remainder** as gross operating profit (GOP)
+- For zero or negative gross yield:
+  - Strategy fee = 0
+  - Avant GOP = 0
+  - Net yield to users/products = gross yield
 
 So:
-- Strategy fee = 0.15 * Y
-- Avant GOP = 0.085 * Y
-- Net yield to users/products = 0.765 * Y
+- if Y > 0:
+  - Strategy fee = 0.15 * Y
+  - Avant GOP = 0.085 * Y
+  - Net yield to users/products = 0.765 * Y
+- if Y <= 0:
+  - Strategy fee = 0
+  - Avant GOP = 0
+  - Net yield to users/products = Y
 
 ## No tx-level flow accounting (v1)
 

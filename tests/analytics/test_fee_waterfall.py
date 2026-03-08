@@ -29,6 +29,6 @@ def test_fee_waterfall_negative_gross_yield() -> None:
     gross = Decimal("-20")
     fees = apply_fee_waterfall(gross)
 
-    assert fees.strategy_fee_usd == Decimal("-3.00")
-    assert fees.avant_gop_usd == Decimal("-1.7000")
-    assert fees.net_yield_usd == Decimal("-15.3000")
+    assert fees.strategy_fee_usd == Decimal("0")
+    assert fees.avant_gop_usd == Decimal("0")
+    assert fees.net_yield_usd == Decimal("-20")
