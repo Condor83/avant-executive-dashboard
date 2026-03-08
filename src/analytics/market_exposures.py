@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -159,9 +160,15 @@ def _load_market_records(session: Session) -> tuple[list[_MarketRecord], dict[in
     return records, by_id
 
 
-def _load_live_position_rows(session: Session) -> list[_LivePositionRow]:
-    latest_snapshot = session.scalar(select(func.max(PositionSnapshot.as_of_ts_utc)))
-    if latest_snapshot is None:
+def _load_live_position_rows(
+    session: Session,
+    *,
+    as_of_ts_utc: datetime | None = None,
+) -> list[_LivePositionRow]:
+    snapshot_ts = as_of_ts_utc
+    if snapshot_ts is None:
+        snapshot_ts = session.scalar(select(func.max(PositionSnapshot.as_of_ts_utc)))
+    if snapshot_ts is None:
         return []
     rows = session.execute(
         select(
@@ -183,7 +190,7 @@ def _load_live_position_rows(session: Session) -> list[_LivePositionRow]:
         .join(Protocol, Protocol.protocol_id == Market.protocol_id)
         .join(Chain, Chain.chain_id == Market.chain_id)
         .outerjoin(WalletProductMap, WalletProductMap.wallet_id == PositionSnapshot.wallet_id)
-        .where(PositionSnapshot.as_of_ts_utc == latest_snapshot)
+        .where(PositionSnapshot.as_of_ts_utc == snapshot_ts)
         .order_by(PositionSnapshot.snapshot_id.asc())
     ).all()
     return [
@@ -656,9 +663,13 @@ def _dolomite_account_number(position_key: str) -> str | None:
     return parts[3]
 
 
-def _build_exposure_states(session: Session) -> dict[str, _ExposureState]:
+def _build_exposure_states(
+    session: Session,
+    *,
+    as_of_ts_utc: datetime | None = None,
+) -> dict[str, _ExposureState]:
     records, records_by_id = _load_market_records(session)
-    live_rows = _load_live_position_rows(session)
+    live_rows = _load_live_position_rows(session, as_of_ts_utc=as_of_ts_utc)
     states: dict[str, _ExposureState] = {}
     _iter_monitored_states(states=states, records=records)
     _iter_direct_live_states(states=states, records_by_id=records_by_id, live_rows=live_rows)
@@ -666,8 +677,12 @@ def _build_exposure_states(session: Session) -> dict[str, _ExposureState]:
     return states
 
 
-def build_market_exposure_descriptors(session: Session) -> list[MarketExposureDescriptor]:
-    states = _build_exposure_states(session)
+def build_market_exposure_descriptors(
+    session: Session,
+    *,
+    as_of_ts_utc: datetime | None = None,
+) -> list[MarketExposureDescriptor]:
+    states = _build_exposure_states(session, as_of_ts_utc=as_of_ts_utc)
     return [
         MarketExposureDescriptor(
             market_exposure_slug=state.market_exposure_slug,
@@ -686,8 +701,12 @@ def build_market_exposure_descriptors(session: Session) -> list[MarketExposureDe
     ]
 
 
-def build_market_exposure_usage(session: Session) -> dict[str, tuple[bool, int]]:
-    metrics = build_market_exposure_usage_metrics(session)
+def build_market_exposure_usage(
+    session: Session,
+    *,
+    as_of_ts_utc: datetime | None = None,
+) -> dict[str, tuple[bool, int]]:
+    metrics = build_market_exposure_usage_metrics(session, as_of_ts_utc=as_of_ts_utc)
     return {
         slug: (monitored, strategy_position_count)
         for slug, (
@@ -701,8 +720,10 @@ def build_market_exposure_usage(session: Session) -> dict[str, tuple[bool, int]]
 
 def build_market_exposure_usage_metrics(
     session: Session,
+    *,
+    as_of_ts_utc: datetime | None = None,
 ) -> dict[str, tuple[bool, int, Decimal, Decimal | None]]:
-    states = _build_exposure_states(session)
+    states = _build_exposure_states(session, as_of_ts_utc=as_of_ts_utc)
     return {
         state.market_exposure_slug: (
             state.monitored,

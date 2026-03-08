@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from analytics.market_exposures import build_market_exposure_usage_metrics
@@ -13,10 +14,13 @@ from core.db.models import (
     Chain,
     Market,
     MarketExposureDaily,
+    MarketHealthDaily,
     MarketSnapshot,
+    PositionSnapshot,
     Price,
     Protocol,
     Token,
+    Wallet,
 )
 from tests.api.conftest import SeedMetadata
 
@@ -156,3 +160,61 @@ def test_market_exposure_enriches_pair_monitor_fields(
     assert Decimal(row["supply_cap_usd"]) == Decimal("1000")
     assert Decimal(row["borrow_cap_usd"]) == Decimal("10000")
     assert Decimal(row["collateral_max_ltv"]) == Decimal("0.7000000000")
+
+
+def test_market_exposure_uses_business_date_aligned_borrow_usage(
+    api_client: tuple[TestClient, SeedMetadata],
+    seeded_session: tuple[Session, SeedMetadata],
+) -> None:
+    client, meta = api_client
+    session, _ = seeded_session
+
+    market_id = session.scalar(
+        select(Market.market_id)
+        .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+        .join(Token, Token.token_id == Market.base_asset_token_id)
+        .where(Protocol.protocol_code == "morpho")
+        .where(Token.symbol == "WBTC")
+    )
+    wallet_id = session.scalar(
+        select(Wallet.wallet_id).where(
+            Wallet.address == "0x3333333333333333333333333333333333333333"
+        )
+    )
+    assert market_id is not None
+    assert wallet_id is not None
+
+    aligned_as_of = session.scalar(
+        select(func.max(MarketHealthDaily.as_of_ts_utc)).where(
+            MarketHealthDaily.business_date == meta.business_date
+        )
+    )
+    assert aligned_as_of is not None
+    later_ts = aligned_as_of + timedelta(hours=1)
+
+    session.add(
+        PositionSnapshot(
+            as_of_ts_utc=later_ts,
+            block_number_or_slot="999",
+            wallet_id=wallet_id,
+            market_id=market_id,
+            position_key="pos-w3-m4",
+            supplied_amount=Decimal("300"),
+            supplied_usd=Decimal("300"),
+            borrowed_amount=Decimal("2500"),
+            borrowed_usd=Decimal("2500"),
+            supply_apy=Decimal("0.03"),
+            borrow_apy=Decimal("0.015"),
+            reward_apy=Decimal("0.008"),
+            equity_usd=Decimal("-2200"),
+            health_factor=Decimal("1.1"),
+            ltv=Decimal("0.9"),
+            source="rpc",
+        )
+    )
+    session.commit()
+
+    rows = client.get("/markets/exposures?protocol_code=morpho").json()
+    row = next(item for item in rows if item["supply_symbol"] == "WBTC")
+
+    assert Decimal(row["avant_borrow_share"]) == Decimal("0.025")

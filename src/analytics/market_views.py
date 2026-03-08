@@ -188,6 +188,11 @@ class MarketViewEngine:
             self.session.execute(insert(MarketHealthDaily).values(rows))
 
     def _build_exposure_rows(self, *, business_date: date) -> list[dict[str, object]]:
+        as_of_ts_utc = self.session.scalar(
+            select(func.max(MarketHealthDaily.as_of_ts_utc)).where(
+                MarketHealthDaily.business_date == business_date
+            )
+        )
         health_rows = self.session.execute(
             select(
                 MarketExposureComponent.market_exposure_id,
@@ -215,7 +220,10 @@ class MarketViewEngine:
                 Token.symbol,
             ).outerjoin(Token, Token.token_id == MarketExposure.supply_token_id)
         ).all()
-        usage_by_slug = build_market_exposure_usage_metrics(self.session)
+        usage_by_slug = build_market_exposure_usage_metrics(
+            self.session,
+            as_of_ts_utc=as_of_ts_utc,
+        )
         usage_map = {
             int(market_exposure_id): usage_by_slug.get(
                 str(exposure_slug),

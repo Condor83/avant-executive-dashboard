@@ -48,6 +48,7 @@ MARKET_COLLATERAL_TOKEN = aliased(Token)
 ACTIVE_ALERT_STATUSES = ("open", "ack")
 ZERO = Decimal("0")
 ONE = Decimal("1")
+BORROW_SHARE_EPSILON = Decimal("0.0001")
 
 
 def _alert_row(alert: Alert) -> AlertRow:
@@ -211,10 +212,18 @@ def _build_exposure_context(
     business_date: date,
     exposure_ids: list[int],
 ) -> dict[int, dict[str, Decimal | None]]:
+    as_of_ts_utc = session.scalar(
+        select(func.max(MarketHealthDaily.as_of_ts_utc)).where(
+            MarketHealthDaily.business_date == business_date
+        )
+    )
     component_rows_by_exposure = _load_component_context(
         session, business_date=business_date, exposure_ids=exposure_ids
     )
-    metrics_by_slug = build_market_exposure_usage_metrics(session)
+    metrics_by_slug = build_market_exposure_usage_metrics(
+        session,
+        as_of_ts_utc=as_of_ts_utc,
+    )
     exposure_slug_rows = session.execute(
         select(MarketExposure.market_exposure_id, MarketExposure.exposure_slug).where(
             MarketExposure.market_exposure_id.in_(exposure_ids)
@@ -365,7 +374,11 @@ def _build_exposure_row(
     avant_borrow_share = None
     avant_borrow_usd = context.get("avant_borrow_usd")
     if avant_borrow_usd is not None and row.total_borrow_usd > ZERO:
-        avant_borrow_share = avant_borrow_usd / row.total_borrow_usd
+        raw_borrow_share = avant_borrow_usd / row.total_borrow_usd
+        if raw_borrow_share > ONE and raw_borrow_share <= ONE + BORROW_SHARE_EPSILON:
+            avant_borrow_share = ONE
+        else:
+            avant_borrow_share = min(max(raw_borrow_share, ZERO), ONE)
     return MarketExposureRow(
         market_exposure_id=row.market_exposure_id,
         exposure_slug=row.exposure_slug,
