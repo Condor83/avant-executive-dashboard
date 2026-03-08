@@ -40,6 +40,7 @@ class FixtureKaminoClient(KaminoClient):
                     reserve_ref="reserve-syrup",
                     liquidity_token="syrupUSDC",
                     liquidity_token_mint="AvZZF1YaZDziPY2RCK4oJrRVrbN3mTD9NL24hPeaZeUj",
+                    max_ltv=Decimal("0.88"),
                     supply_apy=Decimal("0"),
                     borrow_apy=Decimal("0"),
                     total_supply_usd=Decimal("750000"),
@@ -49,6 +50,7 @@ class FixtureKaminoClient(KaminoClient):
                     reserve_ref="reserve-pyusd",
                     liquidity_token="PYUSD",
                     liquidity_token_mint="2b1kV6DkPAnxd5ixfnxCpjxmKwqjjaYmCZfHsFu24GXo",
+                    max_ltv=Decimal("0"),
                     supply_apy=Decimal("0.061"),
                     borrow_apy=Decimal("0.094"),
                     total_supply_usd=Decimal("1750000"),
@@ -107,6 +109,13 @@ def test_kamino_market_snapshots_follow_canonical_schema() -> None:
         assert Decimal("0") <= snapshot.supply_apy <= Decimal("1")
         assert Decimal("0") <= snapshot.borrow_apy <= Decimal("1")
         assert snapshot.block_number_or_slot is not None
+
+    maple_market = next(
+        snapshot
+        for snapshot in snapshots
+        if snapshot.market_ref == "6WEGfej9B9wjxRs6t4BYpb9iCXd8CpTpJ8fVSNzHCC5y"
+    )
+    assert maple_market.max_ltv == Decimal("0.88")
 
 
 def test_kamino_wallet_positions_follow_canonical_schema() -> None:

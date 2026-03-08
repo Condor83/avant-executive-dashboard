@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 from analytics.risk_engine import (
     MarketRiskRow,
@@ -12,6 +13,7 @@ from analytics.risk_engine import (
     extract_kink_target_from_irm,
     top_markets_by_kink_risk,
 )
+from core.config import load_risk_thresholds_config
 
 
 def test_kink_score_normalizes_utilization_by_target() -> None:
@@ -86,3 +88,9 @@ def test_markets_rank_by_highest_kink_risk_score() -> None:
     ranked = top_markets_by_kink_risk(result, limit=3)
 
     assert [row.market_id for row in ranked] == [3, 2, 1]
+
+
+def test_kamino_uses_explicit_kink_target_override() -> None:
+    thresholds = load_risk_thresholds_config(Path("config/risk_thresholds.yaml"))
+
+    assert thresholds.kink.protocol_target_overrides["kamino"] == Decimal("0.90")

@@ -47,6 +47,7 @@ class KaminoReserveRate:
     reserve_ref: str
     liquidity_token: str | None
     liquidity_token_mint: str | None
+    max_ltv: Decimal | None
     supply_apy: Decimal
     borrow_apy: Decimal
     total_supply_usd: Decimal
@@ -219,6 +220,9 @@ class KaminoApiClient:
                         if isinstance(row.get("liquidityTokenMint"), str)
                         else None
                     ),
+                    max_ltv=normalize_rate_to_unit(row.get("maxLtv"))
+                    if row.get("maxLtv") is not None
+                    else None,
                     supply_apy=supply_apy,
                     borrow_apy=borrow_apy,
                     total_supply_usd=supply_usd,
@@ -596,6 +600,21 @@ class KaminoAdapter:
             return None
         return raw_total / (Decimal("10") ** decimals)
 
+    @staticmethod
+    def _reserve_rate_for_token(
+        reserve_rates: dict[str, KaminoReserveRate],
+        *,
+        symbol: str,
+        mint: str | None,
+    ) -> KaminoReserveRate | None:
+        for rate_row in reserve_rates.values():
+            if mint and rate_row.liquidity_token_mint == mint:
+                return rate_row
+        for rate_row in reserve_rates.values():
+            if rate_row.liquidity_token == symbol:
+                return rate_row
+        return None
+
     def collect_positions(
         self,
         *,
@@ -893,6 +912,14 @@ class KaminoAdapter:
                 if utilization is None:
                     utilization = self._utilization(total_supply_usd, total_borrow_usd)
 
+                collateral_rate: KaminoReserveRate | None = None
+                if market.supply_token is not None:
+                    collateral_rate = self._reserve_rate_for_token(
+                        stats.reserve_rates,
+                        symbol=market.supply_token.symbol,
+                        mint=market.supply_token.mint,
+                    )
+
                 snapshots.append(
                     MarketSnapshotInput(
                         as_of_ts_utc=as_of_ts_utc,
@@ -907,6 +934,7 @@ class KaminoAdapter:
                         source="rpc",
                         block_number_or_slot=stats.slot,
                         available_liquidity_usd=stats.available_liquidity_usd,
+                        max_ltv=collateral_rate.max_ltv if collateral_rate is not None else None,
                         irm_params_json={
                             "market_name": market.name,
                             "raw_payload_keys": sorted(stats.raw_payload.keys())

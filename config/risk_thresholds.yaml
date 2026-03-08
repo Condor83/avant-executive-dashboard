@@ -7,6 +7,7 @@ kink:
   protocol_target_overrides:
     aave_v3: 0.80
     spark: 0.80
+    kamino: 0.90
 
 spread:
   net_spread_apy:
