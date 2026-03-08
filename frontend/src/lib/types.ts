@@ -145,6 +145,22 @@ export interface PortfolioPositionDetailResponse {
   history: PortfolioPositionHistoryPoint[];
 }
 
+export interface WalletSummaryRow {
+  wallet_address: string;
+  wallet_label: string | null;
+  product_code: string | null;
+  product_label: string | null;
+  total_supply_usd: string;
+  total_borrow_usd: string;
+  total_tvl_usd: string;
+}
+
+export interface WalletsResponse {
+  business_date: string;
+  total_count: number;
+  wallets: WalletSummaryRow[];
+}
+
 export interface PositionFilters {
   product_code?: string;
   protocol_code?: string;

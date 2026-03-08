@@ -13,6 +13,7 @@ import type {
   PortfolioSummaryResponse,
   SummaryResponse,
   UiMetadataResponse,
+  WalletsResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -54,6 +55,10 @@ export function fetchPositions(filters: PositionFilters = {}): Promise<Portfolio
   if (filters.sort_by) params.sort_by = filters.sort_by;
   if (filters.sort_dir) params.sort_dir = filters.sort_dir;
   return get("/portfolio/positions/current", params);
+}
+
+export function fetchWallets(): Promise<WalletsResponse> {
+  return get("/wallets/current");
 }
 
 export function fetchPositionHistory(
