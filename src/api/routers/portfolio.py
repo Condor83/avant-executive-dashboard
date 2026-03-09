@@ -175,6 +175,20 @@ def _primary_supply_leg(legs: Sequence[PositionLeg]) -> PositionLeg:
     return max(legs, key=lambda leg: (leg.usd_value, leg.symbol or ""))
 
 
+def _aggregate_fee_windows(rows: Sequence[Any]) -> tuple[Any, Any]:
+    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
+    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
+    return apply_fee_waterfall(gross_yield_daily_usd), apply_fee_waterfall(gross_yield_mtd_usd)
+
+
+def _portfolio_leverage_ratio(
+    *,
+    total_supply_usd: Decimal,
+    total_net_equity_usd: Decimal,
+) -> Decimal | None:
+    return leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd)
+
+
 def _build_position_row(position: _PositionAggregate) -> PortfolioPositionRow:
     supply_legs = list(position.supply_legs)
     borrow_legs = list(position.borrow_legs)
@@ -468,14 +482,15 @@ def _paired_reserve_position(rows: list[Any], avg_equity: dict[str, Decimal]) ->
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
     )
-    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
-    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
-    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
-    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
-    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
-    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
-    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
-    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    daily_fees, mtd_fees = _aggregate_fee_windows(rows)
+    gross_yield_daily_usd = daily_fees.gross_yield_usd
+    net_yield_daily_usd = daily_fees.net_yield_usd
+    gross_yield_mtd_usd = mtd_fees.gross_yield_usd
+    net_yield_mtd_usd = mtd_fees.net_yield_usd
+    strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+    avant_gop_daily_usd = daily_fees.avant_gop_usd
+    strategy_fee_mtd_usd = mtd_fees.strategy_fee_usd
+    avant_gop_mtd_usd = mtd_fees.avant_gop_usd
     total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
     total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
     total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
@@ -535,14 +550,15 @@ def _paired_dolomite_position(
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
     )
-    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
-    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
-    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
-    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
-    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
-    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
-    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
-    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    daily_fees, mtd_fees = _aggregate_fee_windows(rows)
+    gross_yield_daily_usd = daily_fees.gross_yield_usd
+    net_yield_daily_usd = daily_fees.net_yield_usd
+    gross_yield_mtd_usd = mtd_fees.gross_yield_usd
+    net_yield_mtd_usd = mtd_fees.net_yield_usd
+    strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+    avant_gop_daily_usd = daily_fees.avant_gop_usd
+    strategy_fee_mtd_usd = mtd_fees.strategy_fee_usd
+    avant_gop_mtd_usd = mtd_fees.avant_gop_usd
     total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
     total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
     total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
@@ -598,14 +614,15 @@ def _paired_zest_position(rows: list[Any], avg_equity: dict[str, Decimal]) -> _P
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
     )
-    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
-    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
-    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
-    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
-    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
-    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
-    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
-    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    daily_fees, mtd_fees = _aggregate_fee_windows(rows)
+    gross_yield_daily_usd = daily_fees.gross_yield_usd
+    net_yield_daily_usd = daily_fees.net_yield_usd
+    gross_yield_mtd_usd = mtd_fees.gross_yield_usd
+    net_yield_mtd_usd = mtd_fees.net_yield_usd
+    strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+    avant_gop_daily_usd = daily_fees.avant_gop_usd
+    strategy_fee_mtd_usd = mtd_fees.strategy_fee_usd
+    avant_gop_mtd_usd = mtd_fees.avant_gop_usd
     total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
     total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
     total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
@@ -660,14 +677,15 @@ def _curated_vault_position(
         protocol_code=supply_row.protocol_code,
         chain_code=supply_row.chain_code,
     )
-    gross_yield_daily_usd = sum((row.gross_yield_daily_usd for row in rows), ZERO)
-    net_yield_daily_usd = sum((row.net_yield_daily_usd for row in rows), ZERO)
-    gross_yield_mtd_usd = sum((row.gross_yield_mtd_usd for row in rows), ZERO)
-    net_yield_mtd_usd = sum((row.net_yield_mtd_usd for row in rows), ZERO)
-    strategy_fee_daily_usd = sum((row.strategy_fee_daily_usd for row in rows), ZERO)
-    avant_gop_daily_usd = sum((row.avant_gop_daily_usd for row in rows), ZERO)
-    strategy_fee_mtd_usd = sum((row.strategy_fee_mtd_usd for row in rows), ZERO)
-    avant_gop_mtd_usd = sum((row.avant_gop_mtd_usd for row in rows), ZERO)
+    daily_fees, mtd_fees = _aggregate_fee_windows(rows)
+    gross_yield_daily_usd = daily_fees.gross_yield_usd
+    net_yield_daily_usd = daily_fees.net_yield_usd
+    gross_yield_mtd_usd = mtd_fees.gross_yield_usd
+    net_yield_mtd_usd = mtd_fees.net_yield_usd
+    strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+    avant_gop_daily_usd = daily_fees.avant_gop_usd
+    strategy_fee_mtd_usd = mtd_fees.strategy_fee_usd
+    avant_gop_mtd_usd = mtd_fees.avant_gop_usd
     total_supply_usd = sum((row.supply_usd for row in rows), ZERO)
     total_net_equity_usd = sum((row.net_equity_usd for row in rows), ZERO)
     total_avg_equity_usd = sum((avg_equity.get(row.position_key, ZERO) for row in rows), ZERO)
@@ -959,11 +977,9 @@ def _summary_from_positions(
                 YieldDaily.method == METHOD,
             )
         ).one()
-    leverage_values = [position.leverage_ratio for position in positions if position.leverage_ratio]
-    avg_leverage_ratio = (
-        sum((value for value in leverage_values), ZERO) / Decimal(len(leverage_values))
-        if leverage_values
-        else None
+    avg_leverage_ratio = _portfolio_leverage_ratio(
+        total_supply_usd=total_supply_usd,
+        total_net_equity_usd=total_net_equity_usd,
     )
     aggregate_roe_daily = _normalized_roe(
         total_gross_yield_daily_usd / total_net_equity_usd if total_net_equity_usd > ZERO else None
@@ -1085,6 +1101,9 @@ def get_portfolio_summary(session: Session = Depends(get_session)) -> PortfolioS
         total_avant_gop_daily_usd=row.total_avant_gop_daily_usd,
         total_strategy_fee_mtd_usd=row.total_strategy_fee_mtd_usd,
         total_avant_gop_mtd_usd=row.total_avant_gop_mtd_usd,
-        avg_leverage_ratio=row.avg_leverage_ratio,
+        avg_leverage_ratio=_portfolio_leverage_ratio(
+            total_supply_usd=row.total_supply_usd,
+            total_net_equity_usd=row.total_net_equity_usd,
+        ),
         open_position_count=row.open_position_count,
     )

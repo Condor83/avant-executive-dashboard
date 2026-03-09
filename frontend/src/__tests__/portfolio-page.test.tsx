@@ -32,6 +32,7 @@ function makeRow({
   wallet,
   product,
   netEquity,
+  dailyGrossYield,
   dailyNetYield,
 }: {
   key: string;
@@ -39,6 +40,7 @@ function makeRow({
   wallet: string;
   product: string;
   netEquity: string;
+  dailyGrossYield: string;
   dailyNetYield: string;
 }): PortfolioPositionRow {
   return {
@@ -83,7 +85,7 @@ function makeRow({
       net_roe_annualized: dailyNetYield === "0" ? "0" : "29.20",
     },
     yield_daily: {
-      gross_yield_usd: dailyNetYield,
+      gross_yield_usd: dailyGrossYield,
       strategy_fee_usd: "10",
       avant_gop_usd: "5",
       net_yield_usd: dailyNetYield,
@@ -171,6 +173,7 @@ describe("PortfolioPage", () => {
             wallet: "wallet-aaa",
             product: "stablecoin_senior",
             netEquity: "1000",
+            dailyGrossYield: "65",
             dailyNetYield: "50",
           }),
           makeRow({
@@ -179,6 +182,7 @@ describe("PortfolioPage", () => {
             wallet: "wallet-bbb",
             product: "stablecoin_senior",
             netEquity: "3000",
+            dailyGrossYield: "25",
             dailyNetYield: "10",
           }),
           makeRow({
@@ -187,6 +191,7 @@ describe("PortfolioPage", () => {
             wallet: "wallet-ccc",
             product: "stablecoin_senior",
             netEquity: "2000",
+            dailyGrossYield: "115",
             dailyNetYield: "100",
           }),
         ],
@@ -217,6 +222,7 @@ describe("PortfolioPage", () => {
     expect(order[0]).toContain("BBB");
     expect(order[1]).toContain("CCC");
     expect(order[2]).toContain("AAA");
+    expect(screen.getByText("Daily Gross Yield")).toBeTruthy();
   });
 
   it("sorts locally from header clicks without writing sort params to the URL", () => {

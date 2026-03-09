@@ -14,6 +14,7 @@ from api.schemas.common import FreshnessSummary
 from api.schemas.markets import MarketSummaryResponse
 from api.schemas.portfolio import PortfolioSummaryResponse
 from api.schemas.summary import ExecutiveSummarySnapshot, SummaryResponse
+from core.dashboard_contracts import leverage_ratio
 from core.db.models import (
     DataQuality,
     ExecutiveSummaryDaily,
@@ -41,6 +42,14 @@ def _annualize_daily_roe(value: Decimal | None) -> Decimal | None:
     if normalized is None:
         return None
     return normalized * ANNUALIZATION_DAYS
+
+
+def _portfolio_leverage_ratio(
+    *,
+    total_supply_usd: Decimal,
+    total_net_equity_usd: Decimal,
+) -> Decimal | None:
+    return leverage_ratio(supply_usd=total_supply_usd, equity_usd=total_net_equity_usd)
 
 
 def _freshness(session: Session) -> FreshnessSummary:
@@ -91,7 +100,10 @@ def _portfolio_summary(session: Session, business_date: date) -> PortfolioSummar
         total_avant_gop_daily_usd=row.total_avant_gop_daily_usd,
         total_strategy_fee_mtd_usd=row.total_strategy_fee_mtd_usd,
         total_avant_gop_mtd_usd=row.total_avant_gop_mtd_usd,
-        avg_leverage_ratio=row.avg_leverage_ratio,
+        avg_leverage_ratio=_portfolio_leverage_ratio(
+            total_supply_usd=row.total_supply_usd,
+            total_net_equity_usd=row.total_net_equity_usd,
+        ),
         open_position_count=row.open_position_count,
     )
 

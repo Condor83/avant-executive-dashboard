@@ -427,14 +427,9 @@ class PortfolioViewEngine:
                 total_strategy_fee_mtd_usd,
                 total_avant_gop_mtd_usd,
             ) = month_to_date_yield_row
-            leverage_values = [
-                row["leverage_ratio"] for row in scope_rows if row["leverage_ratio"] is not None
-            ]
-            avg_leverage_ratio = (
-                sum((Decimal(str(value)) for value in leverage_values), ZERO)
-                / Decimal(len(leverage_values))
-                if leverage_values
-                else None
+            avg_leverage_ratio = leverage_ratio(
+                supply_usd=total_supply_usd,
+                equity_usd=total_net_equity_usd,
             )
             aggregate_roe = (
                 total_gross_yield_daily_usd / total_net_equity_usd

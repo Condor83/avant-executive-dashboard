@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from analytics.fee_engine import apply_fee_waterfall
 from analytics.portfolio_views import PortfolioViewEngine
 from core.db.models import (
     Chain,
@@ -145,10 +147,8 @@ def test_positions_current_pairs_split_reserve_rows(
             "borrow_apy": Decimal("0"),
             "reward_apy": Decimal("0.01"),
             "net_equity_usd": Decimal("1500"),
-            "gross_yield_daily_usd": Decimal("15"),
-            "net_yield_daily_usd": Decimal("15"),
-            "gross_yield_mtd_usd": Decimal("150"),
-            "net_yield_mtd_usd": Decimal("150"),
+            "gross_yield_daily_usd": Decimal("35"),
+            "gross_yield_mtd_usd": Decimal("350"),
             "avg_equity_usd": Decimal("300"),
         },
         {
@@ -165,10 +165,8 @@ def test_positions_current_pairs_split_reserve_rows(
             "borrow_apy": Decimal("0.04"),
             "reward_apy": Decimal("0"),
             "net_equity_usd": Decimal("-600"),
-            "gross_yield_daily_usd": Decimal("6"),
-            "net_yield_daily_usd": Decimal("6"),
-            "gross_yield_mtd_usd": Decimal("60"),
-            "net_yield_mtd_usd": Decimal("60"),
+            "gross_yield_daily_usd": Decimal("-6"),
+            "gross_yield_mtd_usd": Decimal("-60"),
             "avg_equity_usd": Decimal("120"),
         },
         {
@@ -185,13 +183,21 @@ def test_positions_current_pairs_split_reserve_rows(
             "borrow_apy": Decimal("0.03"),
             "reward_apy": Decimal("0"),
             "net_equity_usd": Decimal("-400"),
-            "gross_yield_daily_usd": Decimal("4"),
-            "net_yield_daily_usd": Decimal("4"),
-            "gross_yield_mtd_usd": Decimal("40"),
-            "net_yield_mtd_usd": Decimal("40"),
+            "gross_yield_daily_usd": Decimal("-4"),
+            "gross_yield_mtd_usd": Decimal("-40"),
             "avg_equity_usd": Decimal("80"),
         },
     ]
+
+    for row in rows:
+        daily_fees = apply_fee_waterfall(cast(Decimal, row["gross_yield_daily_usd"]))
+        mtd_fees = apply_fee_waterfall(cast(Decimal, row["gross_yield_mtd_usd"]))
+        row["strategy_fee_daily_usd"] = daily_fees.strategy_fee_usd
+        row["avant_gop_daily_usd"] = daily_fees.avant_gop_usd
+        row["net_yield_daily_usd"] = daily_fees.net_yield_usd
+        row["strategy_fee_mtd_usd"] = mtd_fees.strategy_fee_usd
+        row["avant_gop_mtd_usd"] = mtd_fees.avant_gop_usd
+        row["net_yield_mtd_usd"] = mtd_fees.net_yield_usd
 
     now = datetime.now(UTC)
     positions: list[Position] = []
@@ -241,10 +247,10 @@ def test_positions_current_pairs_split_reserve_rows(
                 net_yield_daily_usd=row["net_yield_daily_usd"],
                 gross_yield_mtd_usd=row["gross_yield_mtd_usd"],
                 net_yield_mtd_usd=row["net_yield_mtd_usd"],
-                strategy_fee_daily_usd=Decimal("0"),
-                avant_gop_daily_usd=Decimal("0"),
-                strategy_fee_mtd_usd=Decimal("0"),
-                avant_gop_mtd_usd=Decimal("0"),
+                strategy_fee_daily_usd=row["strategy_fee_daily_usd"],
+                avant_gop_daily_usd=row["avant_gop_daily_usd"],
+                strategy_fee_mtd_usd=row["strategy_fee_mtd_usd"],
+                avant_gop_mtd_usd=row["avant_gop_mtd_usd"],
                 gross_roe=None,
                 net_roe=None,
             )
@@ -263,8 +269,8 @@ def test_positions_current_pairs_split_reserve_rows(
                 health_factor=Decimal("1.40"),
                 gross_yield_usd=row["gross_yield_daily_usd"],
                 net_yield_usd=row["net_yield_daily_usd"],
-                strategy_fee_usd=Decimal("0"),
-                avant_gop_usd=Decimal("0"),
+                strategy_fee_usd=row["strategy_fee_daily_usd"],
+                avant_gop_usd=row["avant_gop_daily_usd"],
                 gross_roe=None,
                 net_roe=None,
             )
@@ -279,8 +285,8 @@ def test_positions_current_pairs_split_reserve_rows(
                 row_key=f"position:{row['position_key']}",
                 position_key=row["position_key"],
                 gross_yield_usd=row["gross_yield_daily_usd"],
-                strategy_fee_usd=Decimal("0"),
-                avant_gop_usd=Decimal("0"),
+                strategy_fee_usd=row["strategy_fee_daily_usd"],
+                avant_gop_usd=row["avant_gop_daily_usd"],
                 net_yield_usd=row["net_yield_daily_usd"],
                 avg_equity_usd=row["avg_equity_usd"],
                 gross_roe=None,
@@ -305,6 +311,14 @@ def test_positions_current_pairs_split_reserve_rows(
     assert Decimal(paired["leverage_ratio"]) == Decimal("3")
     assert Decimal(paired["roe"]["gross_roe_daily"]) == Decimal("0.05")
     assert Decimal(paired["roe"]["gross_roe_annualized"]) == Decimal("18.25")
+    assert Decimal(paired["yield_daily"]["gross_yield_usd"]) == Decimal("25")
+    assert Decimal(paired["yield_daily"]["strategy_fee_usd"]) == Decimal("3.75")
+    assert Decimal(paired["yield_daily"]["avant_gop_usd"]) == Decimal("2.125")
+    assert Decimal(paired["yield_daily"]["net_yield_usd"]) == Decimal("19.125")
+    assert Decimal(paired["yield_mtd"]["gross_yield_usd"]) == Decimal("250")
+    assert Decimal(paired["yield_mtd"]["strategy_fee_usd"]) == Decimal("37.5")
+    assert Decimal(paired["yield_mtd"]["avant_gop_usd"]) == Decimal("21.25")
+    assert Decimal(paired["yield_mtd"]["net_yield_usd"]) == Decimal("191.25")
 
     history = client.get(f"/portfolio/positions/{paired['position_key']}/history?days=30").json()
     assert len(history["history"]) == 1

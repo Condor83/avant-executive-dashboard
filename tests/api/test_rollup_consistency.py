@@ -39,6 +39,10 @@ def test_positions_sum_to_portfolio_summary(api_client: tuple[TestClient, SeedMe
     assert _approx_eq(total_equity, Decimal(summary["total_net_equity_usd"]))
     assert _approx_eq(total_supply, Decimal(summary["total_supply_usd"]))
     assert _approx_eq(total_borrow, Decimal(summary["total_borrow_usd"]))
+    assert _approx_eq(
+        Decimal(summary["avg_leverage_ratio"]),
+        total_supply / total_equity,
+    )
 
 
 def test_executive_summary_matches_portfolio_and_market_summaries(

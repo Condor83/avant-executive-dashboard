@@ -381,7 +381,7 @@ Daily Portfolio rollup used by `/portfolio/summary` and executive summary.
 - total_avant_gop_daily_usd
 - total_strategy_fee_mtd_usd
 - total_avant_gop_mtd_usd
-- avg_leverage_ratio (nullable)
+- avg_leverage_ratio (nullable; computed as `total_supply_usd / total_net_equity_usd`)
 - open_position_count
 
 ### Wallets served view

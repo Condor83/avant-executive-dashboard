@@ -257,6 +257,20 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       cell: (row) => <DecimalCell value={row.leverage_ratio} formatter={formatRatio} />,
     },
     {
+      key: "daily_gross_yield",
+      header: "Daily Gross Yield",
+      align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.yield_daily.gross_yield_usd),
+      cell: (row) => (
+        <DecimalCell
+          value={row.yield_daily.gross_yield_usd}
+          formatter={formatUSDCompact}
+          colored
+        />
+      ),
+    },
+    {
       key: "daily_net_yield",
       header: "Daily Net Yield",
       align: "right",

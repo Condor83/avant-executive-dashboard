@@ -1,12 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { AlertTriangle } from "lucide-react";
-import { FeeWaterfallChart } from "@/components/charts/fee-waterfall-chart";
+import { useState } from "react";
+
 import { PageContainer } from "@/components/layout/page-container";
 import { ErrorState } from "@/components/shared/error-state";
-import { FreshnessIndicator } from "@/components/shared/freshness-indicator";
 import { KpiCardSkeleton } from "@/components/shared/kpi-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -14,13 +12,12 @@ import { useSummary } from "@/lib/hooks/use-summary";
 import { cn } from "@/lib/utils";
 import {
   financialColor,
-  formatDate,
   formatPercent,
   formatRatio,
   formatROE,
   formatUSDCompact,
 } from "@/lib/formatters";
-import type { YieldWindow } from "@/lib/types";
+
 
 type CashWindow = "daily" | "mtd";
 const ANNUALIZATION_DAYS = 365;
@@ -37,31 +34,7 @@ function annualizeDailyRoe(value: string | null | undefined): string | null {
   return String(parsed * ANNUALIZATION_DAYS);
 }
 
-function waterfallMetrics(window: CashWindow, summary: ReturnType<typeof useSummary>["data"]): YieldWindow {
-  if (!summary) {
-    return {
-      gross_yield_usd: "0",
-      strategy_fee_usd: "0",
-      avant_gop_usd: "0",
-      net_yield_usd: "0",
-    };
-  }
 
-  const executive = summary.executive;
-  return window === "daily"
-    ? {
-      gross_yield_usd: executive.total_gross_yield_daily_usd,
-      strategy_fee_usd: executive.total_strategy_fee_daily_usd,
-      avant_gop_usd: executive.total_avant_gop_daily_usd,
-      net_yield_usd: executive.total_net_yield_daily_usd,
-    }
-    : {
-      gross_yield_usd: executive.total_gross_yield_mtd_usd,
-      strategy_fee_usd: executive.total_strategy_fee_mtd_usd,
-      avant_gop_usd: executive.total_avant_gop_mtd_usd,
-      net_yield_usd: executive.total_net_yield_mtd_usd,
-    };
-}
 
 function display(value: string): string {
   return value === "---" ? EM_DASH : value;
@@ -109,7 +82,7 @@ export default function SummaryPage() {
   const { data, isLoading, error, refetch } = useSummary();
   const [cashWindow, setCashWindow] = useState<CashWindow>("mtd");
 
-  const cashMetrics = useMemo(() => waterfallMetrics(cashWindow, data), [cashWindow, data]);
+
 
   if (error) {
     return (
@@ -131,7 +104,6 @@ export default function SummaryPage() {
     );
   }
 
-  const freshness = data.freshness;
   const executive = data.executive;
   const portfolioSummary = data.portfolio_summary;
   const marketSummary = data.market_summary;
@@ -171,23 +143,47 @@ export default function SummaryPage() {
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[2fr_1fr]">
           {/* Primary Strategy NAV Hub */}
-          <div className="flex flex-col gap-6">
-            <div>
-              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Deployed Strategy NAV</div>
-              <div className={cn("text-6xl font-light tracking-tight tabular-nums mt-1", financialColor(executive.portfolio_net_equity_usd))}>
-                {displayUSD(executive.portfolio_net_equity_usd)}
+          <div className="flex flex-col gap-8">
+            <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Deployed Strategy NAV</div>
+                <div className={cn("text-6xl font-light tracking-tight tabular-nums mt-1", financialColor(executive.portfolio_net_equity_usd))}>
+                  {displayUSD(executive.portfolio_net_equity_usd)}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between gap-8">
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Cash Flow Ledger</div>
+                  <div className="inline-flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn("h-6 px-2 text-[10px] uppercase tracking-wider", cashWindow === "daily" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50")}
+                      onClick={() => setCashWindow("daily")}
+                    >
+                      1D
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className={cn("h-6 px-2 text-[10px] uppercase tracking-wider", cashWindow === "mtd" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50")}
+                      onClick={() => setCashWindow("mtd")}
+                    >
+                      MTD
+                    </Button>
+                  </div>
+                </div>
+                <div className="flex gap-8">
+                  <SummaryStat label="Gross" value={displayUSD(grossYieldSelected)} valueClassName={financialColor(grossYieldSelected)} />
+                  <SummaryStat label="Fee" value={displayUSD(strategyFeeSelected)} valueClassName={financialColor(strategyFeeSelected)} />
+                  <SummaryStat label="GOP" value={displayUSD(avantGopSelected)} valueClassName={financialColor(avantGopSelected)} />
+                  <SummaryStat label="Net" value={displayUSD(netYieldSelected)} valueClassName={financialColor(netYieldSelected)} />
+                </div>
               </div>
             </div>
 
             <div className="flex items-end gap-12">
-              <div>
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Net Yield MTD</div>
-                <div className={cn("text-3xl font-medium tracking-tight tabular-nums mt-1", financialColor(executive.total_net_yield_mtd_usd))}>
-                  {displayUSD(executive.total_net_yield_mtd_usd)}
-                </div>
-                <div className="text-xs text-muted-foreground mt-1">1D {displayUSD(executive.total_net_yield_daily_usd)}</div>
-              </div>
-
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Portfolio ROE</div>
                 <div className="text-3xl font-medium tracking-tight tabular-nums mt-1 text-foreground">
@@ -246,62 +242,7 @@ export default function SummaryPage() {
         </Card>
       </section>
 
-      <section>
-        <div className="mb-6 flex flex-col gap-2 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
-          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Cash Flow Ledger</h2>
-          <div className="inline-flex gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cashWindow === "daily" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50"}
-              onClick={() => setCashWindow("daily")}
-            >
-              Daily
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cashWindow === "mtd" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50"}
-              onClick={() => setCashWindow("mtd")}
-            >
-              MTD
-            </Button>
-          </div>
-        </div>
 
-        <div className="mb-8 grid grid-cols-2 gap-8 lg:grid-cols-4">
-          <SummaryStat
-            label={cashWindow === "daily" ? "Gross Yield (1D)" : "Gross Yield (MTD)"}
-            value={displayUSD(grossYieldSelected)}
-            valueClassName={financialColor(grossYieldSelected)}
-          />
-          <SummaryStat
-            label={cashWindow === "daily" ? "Strategy Fee (1D)" : "Strategy Fee (MTD)"}
-            value={displayUSD(strategyFeeSelected)}
-            valueClassName={financialColor(strategyFeeSelected)}
-          />
-          <SummaryStat
-            label={cashWindow === "daily" ? "Avant GOP (1D)" : "Avant GOP (MTD)"}
-            value={displayUSD(avantGopSelected)}
-            valueClassName={financialColor(avantGopSelected)}
-          />
-          <SummaryStat
-            label={cashWindow === "daily" ? "Net Yield (1D)" : "Net Yield (MTD)"}
-            value={displayUSD(netYieldSelected)}
-            valueClassName={financialColor(netYieldSelected)}
-          />
-        </div>
-
-        <div className="aspect-[3/1] w-full mt-4">
-          <FeeWaterfallChart
-            metrics={cashMetrics}
-            grossLabel={cashWindow === "daily" ? "Gross Yield (1D)" : "Gross Yield (MTD)"}
-            feeLabel={cashWindow === "daily" ? "Strategy Fee (1D)" : "Strategy Fee (MTD)"}
-            gopLabel={cashWindow === "daily" ? "Avant GOP (1D)" : "Avant GOP (MTD)"}
-            netLabel={cashWindow === "daily" ? "Net Yield (1D)" : "Net Yield (MTD)"}
-          />
-        </div>
-      </section>
     </PageContainer>
   );
 }
