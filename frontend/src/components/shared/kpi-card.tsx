@@ -18,7 +18,7 @@ export function KpiCard({
   compact,
 }: KpiCardProps) {
   return (
-    <Card className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+    <Card className="px-5 py-4">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
       </p>
@@ -40,7 +40,7 @@ export function KpiCard({
 
 export function KpiCardSkeleton({ compact }: { compact?: boolean }) {
   return (
-    <Card className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+    <Card className="px-5 py-4">
       <Skeleton className="h-3 w-20" />
       <Skeleton className={cn("mt-2", compact ? "h-6 w-28" : "h-8 w-36")} />
     </Card>

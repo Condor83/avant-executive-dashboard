@@ -113,7 +113,21 @@ function exposureColumns(): Column<MarketExposureRow>[] {
       key: "utilization",
       header: "Borrow Utilization Rate",
       align: "right",
-      cell: (row) => <DecimalCell value={row.utilization} formatter={formatPercent} />,
+      cell: (row) => {
+        const utilPercent = Number(row.utilization) * 100;
+        const validUtil = Number.isFinite(utilPercent) ? Math.min(Math.max(utilPercent, 0), 100) : 0;
+        return (
+          <div className="flex flex-col items-end justify-center gap-1.5 pt-1">
+            <span className="leading-none">{formatPercent(row.utilization)}</span>
+            <div className="w-16 h-[2px] bg-muted overflow-hidden rounded-full">
+              <div
+                className="h-full bg-avant-navy transition-all border-none"
+                style={{ width: `${validUtil}%` }}
+              />
+            </div>
+          </div>
+        );
+      },
     },
     {
       key: "distance_to_kink",
@@ -132,7 +146,7 @@ function filterSelect(
 ) {
   return (
     <Select value={value ?? "__all__"} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[170px] text-xs">
+      <SelectTrigger className="h-8 w-[150px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -225,7 +239,7 @@ function MarketsContent() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Market Exposures</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Exposures</h2>
         <DataTable
           columns={exposureColumns()}
           data={exposures.data ?? []}
@@ -251,7 +265,7 @@ function MarketsContent() {
                 value={filters.watch_only ? "true" : "__all__"}
                 onValueChange={(value) => setParam("watch_only", value)}
               >
-                <SelectTrigger className="h-8 w-[140px] text-xs">
+                <SelectTrigger className="h-8 w-[140px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
                   <SelectValue placeholder="Watchlist" />
                 </SelectTrigger>
                 <SelectContent>

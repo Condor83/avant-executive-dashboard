@@ -7,10 +7,11 @@ import { FeeWaterfallChart } from "@/components/charts/fee-waterfall-chart";
 import { PageContainer } from "@/components/layout/page-container";
 import { ErrorState } from "@/components/shared/error-state";
 import { FreshnessIndicator } from "@/components/shared/freshness-indicator";
-import { KpiCard, KpiCardSkeleton } from "@/components/shared/kpi-card";
+import { KpiCardSkeleton } from "@/components/shared/kpi-card";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useSummary } from "@/lib/hooks/use-summary";
+import { cn } from "@/lib/utils";
 import {
   financialColor,
   formatDate,
@@ -49,17 +50,17 @@ function waterfallMetrics(window: CashWindow, summary: ReturnType<typeof useSumm
   const executive = summary.executive;
   return window === "daily"
     ? {
-        gross_yield_usd: executive.total_gross_yield_daily_usd,
-        strategy_fee_usd: executive.total_strategy_fee_daily_usd,
-        avant_gop_usd: executive.total_avant_gop_daily_usd,
-        net_yield_usd: executive.total_net_yield_daily_usd,
-      }
+      gross_yield_usd: executive.total_gross_yield_daily_usd,
+      strategy_fee_usd: executive.total_strategy_fee_daily_usd,
+      avant_gop_usd: executive.total_avant_gop_daily_usd,
+      net_yield_usd: executive.total_net_yield_daily_usd,
+    }
     : {
-        gross_yield_usd: executive.total_gross_yield_mtd_usd,
-        strategy_fee_usd: executive.total_strategy_fee_mtd_usd,
-        avant_gop_usd: executive.total_avant_gop_mtd_usd,
-        net_yield_usd: executive.total_net_yield_mtd_usd,
-      };
+      gross_yield_usd: executive.total_gross_yield_mtd_usd,
+      strategy_fee_usd: executive.total_strategy_fee_mtd_usd,
+      avant_gop_usd: executive.total_avant_gop_mtd_usd,
+      net_yield_usd: executive.total_net_yield_mtd_usd,
+    };
 }
 
 function display(value: string): string {
@@ -94,12 +95,12 @@ function SummaryStat({
   valueClassName?: string;
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className={`mt-1 text-xl font-semibold tabular-nums ${valueClassName ?? "text-slate-900"}`}>
+    <div className="flex flex-col">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold tabular-nums ${valueClassName ?? "text-foreground"}`}>
         {value}
       </p>
-      {subtitle ? <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p> : null}
+      {subtitle ? <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p> : null}
     </div>
   );
 }
@@ -165,112 +166,94 @@ export default function SummaryPage() {
 
   return (
     <PageContainer title="Executive Summary">
-      <div className="mb-6 flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-white px-5 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-medium text-slate-500">Business Date:</span>
-          <span className="text-sm font-medium text-slate-700">{formatDate(data.business_date)}</span>
-        </div>
-        <div className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-600">
-          Strategy Only
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-medium text-slate-500">Positions:</span>
-          <FreshnessIndicator hours={freshness.position_snapshot_age_hours} />
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-medium text-slate-500">Markets:</span>
-          <FreshnessIndicator hours={freshness.market_snapshot_age_hours} />
-        </div>
-        <Link
-          href="/risk"
-          className="ml-auto flex items-center gap-1.5 text-xs font-medium text-amber-700 hover:text-amber-900"
-        >
-          <AlertTriangle className="h-3.5 w-3.5" />
-          {freshness.open_dq_issues_24h} DQ issue{freshness.open_dq_issues_24h !== 1 ? "s" : ""} (24h)
-        </Link>
-      </div>
+      <section className="mb-12 mt-4">
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Command Horizon</h2>
 
-      <section className="mb-8">
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Executive Snapshot</h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          <KpiCard
-            label="Deployed Strategy NAV"
-            value={displayUSD(executive.portfolio_net_equity_usd)}
-            valueClassName={financialColor(executive.portfolio_net_equity_usd)}
-          />
-          <KpiCard
-            label="Market Stability Ops"
-            value={displayUSD(executive.market_stability_ops_net_equity_usd)}
-            subtitle="Trader Joe + Etherex"
-          />
-          <KpiCard
-            label="Portfolio ROE"
-            value={displayROE(portfolioRoeAnnualized)}
-            subtitle={`1D ${displayROE(portfolioRoeDaily)}`}
-          />
-          <KpiCard
-            label="Net Yield MTD"
-            value={displayUSD(executive.total_net_yield_mtd_usd)}
-            subtitle={`1D ${displayUSD(executive.total_net_yield_daily_usd)}`}
-            valueClassName={financialColor(executive.total_net_yield_mtd_usd)}
-          />
-          <KpiCard
-            label="Avant GOP MTD"
-            value={displayUSD(executive.total_avant_gop_mtd_usd)}
-            subtitle={`1D ${displayUSD(executive.total_avant_gop_daily_usd)}`}
-            valueClassName={financialColor(executive.total_avant_gop_mtd_usd)}
-          />
+        <div className="grid grid-cols-1 gap-12 lg:grid-cols-[2fr_1fr]">
+          {/* Primary Strategy NAV Hub */}
+          <div className="flex flex-col gap-6">
+            <div>
+              <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Deployed Strategy NAV</div>
+              <div className={cn("text-6xl font-light tracking-tight tabular-nums mt-1", financialColor(executive.portfolio_net_equity_usd))}>
+                {displayUSD(executive.portfolio_net_equity_usd)}
+              </div>
+            </div>
+
+            <div className="flex items-end gap-12">
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Net Yield MTD</div>
+                <div className={cn("text-3xl font-medium tracking-tight tabular-nums mt-1", financialColor(executive.total_net_yield_mtd_usd))}>
+                  {displayUSD(executive.total_net_yield_mtd_usd)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">1D {displayUSD(executive.total_net_yield_daily_usd)}</div>
+              </div>
+
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Portfolio ROE</div>
+                <div className="text-3xl font-medium tracking-tight tabular-nums mt-1 text-foreground">
+                  {displayROE(portfolioRoeAnnualized)}
+                </div>
+                <div className="text-xs text-muted-foreground mt-1">1D {displayROE(portfolioRoeDaily)}</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Market Stability Ops (Secondary) */}
+          <div className="flex flex-col justify-end border-l border-border pl-12 pb-1">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Stability Ops</div>
+            <div className="text-4xl font-light tracking-tight tabular-nums mt-1 text-foreground">
+              {displayUSD(executive.market_stability_ops_net_equity_usd)}
+            </div>
+            <div className="text-sm text-muted-foreground mt-2">Trader Joe + Etherex</div>
+          </div>
         </div>
       </section>
 
-      <section className="mb-8 grid gap-4 lg:grid-cols-2">
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+      <section className="mb-12 grid gap-6 lg:grid-cols-2">
+        <Card className="p-8">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Portfolio Shape</p>
-              <p className="mt-1 text-sm text-slate-600">Deployed, yield-generating strategy capital.</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Portfolio Shape</p>
+              <p className="mt-1 text-sm text-foreground/80">Deployed, yield-generating strategy capital.</p>
             </div>
-            <Link href="/portfolio" className="text-sm font-medium text-teal-700 hover:text-teal-900">
-              Open Portfolio
+            <Link href="/portfolio" className="text-xs font-medium uppercase tracking-widest text-avant-success hover:text-foreground transition-colors">
+              ↳ Open Portfolio
             </Link>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-4">
+          <div className="mt-8 grid grid-cols-2 gap-y-8 gap-x-4">
             <SummaryStat label="Supply" value={displayUSD(portfolioSummary?.total_supply_usd)} />
             <SummaryStat label="Borrow" value={displayUSD(portfolioSummary?.total_borrow_usd)} />
             <SummaryStat label="Avg Leverage" value={displayRatio(portfolioSummary?.avg_leverage_ratio)} />
             <SummaryStat label="Open Positions" value={String(portfolioSummary?.open_position_count ?? 0)} />
           </div>
         </Card>
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="p-8">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Market &amp; Risk Posture</p>
-              <p className="mt-1 text-sm text-slate-600">Current alerting, stress, and liquidity posture.</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market &amp; Risk Posture</p>
+              <p className="mt-1 text-sm text-foreground/80">Current alerting, stress, and liquidity posture.</p>
             </div>
-            <Link href="/markets" className="text-sm font-medium text-teal-700 hover:text-teal-900">
-              Open Markets
+            <Link href="/markets" className="text-xs font-medium uppercase tracking-widest text-avant-warning hover:text-foreground transition-colors">
+              ↳ Open Markets
             </Link>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <SummaryStat label="Open Alerts" value={String(executive.open_alert_count)} />
-            <SummaryStat label="Markets At Risk" value={String(executive.markets_at_risk_count)} />
-            <SummaryStat label="Weighted Utilization" value={displayPercent(marketSummary?.weighted_utilization)} />
-            <SummaryStat label="Available Liquidity" value={displayUSD(marketSummary?.total_available_liquidity_usd)} />
-          </div>
-          <div className="mt-4 border-t border-slate-200 pt-4 text-sm text-slate-600">
-            Watchlist: <span className="font-medium text-slate-900">{marketSummary?.markets_on_watchlist_count ?? 0}</span>
+          <div className="mt-8 grid grid-cols-2 gap-y-8 gap-x-4">
+            <SummaryStat label="Open Alerts" value={String(executive.open_alert_count)} valueClassName={executive.open_alert_count > 0 ? "text-avant-danger" : "text-foreground"} />
+            <SummaryStat label="Markets At Risk" value={String(executive.markets_at_risk_count)} valueClassName={executive.markets_at_risk_count > 0 ? "text-avant-danger" : "text-foreground"} />
+            <SummaryStat label="Weighted Util" value={displayPercent(marketSummary?.weighted_utilization)} />
+            <SummaryStat label="Avail Liquidity" value={displayUSD(marketSummary?.total_available_liquidity_usd)} />
           </div>
         </Card>
       </section>
 
       <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-medium text-slate-800">Cash Flow Waterfall</h2>
-          <div className="inline-flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5">
+        <div className="mb-6 flex flex-col gap-2 border-b border-border pb-4 lg:flex-row lg:items-center lg:justify-between">
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Cash Flow Ledger</h2>
+          <div className="inline-flex gap-1">
             <Button
               variant="ghost"
               size="sm"
-              className={cashWindow === "daily" ? "bg-teal-50 text-teal-800" : "text-slate-600"}
+              className={cashWindow === "daily" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50"}
               onClick={() => setCashWindow("daily")}
             >
               Daily
@@ -278,36 +261,38 @@ export default function SummaryPage() {
             <Button
               variant="ghost"
               size="sm"
-              className={cashWindow === "mtd" ? "bg-teal-50 text-teal-800" : "text-slate-600"}
+              className={cashWindow === "mtd" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50"}
               onClick={() => setCashWindow("mtd")}
             >
               MTD
             </Button>
           </div>
         </div>
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <SummaryStat
-              label={cashWindow === "daily" ? "Gross Yield (1D)" : "Gross Yield (MTD)"}
-              value={displayUSD(grossYieldSelected)}
-              valueClassName={financialColor(grossYieldSelected)}
-            />
-            <SummaryStat
-              label={cashWindow === "daily" ? "Strategy Fee (1D)" : "Strategy Fee (MTD)"}
-              value={displayUSD(strategyFeeSelected)}
-              valueClassName={financialColor(strategyFeeSelected)}
-            />
-            <SummaryStat
-              label={cashWindow === "daily" ? "Avant GOP (1D)" : "Avant GOP (MTD)"}
-              value={displayUSD(avantGopSelected)}
-              valueClassName={financialColor(avantGopSelected)}
-            />
-            <SummaryStat
-              label={cashWindow === "daily" ? "Net Yield (1D)" : "Net Yield (MTD)"}
-              value={displayUSD(netYieldSelected)}
-              valueClassName={financialColor(netYieldSelected)}
-            />
-          </div>
+
+        <div className="mb-8 grid grid-cols-2 gap-8 lg:grid-cols-4">
+          <SummaryStat
+            label={cashWindow === "daily" ? "Gross Yield (1D)" : "Gross Yield (MTD)"}
+            value={displayUSD(grossYieldSelected)}
+            valueClassName={financialColor(grossYieldSelected)}
+          />
+          <SummaryStat
+            label={cashWindow === "daily" ? "Strategy Fee (1D)" : "Strategy Fee (MTD)"}
+            value={displayUSD(strategyFeeSelected)}
+            valueClassName={financialColor(strategyFeeSelected)}
+          />
+          <SummaryStat
+            label={cashWindow === "daily" ? "Avant GOP (1D)" : "Avant GOP (MTD)"}
+            value={displayUSD(avantGopSelected)}
+            valueClassName={financialColor(avantGopSelected)}
+          />
+          <SummaryStat
+            label={cashWindow === "daily" ? "Net Yield (1D)" : "Net Yield (MTD)"}
+            value={displayUSD(netYieldSelected)}
+            valueClassName={financialColor(netYieldSelected)}
+          />
+        </div>
+
+        <div className="aspect-[3/1] w-full mt-4">
           <FeeWaterfallChart
             metrics={cashMetrics}
             grossLabel={cashWindow === "daily" ? "Gross Yield (1D)" : "Gross Yield (MTD)"}
@@ -315,7 +300,7 @@ export default function SummaryPage() {
             gopLabel={cashWindow === "daily" ? "Avant GOP (1D)" : "Avant GOP (MTD)"}
             netLabel={cashWindow === "daily" ? "Net Yield (1D)" : "Net Yield (MTD)"}
           />
-        </Card>
+        </div>
       </section>
     </PageContainer>
   );

@@ -9,6 +9,7 @@ import { KpiCard, KpiCardSkeleton } from "@/components/shared/kpi-card";
 import { SeverityBadge } from "@/components/shared/severity-badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -75,7 +76,7 @@ function filterSelect(
 ) {
   return (
     <Select value={value ?? "__all__"} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[160px] text-xs">
+      <SelectTrigger className="h-8 w-[160px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -120,7 +121,7 @@ export default function RiskPage() {
   return (
     <PageContainer title="Risk & Data Quality">
       <section className="mb-8">
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Data Freshness & Coverage</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Data Freshness & Coverage</h2>
         {dq.isLoading || !dq.data ? (
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
             {Array.from({ length: 4 }).map((_, index) => (
@@ -129,18 +130,18 @@ export default function RiskPage() {
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Position Data</p>
-              <div className="mt-2">
+            <Card className="p-5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Position Data</p>
+              <div className="mt-3">
                 <FreshnessIndicator hours={dq.data.freshness.position_snapshot_age_hours} />
               </div>
-            </div>
-            <div className="rounded-xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Market Data</p>
-              <div className="mt-2">
+            </Card>
+            <Card className="p-5">
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Data</p>
+              <div className="mt-3">
                 <FreshnessIndicator hours={dq.data.freshness.market_snapshot_age_hours} />
               </div>
-            </div>
+            </Card>
             <KpiCard
               compact
               label="Market Coverage"
@@ -156,7 +157,7 @@ export default function RiskPage() {
       </section>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Alerts</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Alerts</h2>
         <DataTable
           columns={ALERT_COLUMNS}
           data={alerts.data ?? []}
@@ -174,7 +175,7 @@ export default function RiskPage() {
 
       <section>
         <div className="mb-3 flex items-center gap-3">
-          <h2 className="text-lg font-medium text-slate-800">Data Quality Issues</h2>
+          <h2 className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Data Quality Issues</h2>
           {dq.data && dq.data.issue_count_24h > 0 && (
             <Badge variant="destructive" className="text-xs">
               {dq.data.issue_count_24h} in 24h

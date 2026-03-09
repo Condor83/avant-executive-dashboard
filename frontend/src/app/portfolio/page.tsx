@@ -324,7 +324,7 @@ function filterSelect(
 ) {
   return (
     <Select value={value ?? "__all__"} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[170px] text-xs">
+      <SelectTrigger className="h-8 w-[150px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -356,7 +356,7 @@ function filterBar(
         type="button"
         variant={showHidden ? "secondary" : "outline"}
         size="sm"
-        className="h-8 text-xs"
+        className="h-8 border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0"
         onClick={() => setParam("show_hidden", showHidden ? "" : "1")}
       >
         {showHidden
@@ -465,7 +465,7 @@ function PortfolioContent() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Core Lending Positions</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Core Lending Positions</h2>
         <DataTable
           columns={positionColumns()}
           data={visiblePositions}

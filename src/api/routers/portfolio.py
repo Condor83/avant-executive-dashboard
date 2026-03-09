@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, aliased
 
+from analytics.fee_engine import apply_fee_waterfall
 from api.deps import get_session
 from api.schemas.common import RoeMetrics, YieldWindow
 from api.schemas.portfolio import (
@@ -911,7 +912,7 @@ def _history_points(
 
 
 def _summary_from_positions(
-    *, business_date: date, positions: list[_PositionAggregate]
+    *, business_date: date, positions: list[_PositionAggregate], session: Session | None = None
 ) -> PortfolioSummaryResponse:
     total_supply_usd = sum(
         (_total_supply_usd(position.supply_legs) for position in positions),
@@ -925,17 +926,39 @@ def _summary_from_positions(
     total_gross_yield_daily_usd = sum(
         (position.gross_yield_daily_usd for position in positions), ZERO
     )
-    total_net_yield_daily_usd = sum((position.net_yield_daily_usd for position in positions), ZERO)
+    daily_fees = apply_fee_waterfall(total_gross_yield_daily_usd)
+    total_net_yield_daily_usd = daily_fees.net_yield_usd
+    total_strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+    total_avant_gop_daily_usd = daily_fees.avant_gop_usd
     total_gross_yield_mtd_usd = sum((position.gross_yield_mtd_usd for position in positions), ZERO)
     total_net_yield_mtd_usd = sum((position.net_yield_mtd_usd for position in positions), ZERO)
-    total_strategy_fee_daily_usd = sum(
-        (position.strategy_fee_daily_usd for position in positions), ZERO
-    )
-    total_avant_gop_daily_usd = sum((position.avant_gop_daily_usd for position in positions), ZERO)
     total_strategy_fee_mtd_usd = sum(
         (position.strategy_fee_mtd_usd for position in positions), ZERO
     )
     total_avant_gop_mtd_usd = sum((position.avant_gop_mtd_usd for position in positions), ZERO)
+    if session is not None:
+        month_start = business_date.replace(day=1)
+        (
+            total_gross_yield_mtd_usd,
+            total_net_yield_mtd_usd,
+            total_strategy_fee_mtd_usd,
+            total_avant_gop_mtd_usd,
+        ) = session.execute(
+            select(
+                func.coalesce(func.sum(YieldDaily.gross_yield_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
+            ).where(
+                YieldDaily.business_date >= month_start,
+                YieldDaily.business_date <= business_date,
+                YieldDaily.position_key.is_(None),
+                YieldDaily.wallet_id.is_(None),
+                YieldDaily.product_id.is_(None),
+                YieldDaily.protocol_id.is_(None),
+                YieldDaily.method == METHOD,
+            )
+        ).one()
     leverage_values = [position.leverage_ratio for position in positions if position.leverage_ratio]
     avg_leverage_ratio = (
         sum((value for value in leverage_values), ZERO) / Decimal(len(leverage_values))
@@ -1029,7 +1052,7 @@ def get_portfolio_summary(session: Session = Depends(get_session)) -> PortfolioS
     business_date = _latest_business_date(session)
     if business_date is None:
         today = datetime.now(UTC).date()
-        return _summary_from_positions(business_date=today, positions=[])
+        return _summary_from_positions(business_date=today, positions=[], session=session)
     row = session.scalar(
         select(PortfolioSummaryDaily).where(
             PortfolioSummaryDaily.business_date == business_date,
@@ -1044,6 +1067,7 @@ def get_portfolio_summary(session: Session = Depends(get_session)) -> PortfolioS
                 business_date=business_date,
                 scope_segment="strategy_only",
             ),
+            session=session,
         )
     return PortfolioSummaryResponse(
         business_date=row.business_date,

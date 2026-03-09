@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryProvider } from "@/providers/query-provider";
 import { Sidebar } from "@/components/layout/sidebar";
+import { StatusRail } from "@/components/layout/status-rail";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -33,7 +34,8 @@ export default function RootLayout({
         <QueryProvider>
           <TooltipProvider>
             <Sidebar />
-            <main className="ml-56 min-h-screen bg-slate-50">
+            <main className="ml-56 min-h-screen bg-transparent">
+              <StatusRail />
               {children}
             </main>
           </TooltipProvider>

@@ -111,7 +111,7 @@ export default function WalletsPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Wallet TVL</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Wallet TVL</h2>
         <DataTable
           columns={walletColumns()}
           data={wallets}

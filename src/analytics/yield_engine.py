@@ -315,11 +315,12 @@ def build_rollup_rows(
             row_key = f"protocol:{protocol_id}"
         else:
             row_key = "total"
+        fees = apply_fee_waterfall(values[0])
         roe = compute_roe_breakdown(
-            gross_yield_usd=values[0],
-            strategy_fee_usd=values[1],
-            net_yield_usd=values[3],
-            avant_gop_usd=values[2],
+            gross_yield_usd=fees.gross_yield_usd,
+            strategy_fee_usd=fees.strategy_fee_usd,
+            net_yield_usd=fees.net_yield_usd,
+            avant_gop_usd=fees.avant_gop_usd,
             avg_equity_usd=values[4],
         )
         return YieldDailyRow(
@@ -330,10 +331,10 @@ def build_rollup_rows(
             market_id=None,
             row_key=row_key,
             position_key=None,
-            gross_yield_usd=values[0],
-            strategy_fee_usd=values[1],
-            avant_gop_usd=values[2],
-            net_yield_usd=values[3],
+            gross_yield_usd=fees.gross_yield_usd,
+            strategy_fee_usd=fees.strategy_fee_usd,
+            avant_gop_usd=fees.avant_gop_usd,
+            net_yield_usd=fees.net_yield_usd,
             avg_equity_usd=roe.avg_equity_usd,
             gross_roe=roe.gross_roe,
             post_strategy_fee_roe=roe.post_strategy_fee_roe,

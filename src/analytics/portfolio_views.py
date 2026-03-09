@@ -10,6 +10,7 @@ from sqlalchemy import case, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session, aliased
 
+from analytics.fee_engine import apply_fee_waterfall
 from analytics.yield_engine import denver_business_bounds_utc
 from core.dashboard_contracts import leverage_ratio
 from core.db.models import (
@@ -388,6 +389,24 @@ class PortfolioViewEngine:
         for row in rows:
             grouped.setdefault(str(row["scope_segment"]), []).append(row)
 
+        month_start = business_date.replace(day=1)
+        month_to_date_yield_row = self.session.execute(
+            select(
+                func.coalesce(func.sum(YieldDaily.gross_yield_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.net_yield_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.strategy_fee_usd), ZERO),
+                func.coalesce(func.sum(YieldDaily.avant_gop_usd), ZERO),
+            ).where(
+                YieldDaily.business_date >= month_start,
+                YieldDaily.business_date <= business_date,
+                YieldDaily.position_key.is_(None),
+                YieldDaily.wallet_id.is_(None),
+                YieldDaily.product_id.is_(None),
+                YieldDaily.protocol_id.is_(None),
+                YieldDaily.method == METHOD,
+            )
+        ).one()
+
         summaries: list[dict[str, object]] = []
         for scope_segment, scope_rows in grouped.items():
             total_supply_usd = sum((Decimal(str(row["supply_usd"])) for row in scope_rows), ZERO)
@@ -398,27 +417,16 @@ class PortfolioViewEngine:
             total_gross_yield_daily_usd = sum(
                 (Decimal(str(row["gross_yield_daily_usd"])) for row in scope_rows), ZERO
             )
-            total_net_yield_daily_usd = sum(
-                (Decimal(str(row["net_yield_daily_usd"])) for row in scope_rows), ZERO
-            )
-            total_gross_yield_mtd_usd = sum(
-                (Decimal(str(row["gross_yield_mtd_usd"])) for row in scope_rows), ZERO
-            )
-            total_net_yield_mtd_usd = sum(
-                (Decimal(str(row["net_yield_mtd_usd"])) for row in scope_rows), ZERO
-            )
-            total_strategy_fee_daily_usd = sum(
-                (Decimal(str(row["strategy_fee_daily_usd"])) for row in scope_rows), ZERO
-            )
-            total_avant_gop_daily_usd = sum(
-                (Decimal(str(row["avant_gop_daily_usd"])) for row in scope_rows), ZERO
-            )
-            total_strategy_fee_mtd_usd = sum(
-                (Decimal(str(row["strategy_fee_mtd_usd"])) for row in scope_rows), ZERO
-            )
-            total_avant_gop_mtd_usd = sum(
-                (Decimal(str(row["avant_gop_mtd_usd"])) for row in scope_rows), ZERO
-            )
+            daily_fees = apply_fee_waterfall(total_gross_yield_daily_usd)
+            total_net_yield_daily_usd = daily_fees.net_yield_usd
+            total_strategy_fee_daily_usd = daily_fees.strategy_fee_usd
+            total_avant_gop_daily_usd = daily_fees.avant_gop_usd
+            (
+                total_gross_yield_mtd_usd,
+                total_net_yield_mtd_usd,
+                total_strategy_fee_mtd_usd,
+                total_avant_gop_mtd_usd,
+            ) = month_to_date_yield_row
             leverage_values = [
                 row["leverage_ratio"] for row in scope_rows if row["leverage_ratio"] is not None
             ]

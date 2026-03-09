@@ -115,7 +115,7 @@ export function DataTable<T>({
   return (
     <div>
       {filterSlot}
-      <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="bg-card">
         <Table>
           <TableHeader>
             <TableRow>

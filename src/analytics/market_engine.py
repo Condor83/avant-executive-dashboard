@@ -128,7 +128,7 @@ class MarketEngine:
             select(MarketSnapshot.as_of_ts_utc.label("ts"))
             .where(
                 MarketSnapshot.as_of_ts_utc >= start_utc,
-                MarketSnapshot.as_of_ts_utc < end_utc,
+                MarketSnapshot.as_of_ts_utc <= end_utc,
             )
             .group_by(MarketSnapshot.as_of_ts_utc)
             .subquery()
@@ -137,7 +137,7 @@ class MarketEngine:
             select(PositionSnapshot.as_of_ts_utc.label("ts"))
             .where(
                 PositionSnapshot.as_of_ts_utc >= start_utc,
-                PositionSnapshot.as_of_ts_utc < end_utc,
+                PositionSnapshot.as_of_ts_utc <= end_utc,
             )
             .group_by(PositionSnapshot.as_of_ts_utc)
             .subquery()

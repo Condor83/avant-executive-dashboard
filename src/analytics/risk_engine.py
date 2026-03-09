@@ -238,11 +238,11 @@ class RiskEngine:
         if start_utc is not None:
             market_query = market_query.where(
                 MarketSnapshot.as_of_ts_utc >= start_utc,
-                MarketSnapshot.as_of_ts_utc < end_utc,
+                MarketSnapshot.as_of_ts_utc <= end_utc,
             )
             position_query = position_query.where(
                 PositionSnapshot.as_of_ts_utc >= start_utc,
-                PositionSnapshot.as_of_ts_utc < end_utc,
+                PositionSnapshot.as_of_ts_utc <= end_utc,
             )
 
         market_ts_subq = market_query.group_by(MarketSnapshot.as_of_ts_utc).subquery()

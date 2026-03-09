@@ -282,3 +282,176 @@ def test_portfolio_views_clamp_negative_day_fees_and_sum_mtd_from_daily_rows(
         assert summary_row.total_net_yield_daily_usd == Decimal("-100")
         assert summary_row.total_strategy_fee_daily_usd == Decimal("0")
         assert summary_row.total_avant_gop_daily_usd == Decimal("0")
+
+
+def test_portfolio_summary_applies_fee_waterfall_to_aggregated_daily_gross(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+
+    business_date = date(2026, 3, 5)
+    sod_ts_utc, _ = denver_business_bounds_utc(business_date)
+    as_of_ts_utc = sod_ts_utc + timedelta(hours=6)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="aave_v3")
+        wallet = Wallet(
+            address="0x9999999999999999999999999999999999999999",
+            wallet_type="strategy",
+        )
+        product = Product(product_code="stablecoin_senior")
+        session.add_all([chain, protocol, wallet, product])
+        session.flush()
+
+        supply_token = Token(
+            chain_id=chain.chain_id,
+            address_or_mint="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            symbol="USDC",
+            decimals=6,
+        )
+        session.add(supply_token)
+        session.flush()
+
+        market_gain = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0xrollup-gain",
+            market_kind="reserve",
+            display_name="USDC Gain",
+            base_asset_token_id=supply_token.token_id,
+        )
+        market_loss = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0xrollup-loss",
+            market_kind="reserve",
+            display_name="USDC Loss",
+            base_asset_token_id=supply_token.token_id,
+        )
+        session.add_all([market_gain, market_loss])
+        session.flush()
+
+        session.add(WalletProductMap(wallet_id=wallet.wallet_id, product_id=product.product_id))
+        session.add_all(
+            [
+                PositionSnapshot(
+                    as_of_ts_utc=as_of_ts_utc,
+                    block_number_or_slot="1",
+                    wallet_id=wallet.wallet_id,
+                    market_id=market_gain.market_id,
+                    position_key="rollup-gain",
+                    supplied_amount=Decimal("1_000"),
+                    supplied_usd=Decimal("1_000"),
+                    collateral_amount=None,
+                    collateral_usd=None,
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("1_000"),
+                    health_factor=None,
+                    ltv=None,
+                    source="rpc",
+                ),
+                PositionSnapshot(
+                    as_of_ts_utc=as_of_ts_utc,
+                    block_number_or_slot="2",
+                    wallet_id=wallet.wallet_id,
+                    market_id=market_loss.market_id,
+                    position_key="rollup-loss",
+                    supplied_amount=Decimal("900"),
+                    supplied_usd=Decimal("900"),
+                    collateral_amount=None,
+                    collateral_usd=None,
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("900"),
+                    health_factor=None,
+                    ltv=None,
+                    source="rpc",
+                ),
+                YieldDaily(
+                    business_date=business_date,
+                    wallet_id=wallet.wallet_id,
+                    product_id=product.product_id,
+                    protocol_id=protocol.protocol_id,
+                    market_id=market_gain.market_id,
+                    row_key="position:rollup-gain",
+                    position_key="rollup-gain",
+                    gross_yield_usd=Decimal("100"),
+                    strategy_fee_usd=Decimal("15"),
+                    avant_gop_usd=Decimal("8.5"),
+                    net_yield_usd=Decimal("76.5"),
+                    avg_equity_usd=Decimal("1_000"),
+                    gross_roe=Decimal("0.1"),
+                    post_strategy_fee_roe=Decimal("0.085"),
+                    net_roe=Decimal("0.0765"),
+                    avant_gop_roe=Decimal("0.0085"),
+                    method="apy_prorated_sod_eod",
+                    confidence_score=Decimal("1"),
+                ),
+                YieldDaily(
+                    business_date=business_date,
+                    wallet_id=wallet.wallet_id,
+                    product_id=product.product_id,
+                    protocol_id=protocol.protocol_id,
+                    market_id=market_loss.market_id,
+                    row_key="position:rollup-loss",
+                    position_key="rollup-loss",
+                    gross_yield_usd=Decimal("-90"),
+                    strategy_fee_usd=Decimal("0"),
+                    avant_gop_usd=Decimal("0"),
+                    net_yield_usd=Decimal("-90"),
+                    avg_equity_usd=Decimal("900"),
+                    gross_roe=Decimal("-0.1"),
+                    post_strategy_fee_roe=Decimal("-0.1"),
+                    net_roe=Decimal("-0.1"),
+                    avant_gop_roe=Decimal("0"),
+                    method="apy_prorated_sod_eod",
+                    confidence_score=Decimal("1"),
+                ),
+                YieldDaily(
+                    business_date=business_date,
+                    wallet_id=None,
+                    product_id=None,
+                    protocol_id=None,
+                    market_id=None,
+                    row_key="total",
+                    position_key=None,
+                    gross_yield_usd=Decimal("10"),
+                    strategy_fee_usd=Decimal("1.5"),
+                    avant_gop_usd=Decimal("0.85"),
+                    net_yield_usd=Decimal("7.65"),
+                    avg_equity_usd=Decimal("1_900"),
+                    gross_roe=Decimal("0.0052631579"),
+                    post_strategy_fee_roe=Decimal("0.0044736842"),
+                    net_roe=Decimal("0.0040263158"),
+                    avant_gop_roe=Decimal("0.0004473684"),
+                    method="apy_prorated_sod_eod",
+                    confidence_score=Decimal("1"),
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = PortfolioViewEngine(session).compute_daily(
+            business_date=business_date,
+            as_of_ts_utc=as_of_ts_utc,
+        )
+        session.commit()
+
+        assert summary.summary_rows_written == 1
+
+        summary_row = session.scalar(select(PortfolioSummaryDaily))
+        assert summary_row is not None
+        assert summary_row.total_gross_yield_daily_usd == Decimal("10")
+        assert summary_row.total_strategy_fee_daily_usd == Decimal("1.5")
+        assert summary_row.total_avant_gop_daily_usd == Decimal("0.85")
+        assert summary_row.total_net_yield_daily_usd == Decimal("7.65")
