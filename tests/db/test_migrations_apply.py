@@ -39,6 +39,19 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "alerts",
         "market_overview_daily",
         "executive_summary_daily",
+        "consumer_cohort_daily",
+        "consumer_holder_universe_daily",
+        "holder_behavior_daily",
+        "consumer_market_demand_daily",
+        "consumer_debank_wallet_daily",
+        "consumer_debank_protocol_daily",
+        "consumer_token_holder_daily",
+        "consumer_debank_token_daily",
+        "holder_scorecard_daily",
+        "holder_protocol_gap_daily",
+        "holder_supply_coverage_daily",
+        "holder_product_segment_daily",
+        "holder_protocol_deploy_daily",
     }
     assert expected_tables.issubset(set(inspector.get_table_names()))
 
@@ -64,6 +77,143 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         column["name"] for column in inspector.get_columns("executive_summary_daily")
     }
     assert "market_stability_ops_net_equity_usd" in executive_summary_columns
+    consumer_cohort_columns = {
+        column["name"] for column in inspector.get_columns("consumer_cohort_daily")
+    }
+    assert {"as_of_ts_utc", "wallet_id", "verified_total_avant_usd"}.issubset(
+        consumer_cohort_columns
+    )
+    consumer_holder_universe_columns = {
+        column["name"] for column in inspector.get_columns("consumer_holder_universe_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "wallet_id",
+        "verified_total_avant_usd",
+        "has_usd_exposure",
+        "has_eth_exposure",
+        "has_btc_exposure",
+    }.issubset(consumer_holder_universe_columns)
+    holder_behavior_columns = {
+        column["name"] for column in inspector.get_columns("holder_behavior_daily")
+    }
+    assert {
+        "wallet_id",
+        "as_of_ts_utc",
+        "verified_total_avant_usd",
+        "wallet_held_avant_usd",
+        "configured_deployed_avant_usd",
+        "total_canonical_avant_exposure_usd",
+        "borrowed_usd_delta_7d",
+    }.issubset(holder_behavior_columns)
+    holder_scorecard_columns = {
+        column["name"] for column in inspector.get_columns("holder_scorecard_daily")
+    }
+    assert {
+        "tracked_holders",
+        "total_canonical_avant_exposure_usd",
+        "whale_collateral_up_count_7d",
+        "visibility_gap_wallet_count",
+    }.issubset(holder_scorecard_columns)
+    holder_protocol_gap_columns = {
+        column["name"] for column in inspector.get_columns("holder_protocol_gap_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "protocol_code",
+        "signoff_wallet_count",
+        "gap_priority",
+    }.issubset(holder_protocol_gap_columns)
+    consumer_market_demand_columns = {
+        column["name"] for column in inspector.get_columns("consumer_market_demand_daily")
+    }
+    assert {"as_of_ts_utc", "capacity_pressure_score", "cap_headroom_usd"}.issubset(
+        consumer_market_demand_columns
+    )
+    consumer_debank_wallet_columns = {
+        column["name"] for column in inspector.get_columns("consumer_debank_wallet_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "wallet_id",
+        "in_seed_set",
+        "fetch_succeeded",
+        "configured_surface_borrow_usd",
+    }.issubset(consumer_debank_wallet_columns)
+    consumer_debank_protocol_columns = {
+        column["name"] for column in inspector.get_columns("consumer_debank_protocol_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "wallet_id",
+        "chain_code",
+        "protocol_code",
+        "in_config_surface",
+    }.issubset(consumer_debank_protocol_columns)
+    consumer_token_holder_columns = {
+        column["name"] for column in inspector.get_columns("consumer_token_holder_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "chain_code",
+        "token_symbol",
+        "wallet_id",
+        "usd_value",
+        "holder_class",
+        "exclude_from_monitoring",
+        "exclude_from_customer_float",
+    }.issubset(consumer_token_holder_columns)
+    consumer_debank_token_columns = {
+        column["name"] for column in inspector.get_columns("consumer_debank_token_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "wallet_id",
+        "chain_code",
+        "protocol_code",
+        "token_symbol",
+        "leg_type",
+        "usd_value",
+    }.issubset(consumer_debank_token_columns)
+    holder_supply_coverage_columns = {
+        column["name"] for column in inspector.get_columns("holder_supply_coverage_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "chain_code",
+        "token_symbol",
+        "monitoring_wallet_count",
+        "net_customer_float_usd",
+        "covered_supply_usd",
+        "cross_chain_supply_usd",
+        "covered_supply_pct",
+    }.issubset(holder_supply_coverage_columns)
+    holder_product_segment_columns = {
+        column["name"] for column in inspector.get_columns("holder_product_segment_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "product_scope",
+        "cohort_segment",
+        "observed_aum_usd",
+        "defi_active_wallet_count",
+        "avasset_deployed_wallet_count",
+        "idle_usd",
+        "other_defi_usd",
+    }.issubset(holder_product_segment_columns)
+    holder_protocol_deploy_columns = {
+        column["name"] for column in inspector.get_columns("holder_protocol_deploy_daily")
+    }
+    assert {
+        "as_of_ts_utc",
+        "product_scope",
+        "protocol_code",
+        "chain_code",
+        "verified_wallet_count",
+        "total_value_usd",
+        "dominant_token_symbols_json",
+        "primary_use",
+    }.issubset(holder_protocol_deploy_columns)
 
     position_snapshot_constraints = {
         constraint["name"] for constraint in inspector.get_unique_constraints("position_snapshots")
@@ -90,6 +240,77 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         for constraint in inspector.get_unique_constraints("position_fixed_yield_cache")
     }
     assert "uq_position_fixed_yield_cache_position_key" in fixed_yield_constraints
+    consumer_cohort_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_cohort_daily")
+    }
+    assert "uq_consumer_cohort_daily_date_wallet" in consumer_cohort_constraints
+    consumer_holder_universe_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_holder_universe_daily")
+    }
+    assert "uq_consumer_holder_universe_daily_date_wallet" in consumer_holder_universe_constraints
+    holder_behavior_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("holder_behavior_daily")
+    }
+    assert "uq_holder_behavior_daily_date_wallet" in holder_behavior_constraints
+    consumer_market_demand_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_market_demand_daily")
+    }
+    assert "uq_consumer_market_demand_daily_date_market" in consumer_market_demand_constraints
+    consumer_debank_wallet_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_debank_wallet_daily")
+    }
+    assert "uq_consumer_debank_wallet_daily_date_wallet" in consumer_debank_wallet_constraints
+    consumer_debank_protocol_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_debank_protocol_daily")
+    }
+    assert (
+        "uq_consumer_debank_protocol_daily_date_wallet_chain_protocol"
+        in consumer_debank_protocol_constraints
+    )
+    consumer_token_holder_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_token_holder_daily")
+    }
+    assert (
+        "uq_consumer_token_holder_daily_date_chain_token_wallet"
+        in consumer_token_holder_constraints
+    )
+    consumer_debank_token_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("consumer_debank_token_daily")
+    }
+    assert (
+        "uq_cons_debank_token_daily_date_wallet_chain_proto_token_leg"
+        in consumer_debank_token_constraints
+    )
+    holder_protocol_gap_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("holder_protocol_gap_daily")
+    }
+    assert "uq_holder_protocol_gap_daily_date_protocol" in holder_protocol_gap_constraints
+    holder_supply_coverage_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("holder_supply_coverage_daily")
+    }
+    assert "uq_holder_supply_coverage_daily_date_chain_symbol" in holder_supply_coverage_constraints
+    holder_product_segment_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("holder_product_segment_daily")
+    }
+    assert "uq_holder_product_segment_daily_scope_segment" in holder_product_segment_constraints
+    holder_protocol_deploy_constraints = {
+        constraint["name"]
+        for constraint in inspector.get_unique_constraints("holder_protocol_deploy_daily")
+    }
+    assert (
+        "uq_holder_protocol_deploy_daily_scope_protocol_chain" in holder_protocol_deploy_constraints
+    )
 
     with engine.connect() as connection:
         alert_index_def = connection.execute(

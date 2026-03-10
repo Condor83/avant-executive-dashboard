@@ -33,6 +33,7 @@ Adapters must treat this file as the source of truth (no silent discovery in pro
   - oracle (optional)
   - wallets list
   - markets list with underlying asset addresses + decimals
+  - optional `rate_reference_markets` list for internal same-chain rate reads that should not surface as Portfolio or Markets rows
   - optional per-market `supply_apy_fallback_pool_id` for yield-bearing collateral when on-chain supply rate is zero
 
 Runtime Aave reward settings:
@@ -42,8 +43,10 @@ Runtime Aave reward settings:
 
 Current Aave USDe/sUSDe loop policy:
 - `supply_apy` remains protocol-native (or explicit fallback if configured).
-- Merkl campaign increment is modeled as `reward_apy`.
-- `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the same strategy model.
+- Merkl campaign APR is normalized into stored `reward_apy`.
+- `sUSDe` effective total supply yield is aligned only to same-chain `USDe` effective total supply yield in the strategy model.
+- Chains that do not publicly track `USDe` can use `rate_reference_markets` for the same-chain base rate without surfacing extra rows.
+- If Merkl data or the same-chain `USDe` reference is unavailable, reward contribution defaults to zero and the adapter emits a data-quality issue.
 
 #### Spark
 - Same shape as Aave v3:
@@ -136,7 +139,7 @@ Dolomite account policy:
 - Missing account numbers are a common source of borrow-leg coverage gaps.
 
 Dolomite valuation policy:
-- Position and market USD valuation should use the shared DefiLlama-backed `PriceOracle` when a token price is available for the configured market token address.
+- Position and market USD valuation should use the shared `PriceOracle`, with DefiLlama as the primary source and Avant-native `priceHistory` fallback for native Avant wrappers when DefiLlama does not return a direct quote.
 - Dolomite's internal market price is a fallback, not the canonical accounting source, because Avant assets can drift from that internal oracle and understate equity.
 
 Dolomite position yield policy:
@@ -259,6 +262,52 @@ Current Silo v2 behavior:
   - strategy wallet list from all protocol sections in `markets.yaml` for that chain
 - Strategy ingestion is wallet-scoped and does not require top-holder ingestion.
 
+## avant_tokens.yaml (consumer holder token registry)
+
+Defines the Avant token universe for consumer holder analytics.
+
+Each row includes:
+- `chain_code`
+- `token_address`
+- `symbol`
+- `asset_family`
+- `wrapper_class`
+- `decimals`
+- `pricing_policy`
+- optional underlying / conversion metadata for staked or boosted wrappers
+
+Behavior:
+- this registry drives on-chain holder verification, wrapper/family attribution, and wallet-balance market seeding
+- the holder supply scorecard also resolves its primary token from this registry plus `consumer_thresholds.yaml`
+
+## consumer_thresholds.yaml (consumer analytics thresholds)
+
+In addition to cohort, risk-band, capacity, and whale thresholds, this file now includes:
+
+- `supply_coverage.primary_chain_code`
+- `supply_coverage.primary_token_symbol`
+
+Behavior:
+- this identifies the primary token/chain pair used for the holder supply scorecard
+- current default is Avalanche `savUSD`
+
+## holder_exclusions.yaml (holder scorecard exclusions)
+
+Defines explicit holder-ledger exclusions for the supply scorecard.
+
+Each row includes:
+- `address`
+- optional `chain_code`
+- `label`
+- `classification`
+- `exclude_from_monitoring`
+- `exclude_from_customer_float`
+
+Behavior:
+- use this for infrastructure, ops, treasury, or other known non-customer addresses
+- exclusions affect scorecard monitoring and float math only; they do not rewrite canonical wallet facts elsewhere
+- example: a CCIP backing pool can be excluded from monitored-wallet counts while still remaining inside gross customer float
+
 ## Runtime settings tied to config behavior
 
 - `AVANT_EVM_RPC_URLS`: chain-code to RPC URL mapping used by EVM adapters.
@@ -267,4 +316,4 @@ Current Silo v2 behavior:
 - `AVANT_SILO_POINTS_API_BASE_URL`: optional Silo points API for holder endpoints.
 - `AVANT_DEFILLAMA_YIELDS_BASE_URL`: DefiLlama yields endpoint for configured APY fallback paths.
 - `AVANT_AVANT_API_BASE_URL`: Avant API base URL for native token APY endpoints.
-- `AVANT_DEBANK_CLOUD_API_KEY`: required for `sync debank-coverage-audit` only.
+- `AVANT_DEBANK_CLOUD_API_KEY`: required for `sync debank-coverage-audit`, `sync consumer-debank-visibility`, and `sync holder-supply-inputs`.

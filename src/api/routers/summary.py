@@ -13,11 +13,17 @@ from api.deps import get_session
 from api.schemas.common import FreshnessSummary
 from api.schemas.markets import MarketSummaryResponse
 from api.schemas.portfolio import PortfolioSummaryResponse
-from api.schemas.summary import ExecutiveSummarySnapshot, SummaryResponse
+from api.schemas.summary import ExecutiveSummarySnapshot, HolderSummarySnapshot, SummaryResponse
+from core.config import load_consumer_thresholds_config
 from core.dashboard_contracts import leverage_ratio
 from core.db.models import (
+    ConsumerHolderUniverseDaily,
     DataQuality,
     ExecutiveSummaryDaily,
+    HolderBehaviorDaily,
+    HolderProductSegmentDaily,
+    HolderScorecardDaily,
+    HolderSupplyCoverageDaily,
     MarketSnapshot,
     MarketSummaryDaily,
     PortfolioSummaryDaily,
@@ -153,6 +159,7 @@ def _empty_summary(today: date) -> SummaryResponse:
             open_alert_count=0,
             customer_metrics_ready=False,
         ),
+        holder_summary=None,
         portfolio_summary=None,
         market_summary=None,
         freshness=FreshnessSummary(
@@ -173,6 +180,136 @@ def _summary_payload(session: Session) -> SummaryResponse:
     executive = session.get(ExecutiveSummaryDaily, business_date)
     if executive is None:
         return _empty_summary(business_date)
+
+    holder_scorecard = session.get(HolderScorecardDaily, business_date)
+    holder_summary = None
+    if holder_scorecard is not None:
+        thresholds = load_consumer_thresholds_config()
+        whale_threshold = thresholds.whales.wallet_usd_threshold
+        supply_coverage = session.scalar(
+            select(HolderSupplyCoverageDaily).where(
+                HolderSupplyCoverageDaily.business_date == business_date,
+                HolderSupplyCoverageDaily.chain_code
+                == thresholds.supply_coverage.primary_chain_code,
+                HolderSupplyCoverageDaily.token_symbol
+                == thresholds.supply_coverage.primary_token_symbol,
+            )
+        )
+        holder_rows = session.scalars(
+            select(HolderBehaviorDaily).where(HolderBehaviorDaily.business_date == business_date)
+        ).all()
+        all_segment = session.scalar(
+            select(HolderProductSegmentDaily).where(
+                HolderProductSegmentDaily.business_date == business_date,
+                HolderProductSegmentDaily.product_scope == "all",
+                HolderProductSegmentDaily.cohort_segment == "all",
+            )
+        )
+        core_segment = session.scalar(
+            select(HolderProductSegmentDaily).where(
+                HolderProductSegmentDaily.business_date == business_date,
+                HolderProductSegmentDaily.product_scope == "all",
+                HolderProductSegmentDaily.cohort_segment == "core",
+            )
+        )
+        whale_segment = session.scalar(
+            select(HolderProductSegmentDaily).where(
+                HolderProductSegmentDaily.business_date == business_date,
+                HolderProductSegmentDaily.product_scope == "all",
+                HolderProductSegmentDaily.cohort_segment == "whale",
+            )
+        )
+        whale_wallet_count = sum(
+            1 for row in holder_rows if row.total_canonical_avant_exposure_usd >= whale_threshold
+        )
+        monitored_holder_count = (
+            supply_coverage.monitoring_wallet_count
+            if supply_coverage is not None
+            else (
+                session.scalar(
+                    select(func.count())
+                    .select_from(ConsumerHolderUniverseDaily)
+                    .where(ConsumerHolderUniverseDaily.business_date == business_date)
+                )
+                or 0
+            )
+        )
+        attributed_holder_count = (
+            all_segment.holder_count
+            if all_segment is not None
+            else holder_scorecard.tracked_holders
+        )
+        core_holder_wallet_count = (
+            core_segment.holder_count
+            if core_segment is not None
+            else holder_scorecard.tracked_holders
+        )
+        if whale_segment is not None:
+            whale_wallet_count = whale_segment.holder_count
+        attribution_completion_pct = (
+            Decimal(attributed_holder_count) / Decimal(monitored_holder_count)
+            if monitored_holder_count > 0
+            else None
+        )
+        configured_deployed_share = (
+            holder_scorecard.configured_deployed_avant_usd
+            / holder_scorecard.total_canonical_avant_exposure_usd
+            if holder_scorecard.total_canonical_avant_exposure_usd > ZERO
+            else None
+        )
+        holder_summary = HolderSummarySnapshot(
+            supply_coverage_token_symbol=(
+                supply_coverage.token_symbol if supply_coverage is not None else None
+            ),
+            supply_coverage_chain_code=(
+                supply_coverage.chain_code if supply_coverage is not None else None
+            ),
+            monitored_holder_count=int(monitored_holder_count),
+            attributed_holder_count=int(attributed_holder_count),
+            attribution_completion_pct=attribution_completion_pct,
+            core_holder_wallet_count=int(core_holder_wallet_count),
+            whale_wallet_count=int(whale_wallet_count),
+            strategy_supply_usd=(
+                supply_coverage.strategy_supply_usd if supply_coverage is not None else ZERO
+            ),
+            strategy_deployed_supply_usd=(
+                supply_coverage.strategy_deployed_supply_usd
+                if supply_coverage is not None
+                else ZERO
+            ),
+            net_customer_float_usd=(
+                supply_coverage.net_customer_float_usd if supply_coverage is not None else ZERO
+            ),
+            covered_supply_usd=(
+                supply_coverage.covered_supply_usd if supply_coverage is not None else ZERO
+            ),
+            covered_supply_pct=(
+                supply_coverage.covered_supply_pct if supply_coverage is not None else None
+            ),
+            cross_chain_supply_usd=(
+                supply_coverage.cross_chain_supply_usd if supply_coverage is not None else ZERO
+            ),
+            total_observed_aum_usd=(
+                all_segment.observed_aum_usd if all_segment is not None else ZERO
+            ),
+            total_canonical_avant_exposure_usd=holder_scorecard.total_canonical_avant_exposure_usd,
+            whale_concentration_pct=(
+                whale_segment.observed_aum_usd / all_segment.observed_aum_usd
+                if whale_segment is not None
+                and all_segment is not None
+                and all_segment.observed_aum_usd > ZERO
+                else None
+            ),
+            defi_active_pct=all_segment.defi_active_pct if all_segment is not None else None,
+            avasset_deployed_pct=(
+                all_segment.avasset_deployed_pct if all_segment is not None else None
+            ),
+            staked_share=holder_scorecard.staked_share,
+            configured_deployed_share=configured_deployed_share,
+            top10_holder_share=holder_scorecard.top10_holder_share,
+            visibility_gap_wallet_count=holder_scorecard.visibility_gap_wallet_count,
+            markets_needing_capacity_review=holder_scorecard.markets_needing_capacity_review,
+        )
 
     return SummaryResponse(
         business_date=business_date,
@@ -199,6 +336,7 @@ def _summary_payload(session: Session) -> SummaryResponse:
             open_alert_count=executive.open_alert_count,
             customer_metrics_ready=executive.customer_metrics_ready,
         ),
+        holder_summary=holder_summary,
         portfolio_summary=_portfolio_summary(session, business_date),
         market_summary=_market_summary(session, business_date),
         freshness=_freshness(session),

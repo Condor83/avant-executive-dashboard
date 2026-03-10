@@ -136,7 +136,7 @@ Required columns:
   - collateralized Morpho positions: `supplied_usd + collateral_usd - borrowed_usd`
 - health_factor (nullable)
 - ltv (nullable)
-- source: `rpc` | `debank` | `defillama`
+- source: `rpc` | `debank` | `defillama` | `avant_api`
 
 Uniqueness:
 - `(as_of_ts_utc, position_key)`
@@ -469,3 +469,348 @@ Top-level served summary consumed by `/summary/executive`.
 - markets_at_risk_count
 - open_alert_count
 - customer_metrics_ready
+
+### consumer_cohort_daily
+Verified daily consumer holder cohort used for headline consumer KPI denominators.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- verified_total_avant_usd
+- discovery_sources_json
+- is_signoff_eligible
+- exclusion_reason (nullable)
+
+Contract:
+- rows represent the verified consumer cohort for one business date
+- signoff KPI denominators use only `is_signoff_eligible = true`
+
+### consumer_holder_universe_daily
+Daily monitored holder universe across all active Avant tokens on supported consumer chains.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- verified_total_avant_usd
+- verified_family_usd_usd
+- verified_family_btc_usd
+- verified_family_eth_usd
+- verified_base_usd
+- verified_staked_usd
+- verified_boosted_usd
+- discovery_sources_json
+- is_signoff_eligible
+- exclusion_reason (nullable)
+- has_usd_exposure
+- has_eth_exposure
+- has_btc_exposure
+
+Contract:
+- one row per monitored wallet per business date after exclusions and on-chain balance verification
+- this is the holder-universe source of truth; `consumer_cohort_daily` is the `$50k+` derived subset
+- rows are wallet-centric and can exist even when product attribution is still incomplete
+
+### holder_behavior_daily
+Per-wallet consumer behavior rollup built from verified cohort balances plus configured market usage.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- is_signoff_eligible
+- verified_total_avant_usd
+- wallet_held_avant_usd
+- configured_deployed_avant_usd
+- total_canonical_avant_exposure_usd
+- wallet_family_usd_usd
+- wallet_family_btc_usd
+- wallet_family_eth_usd
+- deployed_family_usd_usd
+- deployed_family_btc_usd
+- deployed_family_eth_usd
+- total_family_usd_usd
+- total_family_btc_usd
+- total_family_eth_usd
+- family_usd_usd
+- family_btc_usd
+- family_eth_usd
+- wallet_base_usd
+- wallet_staked_usd
+- wallet_boosted_usd
+- deployed_base_usd
+- deployed_staked_usd
+- deployed_boosted_usd
+- total_base_usd
+- total_staked_usd
+- total_boosted_usd
+- base_usd
+- staked_usd
+- boosted_usd
+- family_count
+- wrapper_count
+- multi_asset_flag
+- multi_wrapper_flag
+- idle_avant_usd
+- idle_eligible_same_chain_usd
+- avant_collateral_usd
+- borrowed_usd
+- leveraged_flag
+- borrow_against_avant_flag
+- leverage_ratio (nullable)
+- health_factor_min (nullable)
+- risk_band
+- protocol_count
+- market_count
+- chain_count
+- behavior_tags_json
+- whale_rank_by_assets (nullable)
+- whale_rank_by_borrow (nullable)
+- total_avant_usd_delta_7d (nullable)
+- borrowed_usd_delta_7d (nullable)
+- avant_collateral_usd_delta_7d (nullable)
+
+Contract:
+- `wallet_held_avant_usd` is the verified in-wallet Avant balance
+- `configured_deployed_avant_usd` is Avant collateral posted into configured canonical consumer markets
+- `total_canonical_avant_exposure_usd = wallet_held_avant_usd + configured_deployed_avant_usd`
+- legacy fields remain populated for backward compatibility:
+  - `verified_total_avant_usd` aliases wallet-held exposure
+  - `family_*` and `base/staked/boosted` alias total exposure mix
+  - `avant_collateral_usd` aliases configured deployed exposure
+
+### consumer_market_demand_daily
+Per-market consumer collateral demand and capacity review table.
+
+- business_date
+- as_of_ts_utc
+- market_id
+- protocol_code
+- chain_code
+- collateral_family
+- holder_count
+- collateral_wallet_count
+- leveraged_wallet_count
+- avant_collateral_usd
+- borrowed_usd
+- idle_eligible_same_chain_usd
+- p50_leverage_ratio (nullable)
+- p90_leverage_ratio (nullable)
+- top10_collateral_share (nullable)
+- utilization (nullable)
+- available_liquidity_usd (nullable)
+- cap_headroom_usd (nullable)
+- capacity_pressure_score
+- needs_capacity_review
+- near_limit_wallet_count
+- avant_collateral_usd_delta_7d (nullable)
+- collateral_wallet_count_delta_7d (nullable)
+
+### consumer_debank_wallet_daily
+Supplemental DeBank visibility snapshot for the union of legacy consumer seeds and discovered
+consumer cohort wallets.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- in_seed_set
+- in_verified_cohort
+- in_signoff_cohort
+- seed_sources_json
+- discovery_sources_json
+- fetch_succeeded
+- fetch_error_message (nullable)
+- has_any_activity
+- has_any_borrow
+- has_configured_surface_activity
+- protocol_count
+- chain_count
+- configured_protocol_count
+- total_supply_usd
+- total_borrow_usd
+- configured_surface_supply_usd
+- configured_surface_borrow_usd
+
+Contract:
+- this is an audit and discovery layer only
+- DeBank visibility does not override canonical on-chain cohort, balance, collateral, or borrow facts
+
+### holder_wallet_product_daily
+Per-wallet product attribution layer used by the served Consumer dashboard.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- product_scope: `all` | `avusd` | `aveth` | `avbtc`
+- monitored_presence_usd
+- observed_exposure_usd
+- wallet_held_usd
+- canonical_deployed_usd
+- external_fixed_yield_pt_usd
+- external_yield_token_yt_usd
+- external_other_defi_usd
+- has_any_defi_activity
+- has_any_defi_borrow
+- has_canonical_activity
+- segment: `verified` | `core` | `whale` | `null`
+- is_attributed
+
+Contract:
+- `monitored_presence_usd` includes any selected-family direct or deployed evidence, even when wallet-held balance is zero
+- `observed_exposure_usd` is the served product AUM used by the dashboard:
+  - wallet-held selected-family balance
+  - plus canonical selected-family collateral
+  - plus selected-family external deployment from DeBank token attribution
+- this table separates `monitored` holder presence from fully `attributed` product exposure
+
+### holder_scorecard_daily
+Daily CEO-grade holder scorecard derived from canonical holder behavior plus capacity and visibility context.
+
+- business_date
+- as_of_ts_utc
+- tracked_holders
+- top10_holder_share (nullable)
+- top25_holder_share (nullable)
+- top100_holder_share (nullable)
+- wallet_held_avant_usd
+- configured_deployed_avant_usd
+- total_canonical_avant_exposure_usd
+- base_share (nullable)
+- staked_share (nullable)
+- boosted_share (nullable)
+- single_asset_pct (nullable)
+- multi_asset_pct (nullable)
+- single_wrapper_pct (nullable)
+- multi_wrapper_pct (nullable)
+- configured_collateral_users_pct (nullable)
+- configured_leveraged_pct (nullable)
+- whale_enter_count_7d
+- whale_exit_count_7d
+- whale_borrow_up_count_7d
+- whale_collateral_up_count_7d
+- markets_needing_capacity_review
+- dq_verified_holder_pct (nullable)
+- visibility_gap_wallet_count
+
+Contract:
+- this is the persisted daily holder snapshot used by `/consumer/summary` and the executive holder block
+- canonical totals come only from the verified tracked cohort plus configured consumer markets
+- DeBank contributes only visibility-gap and protocol-backlog context
+
+### holder_protocol_gap_daily
+Daily protocol backlog ranking for holder wallets seen in DeBank visibility.
+
+- business_date
+- as_of_ts_utc
+- protocol_code
+- wallet_count
+- signoff_wallet_count
+- total_supply_usd
+- total_borrow_usd
+- in_config_surface
+- gap_priority
+
+Contract:
+- rows are ordered by signoff-holder presence first, then total wallet count, then borrow USD
+- this table is supplemental and does not redefine canonical holder totals
+
+### consumer_debank_protocol_daily
+Per-wallet DeBank protocol activity rollup used to understand which protocols the consumer wallet
+universe touches outside or alongside the configured canonical market set.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- chain_code
+- protocol_code
+- in_config_surface
+- supply_usd
+- borrow_usd
+
+### consumer_token_holder_daily
+Raw holder-ledger rows for the monitored holder universe token set.
+
+- business_date
+- as_of_ts_utc
+- chain_code
+- token_symbol
+- token_address
+- wallet_id
+- wallet_address
+- balance_tokens
+- usd_value
+- holder_class
+- exclude_from_monitoring
+- exclude_from_customer_float
+- source_provider
+
+Contract:
+- one row per holder-ledger address after canonical wallet resolution
+- this is the raw input layer for holder-universe monitoring and supply-coverage math
+- `exclude_from_monitoring` and `exclude_from_customer_float` are explicit scorecard controls, not generic wallet semantics
+
+### consumer_debank_token_daily
+Per-wallet DeBank token attribution rows for the monitored holder universe.
+
+- business_date
+- as_of_ts_utc
+- wallet_id
+- wallet_address
+- chain_code
+- protocol_code
+- token_symbol
+- leg_type
+- in_config_surface
+- usd_value
+
+Contract:
+- stores token-level attribution, not just wallet/protocol totals
+- protocol rows come from DeBank complex-protocol legs
+- cross-chain direct wallet balances may be stored with `protocol_code = wallet_balance` and `leg_type = wallet`
+- this table is supplemental attribution for supply coverage and holder product deployment, and does not override canonical wallet-balance facts
+
+### holder_supply_coverage_daily
+Daily supply-coverage rollup for senior holder products (`savUSD`, `savETH`, `savBTC`) by chain.
+
+- business_date
+- as_of_ts_utc
+- chain_code
+- token_symbol
+- token_address
+- raw_holder_wallet_count
+- monitoring_wallet_count
+- core_wallet_count
+- signoff_wallet_count
+- wallets_with_same_chain_deployed_supply
+- wallets_with_cross_chain_supply
+- gross_supply_usd
+- strategy_supply_usd
+- strategy_deployed_supply_usd
+- internal_supply_usd
+- explicit_excluded_supply_usd
+- net_customer_float_usd
+- direct_holder_supply_usd
+- core_direct_holder_supply_usd
+- signoff_direct_holder_supply_usd
+- same_chain_deployed_supply_usd
+- cross_chain_supply_usd
+- core_same_chain_deployed_supply_usd
+- signoff_same_chain_deployed_supply_usd
+- covered_supply_usd
+- core_covered_supply_usd
+- signoff_covered_supply_usd
+- covered_supply_pct (nullable)
+- core_covered_supply_pct (nullable)
+- signoff_covered_supply_pct (nullable)
+
+Contract:
+- `gross_supply_usd` is the full holder ledger for the selected senior token and chain/date
+- `strategy_supply_usd` is direct strategy-held token balance on the raw holder ledger
+- `strategy_deployed_supply_usd` is strategy-owned token exposure already deployed in canonical positions, using the latest position snapshot per `position_key` for the business date
+- `net_customer_float_usd` subtracts direct strategy, strategy-deployed, internal, and explicit float exclusions
+- `covered_supply_usd` is the attributable monitored supply currently mapped back to customer wallets
+- coverage math may include cross-chain attributable supply when the backing pool remains inside net customer float

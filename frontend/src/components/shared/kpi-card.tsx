@@ -19,20 +19,20 @@ export function KpiCard({
 }: KpiCardProps) {
   return (
     <Card className="px-5 py-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <p
         className={cn(
           "mt-1 font-bold tabular-nums",
           compact ? "text-xl" : "text-3xl",
-          valueClassName ?? "text-slate-900",
+          valueClassName ?? "text-foreground",
         )}
       >
         {value}
       </p>
       {subtitle && (
-        <p className="mt-0.5 text-xs text-slate-500">{subtitle}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{subtitle}</p>
       )}
     </Card>
   );

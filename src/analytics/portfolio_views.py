@@ -239,6 +239,7 @@ class PortfolioViewEngine:
             .where(
                 PositionSnapshot.as_of_ts_utc == as_of_ts_utc,
                 Position.exposure_class == "core_lending",
+                Wallet.wallet_type == "strategy",
             )
             .order_by(Position.position_id.asc())
         ).all()

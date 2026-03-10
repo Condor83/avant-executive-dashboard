@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryProvider } from "@/providers/query-provider";
+import { ThemeProvider } from "@/providers/theme-provider";
 import { Sidebar } from "@/components/layout/sidebar";
 import { StatusRail } from "@/components/layout/status-rail";
 import "./globals.css";
@@ -27,19 +28,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}
       >
-        <QueryProvider>
-          <TooltipProvider>
-            <Sidebar />
-            <main className="ml-56 min-h-screen bg-transparent">
-              <StatusRail />
-              {children}
-            </main>
-          </TooltipProvider>
-        </QueryProvider>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          <QueryProvider>
+            <TooltipProvider>
+              <Sidebar />
+              <main className="ml-56 min-h-screen bg-transparent">
+                <StatusRail />
+                {children}
+              </main>
+            </TooltipProvider>
+          </QueryProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

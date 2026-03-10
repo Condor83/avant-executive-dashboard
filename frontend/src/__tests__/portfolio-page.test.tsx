@@ -4,10 +4,35 @@ import PortfolioPage from "../app/portfolio/page";
 import type { PortfolioPositionRow } from "../lib/types";
 
 const pushMock = vi.fn();
+let searchParamsValue = "";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: pushMock }),
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(searchParamsValue),
+}));
+
+vi.mock("@/components/ui/select", () => ({
+  Select: ({ children }: { children: unknown }) => <div>{children}</div>,
+  SelectTrigger: ({
+    children,
+    className,
+  }: {
+    children: unknown;
+    className?: string;
+  }) => (
+    <button type="button" className={className}>
+      {children}
+    </button>
+  ),
+  SelectValue: ({ placeholder }: { placeholder?: string }) => <span>{placeholder}</span>,
+  SelectContent: ({ children }: { children: unknown }) => <div>{children}</div>,
+  SelectItem: ({
+    children,
+    value,
+  }: {
+    children: unknown;
+    value: string;
+  }) => <div data-value={value}>{children}</div>,
 }));
 
 const usePortfolioSummaryMock = vi.fn();
@@ -124,6 +149,10 @@ function headerCell(label: string) {
 describe("PortfolioPage", () => {
   beforeEach(() => {
     pushMock.mockReset();
+    searchParamsValue = "";
+    usePortfolioSummaryMock.mockReset();
+    usePositionsMock.mockReset();
+    useUiMetadataMock.mockReset();
     usePortfolioSummaryMock.mockReturnValue({
       data: {
         business_date: "2026-03-05",
@@ -151,7 +180,12 @@ describe("PortfolioPage", () => {
     useUiMetadataMock.mockReturnValue({
       data: {
         products: [{ value: "stablecoin_senior", label: "savUSD" }],
-        protocols: [{ value: "aave_v3", label: "Aave V3" }],
+        protocols: [
+          { value: "aave_v3", label: "Aave V3" },
+          { value: "traderjoe_lp", label: "Trader Joe" },
+          { value: "etherex", label: "Etherex" },
+          { value: "wallet_balances", label: "Wallet Balances" },
+        ],
         chains: [{ value: "ethereum", label: "Ethereum" }],
         wallets: [{ value: "wallet-bbb", label: "wallet-bbb" }],
         position_sort_options: [],
@@ -205,9 +239,9 @@ describe("PortfolioPage", () => {
   it("keeps filter dropdowns, removes sort controls, and sorts by net equity descending by default", () => {
     render(<PortfolioPage />);
 
-    expect(screen.getByText("Product")).toBeTruthy();
-    expect(screen.getByText("Protocol")).toBeTruthy();
-    expect(screen.getByText("Chain")).toBeTruthy();
+    expect(screen.getAllByText("Product").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Protocol").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Chain").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Wallet").length).toBeGreaterThan(0);
     expect(screen.queryByText("Sort By")).toBeNull();
     expect(screen.queryByText("Direction")).toBeNull();
@@ -244,5 +278,27 @@ describe("PortfolioPage", () => {
     fireEvent.click(headerCell("Wallet"));
     expect(renderedOrder()[0]).toContain("BBB");
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("hides protocols that do not serve portfolio rows", () => {
+    render(<PortfolioPage />);
+
+    expect(screen.getAllByText("Aave V3").length).toBeGreaterThan(0);
+    expect(screen.queryAllByText("Trader Joe")).toHaveLength(0);
+    expect(screen.queryAllByText("Etherex")).toHaveLength(0);
+    expect(screen.queryAllByText("Wallet Balances")).toHaveLength(0);
+  });
+
+  it("ignores hidden protocol filters from the URL", () => {
+    searchParamsValue = "protocol_code=wallet_balances";
+
+    render(<PortfolioPage />);
+
+    expect(usePositionsMock).toHaveBeenCalledWith({
+      product_code: undefined,
+      protocol_code: undefined,
+      chain_code: undefined,
+      wallet_address: undefined,
+    });
   });
 });

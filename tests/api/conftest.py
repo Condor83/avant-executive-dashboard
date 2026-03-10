@@ -24,6 +24,8 @@ from core.db.models import (
     Alert,
     Chain,
     DataQuality,
+    HolderScorecardDaily,
+    HolderSupplyCoverageDaily,
     Market,
     MarketSnapshot,
     PositionSnapshot,
@@ -377,6 +379,69 @@ def seeded_session(
         PortfolioViewEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
         MarketViewEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
         ExecutiveSummaryEngine(served_session).compute_daily(business_date=BUSINESS_DATE)
+        served_session.add(
+            HolderSupplyCoverageDaily(
+                business_date=BUSINESS_DATE,
+                as_of_ts_utc=eod_ts,
+                chain_code="avalanche",
+                token_symbol="savUSD",
+                token_address="0x06d47f3fb376649c3a9dafe069b3d6e35572219e",
+                raw_holder_wallet_count=763,
+                monitoring_wallet_count=154,
+                core_wallet_count=57,
+                signoff_wallet_count=44,
+                wallets_with_same_chain_deployed_supply=4,
+                wallets_with_cross_chain_supply=12,
+                gross_supply_usd=Decimal("87270000"),
+                strategy_supply_usd=Decimal("5400000"),
+                strategy_deployed_supply_usd=Decimal("3200000"),
+                internal_supply_usd=Decimal("1250000"),
+                explicit_excluded_supply_usd=Decimal("0"),
+                net_customer_float_usd=Decimal("80620000"),
+                direct_holder_supply_usd=Decimal("10532498.36"),
+                core_direct_holder_supply_usd=Decimal("9642581.53"),
+                signoff_direct_holder_supply_usd=Decimal("7839687.67"),
+                same_chain_deployed_supply_usd=Decimal("0"),
+                cross_chain_supply_usd=Decimal("7508005.17"),
+                core_same_chain_deployed_supply_usd=Decimal("0"),
+                signoff_same_chain_deployed_supply_usd=Decimal("0"),
+                covered_supply_usd=Decimal("18040503.53"),
+                core_covered_supply_usd=Decimal("17150586.70"),
+                signoff_covered_supply_usd=Decimal("15347692.84"),
+                covered_supply_pct=Decimal("0.2237760230"),
+                core_covered_supply_pct=Decimal("0.2127360074"),
+                signoff_covered_supply_pct=Decimal("0.1903712850"),
+            )
+        )
+        served_session.add(
+            HolderScorecardDaily(
+                business_date=BUSINESS_DATE,
+                as_of_ts_utc=eod_ts,
+                tracked_holders=44,
+                top10_holder_share=Decimal("0.61"),
+                top25_holder_share=Decimal("0.82"),
+                top100_holder_share=Decimal("1"),
+                wallet_held_avant_usd=Decimal("14500000"),
+                configured_deployed_avant_usd=Decimal("4800000"),
+                total_canonical_avant_exposure_usd=Decimal("19300000"),
+                base_share=Decimal("0.18"),
+                staked_share=Decimal("0.74"),
+                boosted_share=Decimal("0.08"),
+                single_asset_pct=Decimal("0.66"),
+                multi_asset_pct=Decimal("0.34"),
+                single_wrapper_pct=Decimal("0.57"),
+                multi_wrapper_pct=Decimal("0.43"),
+                configured_collateral_users_pct=Decimal("0.27"),
+                configured_leveraged_pct=Decimal("0.18"),
+                whale_enter_count_7d=2,
+                whale_exit_count_7d=1,
+                whale_borrow_up_count_7d=3,
+                whale_collateral_up_count_7d=4,
+                markets_needing_capacity_review=2,
+                dq_verified_holder_pct=Decimal("0.91"),
+                visibility_gap_wallet_count=118,
+            )
+        )
         served_session.commit()
 
     test_session = Session(engine)

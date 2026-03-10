@@ -25,6 +25,7 @@ from core.db.models import (
     PositionSnapshot,
     Protocol,
     Token,
+    Wallet,
     WalletProductMap,
 )
 
@@ -189,8 +190,9 @@ def _load_live_position_rows(
         .join(Market, Market.market_id == PositionSnapshot.market_id)
         .join(Protocol, Protocol.protocol_id == Market.protocol_id)
         .join(Chain, Chain.chain_id == Market.chain_id)
+        .join(Wallet, Wallet.wallet_id == PositionSnapshot.wallet_id)
         .outerjoin(WalletProductMap, WalletProductMap.wallet_id == PositionSnapshot.wallet_id)
-        .where(PositionSnapshot.as_of_ts_utc == snapshot_ts)
+        .where(PositionSnapshot.as_of_ts_utc == snapshot_ts, Wallet.wallet_type == "strategy")
         .order_by(PositionSnapshot.snapshot_id.asc())
     ).all()
     return [

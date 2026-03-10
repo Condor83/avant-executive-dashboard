@@ -35,6 +35,11 @@ import type {
 
 const DUST_THRESHOLD_USD = 1_000;
 const ANNUALIZATION_DAYS = 365;
+const HIDDEN_PORTFOLIO_PROTOCOLS = new Set([
+  "traderjoe_lp",
+  "etherex",
+  "wallet_balances",
+]);
 
 function filterValue(searchParams: URLSearchParams, key: string) {
   return searchParams.get(key) ?? undefined;
@@ -167,8 +172,8 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
           rel="noreferrer"
           className="block w-[96px] whitespace-normal rounded-sm outline-none transition-colors hover:text-violet-700 focus-visible:ring-2 focus-visible:ring-violet-300"
         >
-          <div className="font-mono text-xs text-slate-700">{row.wallet_label ?? row.wallet_address}</div>
-          <div className="text-xs text-slate-500">{compactProductLabel(row.product_label)}</div>
+          <div className="font-mono text-xs text-foreground">{row.wallet_label ?? row.wallet_address}</div>
+          <div className="text-xs text-muted-foreground">{compactProductLabel(row.product_label)}</div>
         </a>
       ),
     },
@@ -181,12 +186,12 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
         const health = healthDescriptor(row.health_factor);
         return (
           <div title={row.position_key} className="w-[150px] whitespace-normal">
-            <div className="font-medium text-slate-900">{positionTitle(row)}</div>
+            <div className="font-medium text-foreground">{positionTitle(row)}</div>
             <div className="text-xs font-medium text-violet-600">
               {compactChainLabel(row.chain_code)} - {compactProtocolLabel(row.protocol_code)}
             </div>
-            <div className="text-xs text-slate-500">{row.position_kind}</div>
-            {health && <div className="text-xs text-slate-500">{health}</div>}
+            <div className="text-xs text-muted-foreground">{row.position_kind}</div>
+            {health && <div className="text-xs text-muted-foreground">{health}</div>}
           </div>
         );
       },
@@ -198,13 +203,13 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       sortValue: (row) => totalSupplyUsd(row),
       cell: (row) => (
         <div className="space-y-1 text-right">
-          <div className="font-semibold text-slate-900">
+          <div className="font-semibold text-foreground">
             {formatUSD(totalSupplyUsd(row).toString())}
           </div>
           {supplyLegs(row).map((leg, index) => (
             <div
               key={`${row.position_key}-supply-${leg.token_id ?? index}`}
-              className="text-xs text-slate-500"
+              className="text-xs text-muted-foreground"
             >
               <span>{leg.symbol ?? "Unknown"}</span>
               <span className="ml-1 text-teal-700">{formatAPY(leg.apy)}</span>
@@ -222,13 +227,13 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       cell: (row) =>
         row.borrow_legs.length > 0 ? (
           <div className="space-y-1 text-right">
-            <div className="font-semibold text-slate-900">
+            <div className="font-semibold text-foreground">
               {formatUSD(totalBorrowUsd(row).toString())}
             </div>
             {row.borrow_legs.map((leg, index) => (
               <div
                 key={`${row.position_key}-borrow-${leg.token_id ?? index}`}
-                className="text-xs text-slate-500"
+                className="text-xs text-muted-foreground"
               >
                 <span>{leg.symbol ?? "Unknown"}</span>
                 <span className="ml-1 text-amber-700">{formatAPY(leg.apy)}</span>
@@ -236,7 +241,7 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
             ))}
           </div>
         ) : (
-          <span className="text-slate-400">No debt</span>
+          <span className="text-muted-foreground/70">No debt</span>
         ),
       align: "right",
     },
@@ -321,7 +326,7 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
             formatter={formatROE}
             colored
           />
-          <div className="text-[11px] text-slate-500">
+          <div className="text-[11px] text-muted-foreground">
             1D {formatROE(grossRoeDaily(row))}
           </div>
         </div>
@@ -360,10 +365,13 @@ function filterBar(
   hiddenCount: number,
   setParam: (key: string, value: string) => void,
 ) {
+  const protocolOptions = (metadata?.protocols ?? []).filter(
+    (option) => !HIDDEN_PORTFOLIO_PROTOCOLS.has(option.value),
+  );
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3">
       {filterSelect("Product", filters.product_code, metadata?.products ?? [], (value) => setParam("product_code", value))}
-      {filterSelect("Protocol", filters.protocol_code, metadata?.protocols ?? [], (value) => setParam("protocol_code", value))}
+      {filterSelect("Protocol", filters.protocol_code, protocolOptions, (value) => setParam("protocol_code", value))}
       {filterSelect("Chain", filters.chain_code, metadata?.chains ?? [], (value) => setParam("chain_code", value))}
       {filterSelect("Wallet", filters.wallet_address, metadata?.wallets ?? [], (value) => setParam("wallet_address", value))}
       <Button
@@ -404,10 +412,14 @@ export default function PortfolioPage() {
 function PortfolioContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const protocolCode = filterValue(searchParams, "protocol_code");
+  const effectiveProtocolCode = protocolCode && HIDDEN_PORTFOLIO_PROTOCOLS.has(protocolCode)
+    ? undefined
+    : protocolCode;
 
   const filters: PositionFilters = {
     product_code: filterValue(searchParams, "product_code"),
-    protocol_code: filterValue(searchParams, "protocol_code"),
+    protocol_code: effectiveProtocolCode,
     chain_code: filterValue(searchParams, "chain_code"),
     wallet_address: filterValue(searchParams, "wallet_address"),
   };

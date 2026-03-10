@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, literal, select
@@ -413,7 +413,8 @@ def _build_exposure_row(
 def get_market_exposures(
     protocol_code: str | None = Query(default=None),
     chain_code: str | None = Query(default=None),
-    watch_only: bool = Query(default=False),
+    watchlist: Literal["yes", "no"] | None = Query(default=None),
+    watch_only: bool | None = Query(default=None),
     session: Session = Depends(get_session),
 ) -> list[MarketExposureRow]:
     business_date = _latest_business_date(session)
@@ -425,8 +426,16 @@ def get_market_exposures(
         stmt = stmt.where(Protocol.protocol_code == protocol_code)
     if chain_code is not None:
         stmt = stmt.where(Chain.chain_code == chain_code)
-    if watch_only:
+    effective_watchlist = watchlist
+    if effective_watchlist is None:
+        if watch_only is True:
+            effective_watchlist = "yes"
+        elif watch_only is False:
+            effective_watchlist = "no"
+    if effective_watchlist == "yes":
         stmt = stmt.where(MarketExposureDaily.watch_status != "normal")
+    elif effective_watchlist == "no":
+        stmt = stmt.where(MarketExposureDaily.watch_status == "normal")
     stmt = stmt.order_by(
         MarketExposureDaily.active_alert_count.desc(),
         MarketExposureDaily.total_borrow_usd.desc(),

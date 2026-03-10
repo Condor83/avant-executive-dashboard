@@ -33,7 +33,20 @@ export function StatusRail() {
                 </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            {freshness.open_dq_issues_24h > 0 && (
+                <div className="flex items-center gap-2">
+                    <span className="font-semibold uppercase tracking-wider">Data Quality</span>
+                    <Link
+                        href="/risk"
+                        className="flex items-center gap-1.5 rounded-sm border border-avant-danger/30 bg-avant-danger/10 px-1.5 py-0.5 font-medium text-avant-danger transition-colors hover:bg-avant-danger/20"
+                    >
+                        <AlertTriangle className="h-3 w-3" />
+                        {freshness.open_dq_issues_24h} Issue{freshness.open_dq_issues_24h !== 1 ? "s" : ""}
+                    </Link>
+                </div>
+            )}
+
+            <div className="flex items-center gap-2 ml-auto">
                 <span className="font-semibold uppercase tracking-wider">Positions</span>
                 <FreshnessIndicator hours={freshness.position_snapshot_age_hours} />
             </div>
@@ -42,14 +55,6 @@ export function StatusRail() {
                 <span className="font-semibold uppercase tracking-wider">Markets</span>
                 <FreshnessIndicator hours={freshness.market_snapshot_age_hours} />
             </div>
-
-            <Link
-                href="/risk"
-                className="ml-auto flex items-center gap-1.5 font-medium text-avant-warning transition-colors hover:text-foreground"
-            >
-                <AlertTriangle className="h-3.5 w-3.5" />
-                {freshness.open_dq_issues_24h} DQ issue{freshness.open_dq_issues_24h !== 1 ? "s" : ""} (24h)
-            </Link>
         </div>
     );
 }

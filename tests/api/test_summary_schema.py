@@ -17,6 +17,7 @@ def test_summary_has_expected_sections(api_client: tuple[TestClient, SeedMetadat
     assert set(data) == {
         "business_date",
         "executive",
+        "holder_summary",
         "portfolio_summary",
         "market_summary",
         "freshness",
@@ -47,3 +48,26 @@ def test_summary_freshness_fields_present(api_client: tuple[TestClient, SeedMeta
     assert freshness["position_snapshot_age_hours"] is not None
     assert freshness["market_snapshot_age_hours"] is not None
     assert freshness["open_dq_issues_24h"] == 2
+
+
+def test_summary_holder_block_is_present(api_client: tuple[TestClient, SeedMetadata]) -> None:
+    client, _ = api_client
+    holder = client.get("/summary/executive").json()["holder_summary"]
+
+    assert holder is not None
+    assert holder["supply_coverage_token_symbol"] == "savUSD"
+    assert holder["supply_coverage_chain_code"] == "avalanche"
+    assert holder["monitored_holder_count"] == 154
+    assert holder["attributed_holder_count"] == 44
+    assert float(holder["attribution_completion_pct"]) > 0
+    assert holder["core_holder_wallet_count"] == 44
+    assert holder["whale_wallet_count"] == 0
+    assert float(holder["strategy_supply_usd"]) > 0
+    assert float(holder["strategy_deployed_supply_usd"]) > 0
+    assert float(holder["net_customer_float_usd"]) > 0
+    assert float(holder["covered_supply_usd"]) > 0
+    assert float(holder["covered_supply_pct"]) > 0
+    assert float(holder["cross_chain_supply_usd"]) > 0
+    assert float(holder["total_canonical_avant_exposure_usd"]) > 0
+    assert float(holder["top10_holder_share"]) > 0
+    assert holder["visibility_gap_wallet_count"] == 118

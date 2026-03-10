@@ -131,3 +131,32 @@ class DebankCloudClient:
             if isinstance(item, dict):
                 result.append(item)
         return result
+
+    def get_user_all_tokens(
+        self,
+        wallet_address: str,
+        *,
+        chain_ids: list[str] | None = None,
+        include_protocol_tokens: bool = True,
+    ) -> list[dict[str, object]]:
+        """Return wallet token balances for a wallet across supported chains."""
+
+        params: dict[str, str] = {"id": wallet_address}
+        if include_protocol_tokens:
+            params["is_all"] = "true"
+        if chain_ids:
+            normalized_chain_ids = [chain_id.strip() for chain_id in chain_ids if chain_id.strip()]
+            if normalized_chain_ids:
+                params["chain_ids"] = ",".join(normalized_chain_ids)
+
+        payload = self._get_json("/v1/user/all_token_list", params=params)
+        if not isinstance(payload, list):
+            raise DebankResponseError(
+                f"debank token payload is not a list for wallet={wallet_address}"
+            )
+
+        result: list[dict[str, object]] = []
+        for item in payload:
+            if isinstance(item, dict):
+                result.append(item)
+        return result

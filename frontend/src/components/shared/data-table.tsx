@@ -138,7 +138,7 @@ export function DataTable<T>({
                         <ArrowDown className="h-3 w-3" />
                       )
                     ) : col.sortable ? (
-                      <ArrowUpDown className="h-3 w-3 text-slate-400" />
+                      <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
                     ) : null}
                   </span>
                 </TableHead>
@@ -150,7 +150,7 @@ export function DataTable<T>({
               <TableRow>
                 <TableCell
                   colSpan={columns.length}
-                  className="py-8 text-center text-sm text-slate-500"
+                  className="py-8 text-center text-sm text-muted-foreground"
                 >
                   {emptyMessage}
                 </TableCell>
@@ -159,7 +159,7 @@ export function DataTable<T>({
               sorted.map((row) => (
                 <TableRow
                   key={rowKey(row)}
-                  className={cn(onRowClick && "cursor-pointer hover:bg-slate-50")}
+                  className={cn(onRowClick && "cursor-pointer hover:bg-muted/40")}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                 >
                   {columns.map((col) => (

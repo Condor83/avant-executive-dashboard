@@ -25,3 +25,4 @@ See `docs/dependency-order.md` for parallelization rules.
 - Sprint 08 — Market view analytics (market overview, concentration vs market totals, risk-parameter capture)
 - Sprint 09 — API + exec dashboard MVP (Portfolio + Markets; consumer deferred)
 - Sprint 10 — Production hardening (scheduling, backfills, observability, deterministic pipeline sequencing)
+- Sprint 11 — Strategy wallet profiles + activity intelligence

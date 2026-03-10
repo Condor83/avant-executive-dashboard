@@ -1,7 +1,7 @@
-export const SEVERITY_COLORS: Record<string, { bg: string; text: string }> = {
-  low: { bg: "bg-sky-100", text: "text-sky-700" },
-  med: { bg: "bg-amber-100", text: "text-amber-700" },
-  high: { bg: "bg-rose-100", text: "text-rose-700" },
+export const SEVERITY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  low: { bg: "bg-transparent", text: "text-avant-success", border: "border-avant-success/30" },
+  med: { bg: "bg-transparent", text: "text-avant-warning", border: "border-avant-warning/50" },
+  high: { bg: "bg-transparent", text: "text-avant-danger", border: "border-avant-danger/50" },
 };
 
 export const STATUS_COLORS: Record<string, { bg: string; text: string }> = {

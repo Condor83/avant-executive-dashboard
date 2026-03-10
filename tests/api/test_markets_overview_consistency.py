@@ -57,14 +57,34 @@ def test_market_exposure_supply_matches_db(
         assert Decimal(api_row["total_supply_usd"]) == db_by_exposure[api_row["market_exposure_id"]]
 
 
-def test_watch_only_filter_returns_alerting_rows(
+def test_watchlist_yes_filter_returns_alerting_rows(
+    api_client: tuple[TestClient, SeedMetadata],
+) -> None:
+    client, _ = api_client
+    rows = client.get("/markets/exposures?watchlist=yes").json()
+
+    assert len(rows) == 1
+    assert rows[0]["active_alert_count"] == 1
+    assert rows[0]["watch_status"] == "alerting"
+
+
+def test_watchlist_no_filter_returns_normal_rows(
+    api_client: tuple[TestClient, SeedMetadata],
+) -> None:
+    client, _ = api_client
+    rows = client.get("/markets/exposures?watchlist=no").json()
+
+    assert len(rows) >= 1
+    assert all(row["watch_status"] == "normal" for row in rows)
+
+
+def test_watch_only_true_remains_supported(
     api_client: tuple[TestClient, SeedMetadata],
 ) -> None:
     client, _ = api_client
     rows = client.get("/markets/exposures?watch_only=true").json()
 
     assert len(rows) == 1
-    assert rows[0]["active_alert_count"] == 1
     assert rows[0]["watch_status"] == "alerting"
 
 

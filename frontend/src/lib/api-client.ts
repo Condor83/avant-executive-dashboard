@@ -1,6 +1,16 @@
 import type {
   AlertFilters,
   AlertRow,
+  ConsumerAdoptionFunnelResponse,
+  ConsumerCapacityResponse,
+  ConsumerBehaviorComparisonResponse,
+  ConsumerDeploymentsResponse,
+  ConsumerRiskSignalsResponse,
+  ConsumerSummaryResponse,
+  ConsumerTopWalletsResponse,
+  ConsumerVisibilityProtocolGapsResponse,
+  ConsumerVisibilitySummaryResponse,
+  ConsumerWalletRankMode,
   DataQualityResponse,
   MarketExposureDetailResponse,
   MarketExposureFilters,
@@ -74,7 +84,7 @@ export function fetchMarketExposures(
   const params: Record<string, string> = {};
   if (filters.protocol_code) params.protocol_code = filters.protocol_code;
   if (filters.chain_code) params.chain_code = filters.chain_code;
-  if (filters.watch_only) params.watch_only = "true";
+  if (filters.watchlist) params.watchlist = filters.watchlist;
   return get("/markets/exposures", params);
 }
 
@@ -107,4 +117,58 @@ export function fetchAlerts(filters: AlertFilters = {}): Promise<AlertRow[]> {
 
 export function fetchDataQuality(): Promise<DataQualityResponse> {
   return get("/data-quality");
+}
+
+export function fetchConsumerSummary(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+): Promise<ConsumerSummaryResponse> {
+  return get("/consumer/summary", { product });
+}
+
+export function fetchConsumerBehaviorComparison(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+): Promise<ConsumerBehaviorComparisonResponse> {
+  return get("/consumer/behavior-comparison", { product });
+}
+
+export function fetchConsumerAdoptionFunnel(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+): Promise<ConsumerAdoptionFunnelResponse> {
+  return get("/consumer/adoption-funnel", { product });
+}
+
+export function fetchConsumerDeployments(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+): Promise<ConsumerDeploymentsResponse> {
+  return get("/consumer/deployments", { product });
+}
+
+export function fetchConsumerRiskSignals(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+): Promise<ConsumerRiskSignalsResponse> {
+  return get("/consumer/risk-signals", { product });
+}
+
+export function fetchConsumerTopWallets(
+  product: "all" | "avusd" | "aveth" | "avbtc" = "all",
+  rank: ConsumerWalletRankMode = "assets",
+  limit: number = 25,
+): Promise<ConsumerTopWalletsResponse> {
+  return get("/consumer/top-wallets", {
+    product,
+    rank,
+    limit: String(limit),
+  });
+}
+
+export function fetchConsumerCapacity(): Promise<ConsumerCapacityResponse> {
+  return get("/consumer/markets/capacity");
+}
+
+export function fetchConsumerVisibilitySummary(): Promise<ConsumerVisibilitySummaryResponse> {
+  return get("/consumer/visibility/summary");
+}
+
+export function fetchConsumerVisibilityProtocolGaps(): Promise<ConsumerVisibilityProtocolGapsResponse> {
+  return get("/consumer/visibility/protocol-gaps");
 }

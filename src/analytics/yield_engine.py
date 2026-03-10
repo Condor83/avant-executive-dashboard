@@ -15,7 +15,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from analytics.fee_engine import FeeBreakdown, apply_fee_waterfall
-from core.db.models import DataQuality, Market, PositionSnapshot, WalletProductMap, YieldDaily
+from core.db.models import (
+    DataQuality,
+    Market,
+    PositionSnapshot,
+    Wallet,
+    WalletProductMap,
+    YieldDaily,
+)
 from core.settings import get_settings
 
 METHOD_APY_PRORATED_SOD_EOD = "apy_prorated_sod_eod"
@@ -575,7 +582,12 @@ class YieldEngine:
                 PositionSnapshot.supply_apy,
                 PositionSnapshot.borrow_apy,
                 PositionSnapshot.reward_apy,
-            ).where(PositionSnapshot.as_of_ts_utc == as_of_ts_utc)
+            )
+            .join(Wallet, Wallet.wallet_id == PositionSnapshot.wallet_id)
+            .where(
+                PositionSnapshot.as_of_ts_utc == as_of_ts_utc,
+                Wallet.wallet_type == "strategy",
+            )
         ).all()
 
         return {

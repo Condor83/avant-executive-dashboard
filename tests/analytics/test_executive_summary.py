@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 from alembic import command
@@ -15,8 +15,13 @@ from analytics.portfolio_views import PortfolioViewEngine
 from analytics.yield_engine import denver_business_bounds_utc
 from core.db.models import (
     Chain,
+    ConsumerCohortDaily,
+    ConsumerMarketDemandDaily,
     ExecutiveSummaryDaily,
+    HolderBehaviorDaily,
+    HolderScorecardDaily,
     Market,
+    PortfolioSummaryDaily,
     PositionSnapshot,
     Product,
     Protocol,
@@ -182,6 +187,7 @@ def test_executive_summary_tracks_market_stability_ops_separately(
         assert row.market_stability_ops_net_equity_usd == Decimal("600")
         assert row.total_gross_yield_daily_usd == Decimal("20")
         assert row.total_net_yield_daily_usd == Decimal("15.3")
+        assert row.customer_metrics_ready is False
 
 
 def test_executive_summary_persists_ops_only_capital(
@@ -276,3 +282,169 @@ def test_executive_summary_persists_ops_only_capital(
         assert row.nav_usd == Decimal("0")
         assert row.portfolio_net_equity_usd == Decimal("0")
         assert row.market_stability_ops_net_equity_usd == Decimal("500")
+
+
+def test_executive_summary_marks_customer_metrics_ready_when_consumer_tables_exist(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+
+    business_date = date(2026, 3, 5)
+    as_of_ts_utc = datetime(2026, 3, 6, tzinfo=UTC)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="morpho")
+        wallet = Wallet(
+            address="0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            wallet_type="customer",
+        )
+        session.add_all([chain, protocol, wallet])
+        session.flush()
+
+        token = Token(
+            chain_id=chain.chain_id,
+            address_or_mint="0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+            symbol="USDC",
+            decimals=6,
+        )
+        session.add(token)
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            native_market_key="consumer-usdc",
+            market_address="0xconsumer",
+            market_kind="consumer_market",
+            display_name="Consumer USDC",
+            base_asset_token_id=token.token_id,
+            collateral_token_id=token.token_id,
+        )
+        session.add(market)
+        session.flush()
+
+        session.add_all(
+            [
+                ConsumerCohortDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    wallet_id=wallet.wallet_id,
+                    wallet_address=wallet.address,
+                    verified_total_avant_usd=Decimal("100000"),
+                    discovery_sources_json={"sources": ["prior_cohort"]},
+                    is_signoff_eligible=True,
+                    exclusion_reason=None,
+                ),
+                HolderBehaviorDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    wallet_id=wallet.wallet_id,
+                    wallet_address=wallet.address,
+                    is_signoff_eligible=True,
+                    verified_total_avant_usd=Decimal("100000"),
+                    family_usd_usd=Decimal("100000"),
+                    family_btc_usd=Decimal("0"),
+                    family_eth_usd=Decimal("0"),
+                    base_usd=Decimal("100000"),
+                    staked_usd=Decimal("0"),
+                    boosted_usd=Decimal("0"),
+                    family_count=1,
+                    wrapper_count=1,
+                    multi_asset_flag=False,
+                    multi_wrapper_flag=False,
+                    idle_avant_usd=Decimal("50000"),
+                    idle_eligible_same_chain_usd=Decimal("50000"),
+                    avant_collateral_usd=Decimal("50000"),
+                    borrowed_usd=Decimal("10000"),
+                    leveraged_flag=True,
+                    borrow_against_avant_flag=True,
+                    leverage_ratio=Decimal("0.2"),
+                    health_factor_min=Decimal("1.4"),
+                    risk_band="watch",
+                    protocol_count=1,
+                    market_count=1,
+                    chain_count=1,
+                    behavior_tags_json=[],
+                    whale_rank_by_assets=1,
+                    whale_rank_by_borrow=1,
+                ),
+                ConsumerMarketDemandDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    market_id=market.market_id,
+                    protocol_code="morpho",
+                    chain_code="ethereum",
+                    collateral_family="usd",
+                    holder_count=1,
+                    collateral_wallet_count=1,
+                    leveraged_wallet_count=1,
+                    avant_collateral_usd=Decimal("50000"),
+                    borrowed_usd=Decimal("10000"),
+                    idle_eligible_same_chain_usd=Decimal("50000"),
+                    p50_leverage_ratio=Decimal("0.2"),
+                    p90_leverage_ratio=Decimal("0.2"),
+                    top10_collateral_share=Decimal("1"),
+                    utilization=Decimal("0.8"),
+                    available_liquidity_usd=Decimal("100000"),
+                    cap_headroom_usd=Decimal("25000"),
+                    capacity_pressure_score=1,
+                    needs_capacity_review=False,
+                    near_limit_wallet_count=0,
+                ),
+                HolderScorecardDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    tracked_holders=1,
+                    top10_holder_share=Decimal("1"),
+                    top25_holder_share=Decimal("1"),
+                    top100_holder_share=Decimal("1"),
+                    wallet_held_avant_usd=Decimal("100000"),
+                    configured_deployed_avant_usd=Decimal("50000"),
+                    total_canonical_avant_exposure_usd=Decimal("150000"),
+                    base_share=Decimal("1"),
+                    staked_share=Decimal("0"),
+                    boosted_share=Decimal("0"),
+                    single_asset_pct=Decimal("1"),
+                    multi_asset_pct=Decimal("0"),
+                    single_wrapper_pct=Decimal("1"),
+                    multi_wrapper_pct=Decimal("0"),
+                    configured_collateral_users_pct=Decimal("1"),
+                    configured_leveraged_pct=Decimal("1"),
+                    whale_enter_count_7d=1,
+                    whale_exit_count_7d=0,
+                    whale_borrow_up_count_7d=1,
+                    whale_collateral_up_count_7d=1,
+                    markets_needing_capacity_review=0,
+                    dq_verified_holder_pct=Decimal("1"),
+                    visibility_gap_wallet_count=0,
+                ),
+                PortfolioSummaryDaily(
+                    business_date=business_date,
+                    scope_segment="strategy_only",
+                    total_supply_usd=Decimal("0"),
+                    total_borrow_usd=Decimal("0"),
+                    total_net_equity_usd=Decimal("0"),
+                    aggregate_roe=None,
+                    total_gross_yield_daily_usd=Decimal("0"),
+                    total_net_yield_daily_usd=Decimal("0"),
+                    total_gross_yield_mtd_usd=Decimal("0"),
+                    total_net_yield_mtd_usd=Decimal("0"),
+                    total_strategy_fee_daily_usd=Decimal("0"),
+                    total_avant_gop_daily_usd=Decimal("0"),
+                    total_strategy_fee_mtd_usd=Decimal("0"),
+                    total_avant_gop_mtd_usd=Decimal("0"),
+                    avg_leverage_ratio=None,
+                    open_position_count=0,
+                ),
+            ]
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        ExecutiveSummaryEngine(session).compute_daily(business_date=business_date)
+        session.commit()
+        row = session.scalar(select(ExecutiveSummaryDaily))
+        assert row is not None
+        assert row.customer_metrics_ready is True

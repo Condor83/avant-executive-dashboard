@@ -13,7 +13,11 @@ from sqlalchemy.orm import Session
 from analytics.yield_engine import denver_business_bounds_utc
 from core.db.models import (
     Alert,
+    ConsumerCohortDaily,
+    ConsumerMarketDemandDaily,
     ExecutiveSummaryDaily,
+    HolderBehaviorDaily,
+    HolderScorecardDaily,
     Market,
     MarketSummaryDaily,
     PortfolioPositionDaily,
@@ -145,7 +149,7 @@ class ExecutiveSummaryEngine:
             "market_total_borrow_usd": markets.total_borrow_usd if markets is not None else ZERO,
             "markets_at_risk_count": markets.markets_at_risk_count if markets is not None else 0,
             "open_alert_count": open_alert_count,
-            "customer_metrics_ready": False,
+            "customer_metrics_ready": self._customer_metrics_ready(business_date=business_date),
         }
         stmt = insert(ExecutiveSummaryDaily).values(row)
         stmt = stmt.on_conflict_do_update(
@@ -174,3 +178,41 @@ class ExecutiveSummaryEngine:
         )
         self.session.execute(stmt)
         return ExecutiveSummaryBuildSummary(business_date=business_date, rows_written=1)
+
+    def _customer_metrics_ready(self, *, business_date: date) -> bool:
+        required_tables_ready = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ConsumerCohortDaily)
+                .where(ConsumerCohortDaily.business_date == business_date)
+            )
+            or 0
+        )
+        if required_tables_ready == 0:
+            return False
+
+        holder_rows = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(HolderBehaviorDaily)
+                .where(HolderBehaviorDaily.business_date == business_date)
+            )
+            or 0
+        )
+        demand_rows = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(ConsumerMarketDemandDaily)
+                .where(ConsumerMarketDemandDaily.business_date == business_date)
+            )
+            or 0
+        )
+        scorecard_rows = (
+            self.session.scalar(
+                select(func.count())
+                .select_from(HolderScorecardDaily)
+                .where(HolderScorecardDaily.business_date == business_date)
+            )
+            or 0
+        )
+        return holder_rows > 0 and demand_rows > 0 and scorecard_rows > 0

@@ -1,0 +1,19 @@
+chains:
+  - chain_code: avalanche
+    chain_id: "43114"
+    holder_provider: routescan
+  - chain_code: ethereum
+    chain_id: "1"
+    holder_provider: routescan
+
+raw_holder_threshold_usd: 100
+core_holder_threshold_usd: 50000
+whale_holder_threshold_usd: 1000000
+
+legacy_seed_globs:
+  - consumer_wallets_*.yaml
+
+force_include_wallets: []
+
+exclude_protocol_wallets_by_default: true
+exclude_contract_wallets_by_default: true

@@ -18,7 +18,6 @@ import {
   formatUSDCompact,
 } from "@/lib/formatters";
 
-
 type CashWindow = "daily" | "mtd";
 const ANNUALIZATION_DAYS = 365;
 const EM_DASH = "—";
@@ -33,8 +32,6 @@ function annualizeDailyRoe(value: string | null | undefined): string | null {
   }
   return String(parsed * ANNUALIZATION_DAYS);
 }
-
-
 
 function display(value: string): string {
   return value === "---" ? EM_DASH : value;
@@ -69,7 +66,9 @@ function SummaryStat({
 }) {
   return (
     <div className="flex flex-col">
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">{label}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </p>
       <p className={`mt-1 text-2xl font-semibold tabular-nums ${valueClassName ?? "text-foreground"}`}>
         {value}
       </p>
@@ -81,8 +80,6 @@ function SummaryStat({
 export default function SummaryPage() {
   const { data, isLoading, error, refetch } = useSummary();
   const [cashWindow, setCashWindow] = useState<CashWindow>("mtd");
-
-
 
   if (error) {
     return (
@@ -107,6 +104,8 @@ export default function SummaryPage() {
   const executive = data.executive;
   const portfolioSummary = data.portfolio_summary;
   const marketSummary = data.market_summary;
+  const holderSummary = data.holder_summary;
+
   const portfolioRoeAnnualized =
     portfolioSummary?.aggregate_roe_annualized ??
     annualizeDailyRoe(portfolioSummary?.aggregate_roe_daily ?? portfolioSummary?.aggregate_roe) ??
@@ -139,27 +138,42 @@ export default function SummaryPage() {
   return (
     <PageContainer title="Executive Summary">
       <section className="mb-12 mt-4">
-        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Command Horizon</h2>
+        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+          Command Horizon
+        </h2>
 
         <div className="grid grid-cols-1 gap-12 lg:grid-cols-[2fr_1fr]">
-          {/* Primary Strategy NAV Hub */}
           <div className="flex flex-col gap-8">
             <div className="flex flex-col gap-8 lg:flex-row lg:items-start lg:justify-between">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Deployed Strategy NAV</div>
-                <div className={cn("text-6xl font-light tracking-tight tabular-nums mt-1", financialColor(executive.portfolio_net_equity_usd))}>
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Deployed Strategy NAV
+                </div>
+                <div
+                  className={cn(
+                    "mt-1 text-6xl font-light tracking-tight tabular-nums",
+                    financialColor(executive.portfolio_net_equity_usd),
+                  )}
+                >
                   {displayUSD(executive.portfolio_net_equity_usd)}
                 </div>
               </div>
 
               <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between gap-8">
-                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Cash Flow Ledger</div>
+                  <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                    Cash Flow Ledger
+                  </div>
                   <div className="inline-flex gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      className={cn("h-6 px-2 text-[10px] uppercase tracking-wider", cashWindow === "daily" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50")}
+                      className={cn(
+                        "h-6 px-2 text-[10px] uppercase tracking-wider",
+                        cashWindow === "daily"
+                          ? "bg-muted font-semibold text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50",
+                      )}
                       onClick={() => setCashWindow("daily")}
                     >
                       1D
@@ -167,82 +181,221 @@ export default function SummaryPage() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className={cn("h-6 px-2 text-[10px] uppercase tracking-wider", cashWindow === "mtd" ? "bg-muted text-foreground font-semibold" : "text-muted-foreground hover:bg-muted/50")}
+                      className={cn(
+                        "h-6 px-2 text-[10px] uppercase tracking-wider",
+                        cashWindow === "mtd"
+                          ? "bg-muted font-semibold text-foreground"
+                          : "text-muted-foreground hover:bg-muted/50",
+                      )}
                       onClick={() => setCashWindow("mtd")}
                     >
                       MTD
                     </Button>
                   </div>
                 </div>
-                <div className="flex gap-8">
-                  <SummaryStat label="Gross" value={displayUSD(grossYieldSelected)} valueClassName={financialColor(grossYieldSelected)} />
-                  <SummaryStat label="Fee" value={displayUSD(strategyFeeSelected)} valueClassName={financialColor(strategyFeeSelected)} />
-                  <SummaryStat label="GOP" value={displayUSD(avantGopSelected)} valueClassName={financialColor(avantGopSelected)} />
-                  <SummaryStat label="Net" value={displayUSD(netYieldSelected)} valueClassName={financialColor(netYieldSelected)} />
+                <div className="flex gap-12">
+                  <div className="flex flex-col gap-3">
+                    <p className="border-b border-border pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                      Yields
+                    </p>
+                    <div className="flex gap-8">
+                      <SummaryStat
+                        label="Gross"
+                        value={displayUSD(grossYieldSelected)}
+                        valueClassName={financialColor(grossYieldSelected)}
+                      />
+                      <SummaryStat
+                        label="Net"
+                        value={displayUSD(netYieldSelected)}
+                        valueClassName={financialColor(netYieldSelected)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <p className="border-b border-border pb-1 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                      GOP Breakdown
+                    </p>
+                    <div className="flex gap-8">
+                      <SummaryStat
+                        label="Strategist Fee"
+                        value={displayUSD(strategyFeeSelected)}
+                        valueClassName={financialColor(strategyFeeSelected)}
+                      />
+                      <SummaryStat
+                        label="Avant GOP"
+                        value={displayUSD(avantGopSelected)}
+                        valueClassName={financialColor(avantGopSelected)}
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
             <div className="flex items-end gap-12">
               <div>
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Portfolio ROE</div>
-                <div className="text-3xl font-medium tracking-tight tabular-nums mt-1 text-foreground">
+                <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                  Portfolio ROE
+                </div>
+                <div className="mt-1 text-3xl font-medium tracking-tight tabular-nums text-foreground">
                   {displayROE(portfolioRoeAnnualized)}
                 </div>
-                <div className="text-xs text-muted-foreground mt-1">1D {displayROE(portfolioRoeDaily)}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  1D {displayROE(portfolioRoeDaily)}
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Market Stability Ops (Secondary) */}
-          <div className="flex flex-col justify-end border-l border-border pl-12 pb-1">
-            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Stability Ops</div>
-            <div className="text-4xl font-light tracking-tight tabular-nums mt-1 text-foreground">
+          <div className="flex flex-col justify-end border-l border-border pb-1 pl-12">
+            <div className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+              Market Stability Ops
+            </div>
+            <div className="mt-1 text-4xl font-light tracking-tight tabular-nums text-foreground">
               {displayUSD(executive.market_stability_ops_net_equity_usd)}
             </div>
-            <div className="text-sm text-muted-foreground mt-2">Trader Joe + Etherex</div>
+            <div className="mt-2 text-sm text-muted-foreground">Trader Joe + Etherex</div>
           </div>
         </div>
+      </section>
+
+      <section className="mb-12">
+        <Card className="p-8">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Holder Strip
+              </p>
+              <p className="mt-1 max-w-2xl text-sm text-foreground/80">
+                Daily holder scorecard for the configured supply token, the core $50k+ cohort, and
+                the whale set that matters most operationally.
+              </p>
+            </div>
+            <Link
+              href="/consumer"
+              className="text-xs font-medium uppercase tracking-widest text-avant-warning transition-colors hover:text-foreground"
+            >
+              ↳ Open Consumer
+            </Link>
+          </div>
+          <div className="mt-8 grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-6">
+            <SummaryStat
+              label="Monitored Wallets"
+              value={String(holderSummary?.monitored_holder_count ?? 0)}
+              subtitle={`${holderSummary?.attributed_holder_count ?? 0} attributed`}
+            />
+            <SummaryStat
+              label="Core Holders"
+              value={String(holderSummary?.core_holder_wallet_count ?? 0)}
+              subtitle="$50k+ exposure wallets"
+            />
+            <SummaryStat
+              label="Whales"
+              value={String(holderSummary?.whale_wallet_count ?? 0)}
+              subtitle="$1m+ exposure wallets"
+            />
+            <SummaryStat
+              label="Net Customer Float"
+              value={displayUSD(holderSummary?.net_customer_float_usd)}
+              subtitle={`Strategy deployed ${displayUSD(holderSummary?.strategy_deployed_supply_usd)}`}
+            />
+            <SummaryStat
+              label="Covered Supply"
+              value={displayUSD(holderSummary?.covered_supply_usd)}
+              subtitle={`${holderSummary?.supply_coverage_token_symbol ?? "savUSD"} on ${holderSummary?.supply_coverage_chain_code ?? "avalanche"} · ${displayPercent(holderSummary?.covered_supply_pct)} covered`}
+            />
+            <SummaryStat
+              label="Avant Exposure"
+              value={displayUSD(holderSummary?.total_canonical_avant_exposure_usd)}
+              subtitle={`Capacity review ${holderSummary?.markets_needing_capacity_review ?? 0}`}
+            />
+            <SummaryStat
+              label="Top-10 / Staked"
+              value={displayPercent(holderSummary?.top10_holder_share)}
+              subtitle={`Staked ${displayPercent(holderSummary?.staked_share)}`}
+            />
+          </div>
+        </Card>
       </section>
 
       <section className="mb-12 grid gap-6 lg:grid-cols-2">
         <Card className="p-8">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Portfolio Shape</p>
-              <p className="mt-1 text-sm text-foreground/80">Deployed, yield-generating strategy capital.</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Portfolio Shape
+              </p>
+              <p className="mt-1 text-sm text-foreground/80">
+                Deployed, yield-generating strategy capital.
+              </p>
             </div>
-            <Link href="/portfolio" className="text-xs font-medium uppercase tracking-widest text-avant-success hover:text-foreground transition-colors">
+            <Link
+              href="/portfolio"
+              className="text-xs font-medium uppercase tracking-widest text-avant-success transition-colors hover:text-foreground"
+            >
               ↳ Open Portfolio
             </Link>
           </div>
-          <div className="mt-8 grid grid-cols-2 gap-y-8 gap-x-4">
+          <div className="mt-8 grid grid-cols-2 gap-x-4 gap-y-8">
             <SummaryStat label="Supply" value={displayUSD(portfolioSummary?.total_supply_usd)} />
             <SummaryStat label="Borrow" value={displayUSD(portfolioSummary?.total_borrow_usd)} />
-            <SummaryStat label="Avg Leverage" value={displayRatio(portfolioSummary?.avg_leverage_ratio)} />
-            <SummaryStat label="Open Positions" value={String(portfolioSummary?.open_position_count ?? 0)} />
+            <SummaryStat
+              label="Avg Leverage"
+              value={displayRatio(portfolioSummary?.avg_leverage_ratio)}
+            />
+            <SummaryStat
+              label="Open Positions"
+              value={String(portfolioSummary?.open_position_count ?? 0)}
+            />
           </div>
         </Card>
         <Card className="p-8">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market &amp; Risk Posture</p>
-              <p className="mt-1 text-sm text-foreground/80">Current alerting, stress, and liquidity posture.</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Market &amp; Risk Posture
+              </p>
+              <p className="mt-1 text-sm text-foreground/80">
+                Current alerting, stress, and liquidity posture.
+              </p>
             </div>
-            <Link href="/markets" className="text-xs font-medium uppercase tracking-widest text-avant-warning hover:text-foreground transition-colors">
+            <Link
+              href="/markets"
+              className="text-xs font-medium uppercase tracking-widest text-avant-warning transition-colors hover:text-foreground"
+            >
               ↳ Open Markets
             </Link>
           </div>
-          <div className="mt-8 grid grid-cols-2 gap-y-8 gap-x-4">
-            <SummaryStat label="Open Alerts" value={String(executive.open_alert_count)} valueClassName={executive.open_alert_count > 0 ? "text-avant-danger" : "text-foreground"} />
-            <SummaryStat label="Markets At Risk" value={String(executive.markets_at_risk_count)} valueClassName={executive.markets_at_risk_count > 0 ? "text-avant-danger" : "text-foreground"} />
-            <SummaryStat label="Weighted Util" value={displayPercent(marketSummary?.weighted_utilization)} />
-            <SummaryStat label="Avail Liquidity" value={displayUSD(marketSummary?.total_available_liquidity_usd)} />
+          <div className="mt-8 grid grid-cols-2 gap-x-4 gap-y-8">
+            <SummaryStat
+              label="Open Alerts"
+              value={String(executive.open_alert_count)}
+              valueClassName={executive.open_alert_count > 0 ? "text-avant-danger" : "text-foreground"}
+            />
+            <SummaryStat
+              label="Markets At Risk"
+              value={String(executive.markets_at_risk_count)}
+              valueClassName={
+                executive.markets_at_risk_count > 0 ? "text-avant-danger" : "text-foreground"
+              }
+            />
+            <SummaryStat
+              label="Weighted Util"
+              value={displayPercent(marketSummary?.weighted_utilization)}
+            />
+            <SummaryStat
+              label="Avail Liquidity"
+              value={displayUSD(marketSummary?.total_available_liquidity_usd)}
+            />
+          </div>
+          <div className="mt-8 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+            <span>Watchlist: {marketSummary?.markets_on_watchlist_count ?? 0}</span>
+            <Link href="/risk" className="font-medium text-foreground transition-colors hover:text-avant-danger">
+              DQ issues {data.freshness.open_dq_issues_24h}
+            </Link>
           </div>
         </Card>
       </section>
-
-
     </PageContainer>
   );
 }

@@ -1,10 +1,10 @@
-"""DefiLlama-backed token pricing service with in-process caching."""
+"""DefiLlama-backed token pricing service with targeted Avant fallbacks."""
 
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 import httpx
@@ -51,6 +51,15 @@ PRICE_ALIAS_TARGETS: dict[tuple[str, str], tuple[str, str]] = {
     ),
 }
 
+AVANT_PRICE_HISTORY_KEYS: dict[str, str] = {
+    "savUSD": "savusd",
+    "avUSDx": "avusdx",
+    "savBTC": "savbtc",
+    "avBTCx": "avbtcx",
+    "savETH": "saveth",
+    "avETHx": "avethx",
+}
+
 
 @dataclass(frozen=True)
 class PriceFetchResult:
@@ -68,12 +77,15 @@ class PriceOracle:
         *,
         base_url: str,
         timeout_seconds: float,
+        avant_api_base_url: str | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
+        self.avant_api_base_url = avant_api_base_url.rstrip("/") if avant_api_base_url else None
         self._client = client or httpx.Client(timeout=self.timeout_seconds)
         self._cache: dict[str, Decimal] = {}
+        self._avant_price_history_cache: list[tuple[date, dict[str, Decimal]]] | None = None
 
     def close(self) -> None:
         """Close the underlying HTTP client."""
@@ -109,6 +121,71 @@ class PriceOracle:
     def _chunk(values: list[str], size: int) -> Iterable[list[str]]:
         for start in range(0, len(values), size):
             yield values[start : start + size]
+
+    def _fetch_avant_price_history(self) -> list[tuple[date, dict[str, Decimal]]]:
+        if self._avant_price_history_cache is not None:
+            return self._avant_price_history_cache
+
+        if self.avant_api_base_url is None:
+            self._avant_price_history_cache = []
+            return self._avant_price_history_cache
+
+        endpoint = f"{self.avant_api_base_url}/priceHistory"
+        response = self._client.get(endpoint)
+        response.raise_for_status()
+        payload = response.json()
+
+        rows: list[tuple[date, dict[str, Decimal]]] = []
+        data_rows = payload.get("data", []) if isinstance(payload, dict) else []
+        if isinstance(data_rows, list):
+            for row in data_rows:
+                if not isinstance(row, dict):
+                    continue
+                date_raw = row.get("date")
+                if not isinstance(date_raw, str):
+                    continue
+                try:
+                    row_date = datetime.strptime(date_raw, "%m/%d/%y").date()
+                except ValueError:
+                    continue
+                values: dict[str, Decimal] = {}
+                for key, value in row.items():
+                    if key == "date" or value is None:
+                        continue
+                    try:
+                        values[str(key).lower()] = Decimal(str(value))
+                    except Exception:
+                        continue
+                if values:
+                    rows.append((row_date, values))
+
+        rows.sort(key=lambda item: item[0])
+        self._avant_price_history_cache = rows
+        return self._avant_price_history_cache
+
+    def _avant_price_for_symbol(
+        self,
+        *,
+        symbol: str,
+        as_of_ts_utc: datetime,
+    ) -> Decimal | None:
+        price_key = AVANT_PRICE_HISTORY_KEYS.get(symbol)
+        if price_key is None:
+            return None
+
+        rows = self._fetch_avant_price_history()
+        if not rows:
+            return None
+
+        as_of_date = as_of_ts_utc.date()
+        selected_price: Decimal | None = None
+        for row_date, values in rows:
+            if row_date > as_of_date:
+                break
+            row_price = values.get(price_key)
+            if row_price is not None:
+                selected_price = row_price
+        return selected_price
 
     def fetch_prices(
         self,
@@ -215,6 +292,24 @@ class PriceOracle:
             price_usd = self._cache.get(coin_id)
             if price_usd is None:
                 for request, alias_target in requests_for_coin:
+                    try:
+                        fallback_price_usd = self._avant_price_for_symbol(
+                            symbol=request.symbol,
+                            as_of_ts_utc=as_of_ts_utc,
+                        )
+                    except Exception:
+                        fallback_price_usd = None
+                    if fallback_price_usd is not None:
+                        quotes.append(
+                            PriceQuote(
+                                token_id=request.token_id,
+                                chain_code=request.chain_code,
+                                address_or_mint=self._normalize_address(request.address_or_mint),
+                                price_usd=fallback_price_usd,
+                                source="avant_api",
+                            )
+                        )
+                        continue
                     payload_json = {
                         "token_id": request.token_id,
                         "symbol": request.symbol,

@@ -1,0 +1,71 @@
+defaults:
+  surface: visibility_only
+  primary_use: other
+
+protocols:
+  - protocol_code: morpho
+    canonical_protocol_code: morpho
+    surface: canonical_supported
+    primary_use: collateral
+  - protocol_code: euler_v2
+    canonical_protocol_code: euler_v2
+    surface: canonical_supported
+    primary_use: collateral
+  - protocol_code: silo_v2
+    canonical_protocol_code: silo_v2
+    surface: canonical_supported
+    primary_use: collateral
+  - protocol_code: pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: arb_pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: base_pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: plasma_pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: hyper_pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: bsc_pendle2
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: pendle
+    surface: visibility_only
+    primary_use: fixed_yield
+  - protocol_code: eigenlayer
+    surface: visibility_only
+    primary_use: restaking
+  - protocol_code: renzo
+    surface: visibility_only
+    primary_use: restaking
+  - protocol_code: symbiotic
+    surface: visibility_only
+    primary_use: restaking
+  - protocol_code: yearn
+    surface: visibility_only
+    primary_use: vault
+  - protocol_code: beefy
+    surface: visibility_only
+    primary_use: vault
+  - protocol_code: sommelier
+    surface: visibility_only
+    primary_use: vault
+  - protocol_code: traderjoe
+    surface: visibility_only
+    primary_use: lp
+  - protocol_code: traderjoe_v2
+    surface: visibility_only
+    primary_use: lp
+  - protocol_code: etherex
+    surface: visibility_only
+    primary_use: lp
+  - protocol_code: curve
+    surface: visibility_only
+    primary_use: lp
+  - protocol_code: uniswap
+    surface: visibility_only
+    primary_use: lp

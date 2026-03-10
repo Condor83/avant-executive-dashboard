@@ -33,10 +33,10 @@ function walletColumns(): Column<WalletSummaryRow>[] {
           rel="noreferrer"
           className="block rounded-sm outline-none transition-colors hover:text-violet-700 focus-visible:ring-2 focus-visible:ring-violet-300"
         >
-          <div className="font-mono text-xs text-slate-700">
+          <div className="font-mono text-xs text-foreground">
             {row.wallet_label ?? row.wallet_address}
           </div>
-          <div className="text-xs text-slate-500">{row.wallet_address}</div>
+          <div className="text-xs text-muted-foreground">{row.wallet_address}</div>
         </Link>
       ),
     },
@@ -45,8 +45,8 @@ function walletColumns(): Column<WalletSummaryRow>[] {
       header: "Product",
       cell: (row) => (
         <div>
-          <div className="font-medium text-slate-900">{compactProductLabel(row.product_label)}</div>
-          <div className="text-xs text-slate-500">{row.product_code ?? "unassigned"}</div>
+          <div className="font-medium text-foreground">{compactProductLabel(row.product_label)}</div>
+          <div className="text-xs text-muted-foreground">{row.product_code ?? "unassigned"}</div>
         </div>
       ),
     },

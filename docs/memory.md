@@ -61,8 +61,9 @@ When `avg_equity_usd <= 0`, ROE values are null.
 ### Aave USDe/sUSDe loop policy (current)
 
 - For Aave loops that use `USDe` + `sUSDe` collateral, external campaign yield (Merkl) is modeled as `reward_apy`, not by overwriting `supply_apy`.
-- To avoid double counting, `sUSDe` effective total supply yield is aligned to `USDe` effective total supply yield in the strategy model.
-- If external campaign data is unavailable for a run, reward contribution defaults to zero and is emitted as a data-quality issue.
+- Merkl APR inputs are normalized into stored `reward_apy`.
+- To avoid double counting, `sUSDe` effective total supply yield is aligned to same-chain `USDe` effective total supply yield in the strategy model.
+- If external campaign data or the same-chain `USDe` reference rate is unavailable for a run, reward contribution defaults to zero and is emitted as a data-quality issue.
 
 ### Morpho collateral carry policy (current)
 

@@ -50,6 +50,32 @@ export interface ExecutiveSummarySnapshot {
   customer_metrics_ready: boolean;
 }
 
+export interface HolderSummarySnapshot {
+  supply_coverage_token_symbol: string | null;
+  supply_coverage_chain_code: string | null;
+  monitored_holder_count: number;
+  attributed_holder_count: number;
+  attribution_completion_pct: string | null;
+  core_holder_wallet_count: number;
+  whale_wallet_count: number;
+  strategy_supply_usd: string;
+  strategy_deployed_supply_usd: string;
+  net_customer_float_usd: string;
+  covered_supply_usd: string;
+  covered_supply_pct: string | null;
+  cross_chain_supply_usd: string;
+  total_observed_aum_usd: string;
+  total_canonical_avant_exposure_usd: string;
+  whale_concentration_pct: string | null;
+  defi_active_pct: string | null;
+  avasset_deployed_pct: string | null;
+  staked_share: string | null;
+  configured_deployed_share: string | null;
+  top10_holder_share: string | null;
+  visibility_gap_wallet_count: number;
+  markets_needing_capacity_review: number;
+}
+
 export interface PortfolioSummaryResponse {
   business_date: string;
   scope_segment: string;
@@ -85,6 +111,7 @@ export interface MarketSummaryResponse {
 export interface SummaryResponse {
   business_date: string;
   executive: ExecutiveSummarySnapshot;
+  holder_summary: HolderSummarySnapshot | null;
   portfolio_summary: PortfolioSummaryResponse | null;
   market_summary: MarketSummaryResponse | null;
   freshness: FreshnessSummary;
@@ -160,6 +187,254 @@ export interface WalletsResponse {
   business_date: string;
   total_count: number;
   wallets: WalletSummaryRow[];
+}
+
+export type ConsumerWalletRankMode = "assets" | "borrow" | "risk";
+
+export interface ConsumerKpiSummary {
+  monitored_holder_count: number;
+  attributed_holder_count: number;
+  total_observed_aum_usd: string;
+  whale_concentration_pct: string | null;
+  whale_concentration_wallet_count: number;
+  whale_concentration_aum_usd: string;
+  defi_active_pct: string | null;
+  avasset_deployed_pct: string | null;
+  verified_holder_count: number;
+  core_holder_count: number;
+  whale_holder_count: number;
+}
+
+export interface ConsumerCoverageSummary {
+  raw_holder_rows: number;
+  excluded_holder_rows: number;
+  monitored_holder_count: number;
+  attributed_holder_count: number;
+  attribution_completion_pct: string | null;
+}
+
+export interface ConsumerCohortCard {
+  segment: "verified" | "core" | "whale";
+  label: string;
+  threshold_label: string;
+  holder_count: number;
+  aum_usd: string;
+  aum_share_pct: string | null;
+  avg_holding_usd: string | null;
+  median_age_days: number | null;
+  idle_usd: string;
+  fixed_yield_pt_usd: string;
+  yield_token_yt_usd: string;
+  collateralized_usd: string;
+  borrowed_usd: string;
+  staked_usd: string;
+  other_defi_usd: string;
+  idle_pct: string | null;
+  fixed_yield_pt_pct: string | null;
+  yield_token_yt_pct: string | null;
+  collateralized_pct: string | null;
+  borrowed_against_pct: string | null;
+  staked_pct: string | null;
+  defi_active_pct: string | null;
+  avasset_deployed_pct: string | null;
+  conviction_gap_pct: string | null;
+  multi_asset_pct: string | null;
+  aum_change_7d_pct: string | null;
+  new_wallet_count_7d: number;
+  exited_wallet_count_7d: number;
+  up_wallet_pct_7d: string | null;
+  flat_wallet_pct_7d: string | null;
+  down_wallet_pct_7d: string | null;
+}
+
+export interface ConsumerSummaryResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  kpis: ConsumerKpiSummary;
+  coverage: ConsumerCoverageSummary;
+  cohorts: ConsumerCohortCard[];
+}
+
+export interface ConsumerBehaviorComparisonRow {
+  segment: "verified" | "core" | "whale";
+  label: string;
+  threshold_label: string;
+  holder_count: number;
+  aum_usd: string;
+  avg_holding_usd: string | null;
+  median_age_days: number | null;
+  idle_pct: string | null;
+  collateralized_pct: string | null;
+  borrowed_against_pct: string | null;
+  staked_pct: string | null;
+  defi_active_pct: string | null;
+  avasset_deployed_pct: string | null;
+  conviction_gap_pct: string | null;
+  multi_asset_pct: string | null;
+  aum_change_7d_pct: string | null;
+  new_wallet_count_7d: number;
+  exited_wallet_count_7d: number;
+}
+
+export interface ConsumerBehaviorComparisonResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  rows: ConsumerBehaviorComparisonRow[];
+}
+
+export interface ConsumerAdoptionFunnelSegment {
+  segment: "verified" | "core" | "whale";
+  label: string;
+  threshold_label: string;
+  holder_count: number;
+  defi_active_wallet_count: number;
+  avasset_deployed_wallet_count: number;
+  conviction_gap_holder_count: number;
+  conviction_gap_pct: string | null;
+}
+
+export interface ConsumerAdoptionFunnelResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  cohorts: ConsumerAdoptionFunnelSegment[];
+}
+
+export interface ConsumerVisibilitySummaryResponse {
+  business_date: string;
+  visibility_wallets: number;
+  seed_wallets: number;
+  verified_cohort_wallets: number;
+  signoff_cohort_wallets: number;
+  any_defi_activity_wallet_count: number;
+  any_defi_borrow_wallet_count: number;
+  configured_surface_wallet_count: number;
+  any_defi_activity_pct_visibility: string | null;
+  any_defi_borrow_pct_visibility: string | null;
+  configured_surface_activity_pct_visibility: string | null;
+  signoff_any_defi_activity_pct: string | null;
+  signoff_any_defi_borrow_pct: string | null;
+  signoff_configured_surface_activity_pct: string | null;
+  seed_only_wallet_count: number;
+  discovered_only_wallet_count: number;
+  visibility_gap_wallet_count: number;
+}
+
+export interface ConsumerTopWalletRow {
+  wallet_address: string;
+  segment: "verified" | "core" | "whale";
+  total_value_usd: string;
+  wallet_held_usd: string;
+  configured_deployed_usd: string;
+  fixed_yield_pt_usd: string;
+  yield_token_yt_usd: string;
+  other_defi_usd: string;
+  external_deployed_usd: string;
+  borrowed_usd: string;
+  leverage_ratio: string | null;
+  health_factor_min: string | null;
+  risk_band: string | null;
+  asset_symbols: string[];
+  deployment_state: string;
+  aum_delta_7d_usd: string | null;
+  aum_delta_7d_pct: string | null;
+  is_signoff_eligible: boolean;
+  behavior_tags: string[];
+}
+
+export interface ConsumerTopWalletsResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  rank_mode: ConsumerWalletRankMode;
+  total_count: number;
+  wallets: ConsumerTopWalletRow[];
+}
+
+export interface ConsumerDeploymentRow {
+  protocol_code: string;
+  chain_code: string;
+  verified_wallet_count: number;
+  core_wallet_count: number;
+  whale_wallet_count: number;
+  total_value_usd: string;
+  primary_use: string;
+  dominant_token_symbols: string[];
+}
+
+export interface ConsumerDeploymentsResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  total_deployed_value_usd: string;
+  deployments: ConsumerDeploymentRow[];
+}
+
+export interface ConsumerCapacityRow {
+  market_id: number;
+  market_name: string;
+  protocol_code: string;
+  chain_code: string;
+  collateral_family: string;
+  holder_count: number;
+  collateral_wallet_count: number;
+  leveraged_wallet_count: number;
+  avant_collateral_usd: string;
+  borrowed_usd: string;
+  idle_eligible_same_chain_usd: string;
+  p50_leverage_ratio: string | null;
+  p90_leverage_ratio: string | null;
+  top10_collateral_share: string | null;
+  utilization: string | null;
+  available_liquidity_usd: string;
+  cap_headroom_usd: string | null;
+  capacity_pressure_score: number;
+  needs_capacity_review: boolean;
+  near_limit_wallet_count: number;
+  avant_collateral_usd_delta_7d: string | null;
+  collateral_wallet_count_delta_7d: number;
+}
+
+export interface ConsumerCapacityResponse {
+  business_date: string;
+  total_count: number;
+  markets: ConsumerCapacityRow[];
+}
+
+export interface ConsumerVisibilityProtocolGapRow {
+  protocol_code: string;
+  wallet_count: number;
+  signoff_wallet_count: number;
+  total_supply_usd: string;
+  total_borrow_usd: string;
+  in_config_surface: boolean;
+  gap_priority: number;
+}
+
+export interface ConsumerVisibilityProtocolGapsResponse {
+  business_date: string;
+  total_count: number;
+  protocols: ConsumerVisibilityProtocolGapRow[];
+}
+
+export interface ConsumerRiskCohortProfile {
+  segment: "verified" | "core" | "whale";
+  label: string;
+  threshold_label: string;
+  borrowed_against_pct: string | null;
+  idle_pct: string | null;
+  critical_or_elevated_wallet_count: number;
+  near_limit_wallet_count: number;
+}
+
+export interface ConsumerRiskSignalsResponse {
+  business_date: string;
+  product: "all" | "avusd" | "aveth" | "avbtc";
+  product_label: string;
+  capacity_signals: ConsumerCapacityRow[];
+  cohort_profiles: ConsumerRiskCohortProfile[];
 }
 
 export interface PositionFilters {
@@ -246,7 +521,7 @@ export interface NativeMarketDetailResponse {
 export interface MarketExposureFilters {
   protocol_code?: string;
   chain_code?: string;
-  watch_only?: boolean;
+  watchlist?: "yes" | "no";
 }
 
 export interface AlertRow {

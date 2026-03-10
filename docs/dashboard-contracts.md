@@ -4,6 +4,35 @@ This document captures the **current served dashboard contracts** after the posi
 
 Use it when implementing or reviewing API/UI behavior for Summary, Portfolio, Wallets, Markets, and Risk.
 
+## Consumer contract
+
+The Consumer page is a **holder-intelligence view**, not a raw holder-ledger dump.
+
+Current behavior:
+- Top-line holder counts must distinguish `Monitored Holders` from `Attributed Holders`.
+- `Monitored Holders` are deduped, non-excluded customer wallets with selected-product direct or deployed evidence.
+- `Attributed Holders` are monitored wallets with priced product attribution in `holder_wallet_product_daily`.
+- `Core` means `$50k` to `< $1m` observed exposure for the selected product.
+- `Whales` mean `>= $1m` observed exposure for the selected product.
+
+Display/metric semantics:
+- `Observed AUM` is selected-product holder exposure, not a purely canonical strategy-style AUM metric.
+- Product tabs use family scope:
+  - `avUSD = savUSD + avUSDx`
+  - `avETH = savETH + avETHx`
+  - `avBTC = savBTC + avBTCx`
+- Canonical supported deployment comes from configured Morpho / Euler / Silo customer positions.
+- External PT/YT and other DeFi deployment come from DeBank token attribution and stay supplemental.
+
+Interpretation rules:
+- Do not label attributed counts as `Total Holders`.
+- Coverage/DQ blocks should explain:
+  - raw holder rows
+  - excluded holder rows
+  - monitored holders
+  - attributed holders
+- Visibility endpoints remain supplemental and should not define primary holder counts.
+
 ## Portfolio contract
 
 Primary Portfolio rows are **executive-readable positions**, not raw snapshot rows.

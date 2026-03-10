@@ -1,0 +1,8 @@
+exclusions:
+  - address: "0x8FcC42c414E29e8e3dBFa1628CF45E8ed80C999D"
+    chain_code: avalanche
+    label: "Staked avUSD Lock & Release CCIP Pool"
+    classification: infrastructure
+    exclude_from_monitoring: true
+    exclude_from_customer_float: false
+    notes: "Bridge custody for cross-chain savUSD representation; exclude from wallet monitoring, but keep in gross float."

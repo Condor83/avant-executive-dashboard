@@ -202,6 +202,8 @@ class WalletBalancesAdapter:
                 )
 
             supplied_usd = supplied_amount * price_usd
+            if supplied_amount == 0 and supplied_usd == 0:
+                continue
             position_key = ":".join(
                 [
                     "wallet_balances",

@@ -31,8 +31,8 @@ function componentColumns(): Column<NativeMarketComponent>[] {
       header: "Native Market",
       cell: (row) => (
         <div>
-          <div className="font-medium text-slate-900">{row.display_name}</div>
-          <div className="text-xs text-slate-500">{row.market_kind}</div>
+          <div className="font-medium text-foreground">{row.display_name}</div>
+          <div className="text-xs text-muted-foreground">{row.market_kind}</div>
         </div>
       ),
     },
@@ -40,7 +40,7 @@ function componentColumns(): Column<NativeMarketComponent>[] {
       key: "tokens",
       header: "Tokens",
       cell: (row) => (
-        <div className="text-xs text-slate-600">
+        <div className="text-xs text-muted-foreground">
           <div>Base: {row.base_asset_symbol ?? "---"}</div>
           <div>Collateral: {row.collateral_symbol ?? "---"}</div>
         </div>
@@ -105,7 +105,7 @@ export default function MarketDetailPage() {
     <PageContainer title={exposure.display_name}>
       <Link
         href="/markets"
-        className="mb-4 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+        className="mb-4 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
         Back to Markets
@@ -119,16 +119,16 @@ export default function MarketDetailPage() {
       </div>
 
       <div className="mb-8 grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <Card className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-lg font-medium text-slate-800">Exposure History</h2>
-            <div className="inline-flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5">
+            <h2 className="text-lg font-medium text-foreground">Exposure History</h2>
+            <div className="inline-flex gap-1 rounded-lg border border-border bg-card/50 p-0.5">
               {DAY_OPTIONS.map((value) => (
                 <Button
                   key={value}
                   variant="ghost"
                   size="sm"
-                  className={days === value ? "bg-teal-50 text-teal-800" : "text-slate-600"}
+                  className={days === value ? "bg-teal-50 text-teal-800" : "text-muted-foreground"}
                   onClick={() => setDays(value)}
                 >
                   {value}D
@@ -143,9 +143,9 @@ export default function MarketDetailPage() {
           )}
         </Card>
 
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-lg font-medium text-slate-800">Current Risk</h2>
-          <div className="space-y-3 text-sm text-slate-700">
+        <Card className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <h2 className="mb-3 text-lg font-medium text-foreground">Current Risk</h2>
+          <div className="space-y-3 text-sm text-muted-foreground">
             <div className="flex items-center justify-between">
               <span>Risk Status</span>
               <SeverityBadge
@@ -176,7 +176,7 @@ export default function MarketDetailPage() {
       </div>
 
       <section className="mb-8">
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Native Market Components</h2>
+        <h2 className="mb-3 text-lg font-medium text-foreground">Native Market Components</h2>
         <DataTable
           columns={componentColumns()}
           data={data.components}
@@ -186,17 +186,17 @@ export default function MarketDetailPage() {
       </section>
 
       <section>
-        <h2 className="mb-3 text-lg font-medium text-slate-800">Active Alerts</h2>
-        <Card className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <h2 className="mb-3 text-lg font-medium text-foreground">Active Alerts</h2>
+        <Card className="rounded-xl border border-border bg-card p-5 shadow-sm">
           {data.alerts.length === 0 ? (
-            <p className="text-sm text-slate-500">No open or acknowledged alerts for this exposure.</p>
+            <p className="text-sm text-muted-foreground">No open or acknowledged alerts for this exposure.</p>
           ) : (
             <div className="space-y-3">
               {data.alerts.map((alert) => (
-                <div key={alert.alert_id} className="flex items-center justify-between rounded-lg border border-slate-200 px-4 py-3">
+                <div key={alert.alert_id} className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
                   <div>
-                    <div className="font-medium text-slate-900">{alert.alert_type_label}</div>
-                    <div className="text-xs text-slate-500">{alert.entity_type}:{alert.entity_id}</div>
+                    <div className="font-medium text-foreground">{alert.alert_type_label}</div>
+                    <div className="text-xs text-muted-foreground">{alert.entity_type}:{alert.entity_id}</div>
                   </div>
                   <SeverityBadge severity={alert.severity} label={alert.severity_label} />
                 </div>

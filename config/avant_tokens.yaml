@@ -1,0 +1,107 @@
+tokens:
+  - chain_code: avalanche
+    token_address: "0x24de8771bc5ddb3362db529fc3358f2df3a0e346"
+    symbol: avUSD
+    asset_family: usd
+    wrapper_class: base
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0x06d47f3fb376649c3a9dafe069b3d6e35572219e"
+    symbol: savUSD
+    asset_family: usd
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0xdd1cdfa52e7d8474d434cd016fd346701db6b3b9"
+    symbol: avUSDx
+    asset_family: usd
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0xfd2c2a98009d0cbed715882036e43d26c4289053"
+    symbol: avBTC
+    asset_family: btc
+    wrapper_class: base
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0x649342c6bff544d82df1b2ba3c93e0c22cdeba84"
+    symbol: savBTC
+    asset_family: btc
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0xa7c10c510df4b1702e1f36451dd29d7c3edc760c"
+    symbol: avBTCx
+    asset_family: btc
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0x260c0c715a279f239cf44e2f73e964ab550738f3"
+    symbol: savETH
+    asset_family: eth
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: avalanche
+    token_address: "0xda63630094aa23b7a49368b713d68dd98f547f98"
+    symbol: avETHx
+    asset_family: eth
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0xb8d89678e75a973e74698c976716308abb8a46a4"
+    symbol: savUSD
+    asset_family: usd
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0xf424a63e4ac41b1fac5074ccc24c7e5048fca25d"
+    symbol: avUSDx
+    asset_family: usd
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0x7309e1e2e74af170c69bde8fcb30397f8697d5ff"
+    symbol: wbravUSDC
+    asset_family: usd
+    wrapper_class: boosted
+    decimals: 6
+    pricing_policy: convert_to_assets
+    underlying_token_address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+  - chain_code: ethereum
+    token_address: "0x92181c6f0fed1f1a30c0ec131f41577f81924bf5"
+    symbol: savBTC
+    asset_family: btc
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0x9bc15d6dcb23efbdcc235bf54159b6e8bad23dca"
+    symbol: avBTCx
+    asset_family: btc
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0xda06ee2dacf9245aa80072a4407debdea0d7e341"
+    symbol: savETH
+    asset_family: eth
+    wrapper_class: staked
+    decimals: 18
+    pricing_policy: direct_price
+  - chain_code: ethereum
+    token_address: "0x2e8b7190ee84e7ac757ddff42ba14d4eae24b865"
+    symbol: avETHx
+    asset_family: eth
+    wrapper_class: boosted
+    decimals: 18
+    pricing_policy: direct_price

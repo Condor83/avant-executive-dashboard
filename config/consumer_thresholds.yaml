@@ -1,0 +1,26 @@
+verified_min_total_avant_usd: 100
+cohort_min_total_avant_usd: 50000
+classification_dust_floor_usd: 100
+leveraged_borrow_usd_floor: 0.00000001
+capacity:
+  utilization_threshold: 0.85
+  top10_collateral_concentration_threshold: 0.50
+  collateral_growth_7d_threshold: 0.20
+  collateral_wallet_growth_7d_threshold: 0.20
+  near_limit_health_factor_threshold: 1.25
+  review_score_threshold: 2
+risk_bands:
+  watch_health_factor_lt: 1.50
+  elevated_health_factor_lt: 1.25
+  critical_health_factor_lt: 1.05
+  elevated_leverage_ratio_gte: 0.80
+  watch_leverage_ratio_gte: 0.50
+whales:
+  top_assets_count: 25
+  top_borrow_count: 25
+  leaderboard_count: 10
+  wallet_usd_threshold: 1000000
+  material_change_7d_usd: 100000
+supply_coverage:
+  primary_chain_code: avalanche
+  primary_token_symbol: savUSD

@@ -34,6 +34,22 @@ class _FakeClient:
         return None
 
 
+class _RoutingFakeClient:
+    def __init__(self, routes: dict[str, dict[str, Any]]) -> None:
+        self.routes = routes
+        self.urls: list[str] = []
+
+    def get(self, url: str) -> _FakeResponse:
+        self.urls.append(url)
+        for needle, payload in self.routes.items():
+            if needle in url:
+                return _FakeResponse(payload)
+        return _FakeResponse({"coins": {}})
+
+    def close(self) -> None:
+        return None
+
+
 def test_manual_linea_avusd_price_override_is_applied() -> None:
     client = _FakeClient(payload={"coins": {}})
     oracle = PriceOracle(
@@ -196,3 +212,84 @@ def test_bera_savusd_alias_missing_emits_price_missing_with_alias_payload() -> N
     assert issue.payload_json["alias_target_address"] == (
         "0x06d47f3fb376649c3a9dafe069b3d6e35572219e"
     )
+
+
+def test_avant_price_history_fallback_is_applied_when_defillama_missing() -> None:
+    client = _RoutingFakeClient(
+        routes={
+            "/prices/current/": {"coins": {}},
+            "/priceHistory": {
+                "lastUpdated": "03/05/26",
+                "data": [
+                    {"date": "02/26/26", "avusdx": 1.170928},
+                    {"date": "03/05/26", "avusdx": 1.173372},
+                ],
+            },
+        }
+    )
+    oracle = PriceOracle(
+        base_url="https://coins.llama.fi",
+        timeout_seconds=5,
+        avant_api_base_url="https://app.avantprotocol.com/api",
+        client=cast(Any, client),
+    )
+    try:
+        result = oracle.fetch_prices(
+            [
+                PriceRequest(
+                    token_id=902,
+                    chain_code="avalanche",
+                    address_or_mint="0xdd1cdfa52e7d8474d434cd016fd346701db6b3b9",
+                    symbol="avUSDx",
+                )
+            ],
+            as_of_ts_utc=datetime(2026, 3, 9, 0, 0, tzinfo=UTC),
+        )
+    finally:
+        oracle.close()
+
+    assert not result.issues
+    assert len(result.quotes) == 1
+    assert result.quotes[0].price_usd == Decimal("1.173372")
+    assert result.quotes[0].source == "avant_api"
+    assert any("/priceHistory" in url for url in client.urls)
+
+
+def test_avant_price_history_fallback_uses_latest_row_not_after_as_of_date() -> None:
+    client = _RoutingFakeClient(
+        routes={
+            "/prices/current/": {"coins": {}},
+            "/priceHistory": {
+                "lastUpdated": "03/05/26",
+                "data": [
+                    {"date": "02/19/26", "avusdx": 1.170928},
+                    {"date": "03/05/26", "avusdx": 1.173372},
+                ],
+            },
+        }
+    )
+    oracle = PriceOracle(
+        base_url="https://coins.llama.fi",
+        timeout_seconds=5,
+        avant_api_base_url="https://app.avantprotocol.com/api",
+        client=cast(Any, client),
+    )
+    try:
+        result = oracle.fetch_prices(
+            [
+                PriceRequest(
+                    token_id=902,
+                    chain_code="avalanche",
+                    address_or_mint="0xdd1cdfa52e7d8474d434cd016fd346701db6b3b9",
+                    symbol="avUSDx",
+                )
+            ],
+            as_of_ts_utc=datetime(2026, 3, 1, 0, 0, tzinfo=UTC),
+        )
+    finally:
+        oracle.close()
+
+    assert not result.issues
+    assert len(result.quotes) == 1
+    assert result.quotes[0].price_usd == Decimal("1.170928")
+    assert result.quotes[0].source == "avant_api"

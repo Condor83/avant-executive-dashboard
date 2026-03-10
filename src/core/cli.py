@@ -30,7 +30,12 @@ from adapters.traderjoe_lp import EvmRpcTraderJoeLpClient, TraderJoeLpAdapter
 from adapters.wallet_balances import EvmRpcBalanceClient, WalletBalancesAdapter
 from adapters.zest import StacksApiZestClient, ZestAdapter
 from analytics.alerts import AlertEngine
+from analytics.consumer_capacity_engine import ConsumerCapacityEngine
 from analytics.executive_summary import ExecutiveSummaryEngine
+from analytics.holder_behavior_engine import HolderBehaviorEngine
+from analytics.holder_dashboard_engine import HolderDashboardEngine
+from analytics.holder_scorecard_engine import HolderScorecardEngine
+from analytics.holder_supply_coverage_engine import HolderSupplyCoverageEngine
 from analytics.market_engine import MarketEngine
 from analytics.market_views import MarketViewEngine
 from analytics.portfolio_views import PortfolioViewEngine
@@ -40,33 +45,53 @@ from analytics.risk_engine import (
     top_positions_by_worst_net_spread,
 )
 from analytics.rollups import compute_window_rollups
-from analytics.yield_engine import YieldEngine, select_business_day_boundaries
+from analytics.yield_engine import (
+    YieldEngine,
+    denver_business_bounds_utc,
+    select_business_day_boundaries,
+)
 from core.config import (
     canonical_address,
+    load_avant_tokens_config,
     load_consumer_markets_config,
+    load_consumer_thresholds_config,
+    load_holder_exclusions_config,
+    load_holder_protocol_map_config,
+    load_holder_universe_config,
     load_markets_config,
     load_pt_fixed_yield_overrides_config,
     load_risk_thresholds_config,
     load_wallet_products_config,
 )
+from core.consumer_debank_visibility import sync_consumer_debank_visibility
 from core.coverage_report import build_coverage_report
 from core.customer_cohort import (
     ROUTESCAN_BASE_URL,
+    EvmBatchRpcClient,
     RouteScanClient,
+    build_customer_snapshot_markets_config,
     build_customer_wallet_cohort,
+    build_verified_customer_cohort,
     build_wallet_cohort_config_payload,
     collect_evm_addresses_from_yaml,
     collect_strategy_wallets,
     minimum_balance_raw_for_usd_threshold,
     rpc_contract_addresses,
 )
-from core.db.models import Market, PositionSnapshot, YieldDaily
+from core.db.models import (
+    ConsumerHolderUniverseDaily,
+    Market,
+    PositionSnapshot,
+    YieldDaily,
+)
 from core.db.session import get_engine
 from core.debank_cloud import DebankCloudClient
 from core.debank_coverage import run_debank_coverage_audit, serialize_audit_result
 from core.dolomite_discovery import discover_wallet_positions, wallet_candidates_for_groups
+from core.holder_supply import sync_holder_supply_inputs
 from core.pricing import PriceOracle
 from core.runner import RunnerSummary, SnapshotRunner
+from core.seed_db import seed_database
 from core.settings import get_settings
 from core.stacks_client import StacksClient
 from core.yields import AvantYieldOracle, DefiLlamaYieldOracle
@@ -87,6 +112,26 @@ CONSUMER_MARKETS_PATH_OPTION = typer.Option(
 WALLET_PRODUCTS_PATH_OPTION = typer.Option(
     default=Path("config/wallet_products.yaml"),
     help="wallet products config path",
+)
+AVANT_TOKENS_PATH_OPTION = typer.Option(
+    default=Path("config/avant_tokens.yaml"),
+    help="Avant token registry config path",
+)
+CONSUMER_THRESHOLDS_PATH_OPTION = typer.Option(
+    default=Path("config/consumer_thresholds.yaml"),
+    help="consumer threshold config path",
+)
+HOLDER_EXCLUSIONS_PATH_OPTION = typer.Option(
+    default=Path("config/holder_exclusions.yaml"),
+    help="holder exclusion config path",
+)
+HOLDER_UNIVERSE_PATH_OPTION = typer.Option(
+    default=Path("config/holder_universe.yaml"),
+    help="holder universe config path",
+)
+HOLDER_PROTOCOL_MAP_PATH_OPTION = typer.Option(
+    default=Path("config/holder_protocol_map.yaml"),
+    help="holder protocol map config path",
 )
 DOLOMITE_CHAIN_CODE_OPTION = typer.Option("bera", "--chain-code", help="Dolomite chain code")
 DOLOMITE_WALLET_GROUPS_OPTION = typer.Option(
@@ -381,6 +426,7 @@ def _build_runner(
     price_oracle = PriceOracle(
         base_url=settings.defillama_base_url,
         timeout_seconds=settings.request_timeout_seconds,
+        avant_api_base_url=settings.avant_api_base_url,
     )
     session = Session(get_engine())
     runner = SnapshotRunner(
@@ -429,6 +475,124 @@ def _build_runner(
         kamino_client,
         stacks_client,
         zest_client,
+        silo_client,
+        price_oracle,
+        yield_oracle,
+        avant_yield_oracle,
+        bracket_yield_oracle,
+        pendle_history_client,
+    ]
+    return runner, session, closeables
+
+
+def _build_customer_snapshot_runner(
+    *,
+    business_date: date,
+    wallet_addresses: list[str],
+    markets_path: Path,
+    consumer_markets_path: Path,
+    avant_tokens_path: Path,
+    progress_callback: Callable[[str], None] | None = None,
+) -> tuple[SnapshotRunner, Session, list[Closeable]]:
+    settings = get_settings()
+    markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
+    customer_markets_config = build_customer_snapshot_markets_config(
+        markets_config=markets_config,
+        avant_tokens=avant_tokens_config,
+        business_date=business_date,
+        wallet_addresses=wallet_addresses,
+    )
+    pt_fixed_yield_overrides = load_pt_fixed_yield_overrides_config(PT_FIXED_YIELD_OVERRIDES_PATH)
+
+    balance_client = EvmRpcBalanceClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    morpho_client = EvmRpcMorphoClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    morpho_vault_yield_client = MorphoVaultYieldClient(
+        timeout_seconds=settings.request_timeout_seconds
+    )
+    euler_client = EvmRpcEulerV2Client(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    yield_oracle = DefiLlamaYieldOracle(
+        base_url=settings.defillama_yields_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    avant_yield_oracle = AvantYieldOracle(
+        base_url=settings.avant_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    bracket_yield_oracle = BracketNavYieldOracle(
+        graphql_url=settings.bracket_graphql_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    pendle_history_client = PendleHistoryClient(
+        base_url=settings.pendle_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    wallet_adapter = WalletBalancesAdapter(
+        markets_config=customer_markets_config,
+        balance_client=balance_client,
+    )
+    morpho_adapter = MorphoAdapter(
+        markets_config=customer_markets_config,
+        rpc_client=morpho_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        yield_oracle=yield_oracle,
+        avant_yield_oracle=avant_yield_oracle,
+        bracket_yield_oracle=bracket_yield_oracle,
+        vault_yield_client=morpho_vault_yield_client,
+    )
+    euler_adapter = EulerV2Adapter(
+        markets_config=customer_markets_config,
+        rpc_client=euler_client,
+        avant_yield_oracle=avant_yield_oracle,
+    )
+    silo_client = SiloApiClient(
+        base_url=settings.silo_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        points_base_url=settings.silo_points_api_base_url,
+    )
+    silo_adapter = SiloV2Adapter(
+        markets_config=customer_markets_config,
+        consumer_markets_config=consumer_markets_config,
+        client=silo_client,
+        top_holders_limit=settings.silo_top_holders_limit,
+        include_strategy_wallets=True,
+        avant_yield_oracle=avant_yield_oracle,
+    )
+    price_oracle = PriceOracle(
+        base_url=settings.defillama_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        avant_api_base_url=settings.avant_api_base_url,
+    )
+    session = Session(get_engine())
+    runner = SnapshotRunner(
+        session=session,
+        markets_config=customer_markets_config,
+        price_oracle=price_oracle,
+        pendle_history_client=pendle_history_client,
+        pt_fixed_yield_overrides=pt_fixed_yield_overrides,
+        progress_callback=progress_callback,
+        position_adapters=[
+            wallet_adapter,
+            morpho_adapter,
+            euler_adapter,
+            silo_adapter,
+        ],
+    )
+    closeables: list[Closeable] = [
+        balance_client,
+        morpho_client,
+        morpho_vault_yield_client,
+        euler_client,
         silo_client,
         price_oracle,
         yield_oracle,
@@ -550,6 +714,192 @@ def sync_markets(
         session.close()
         for closeable in closeables:
             closeable.close()
+
+
+@sync_app.command("consumer-cohort")
+def sync_consumer_cohort(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
+    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+) -> None:
+    """Discover and verify the tracked customer cohort for one business date."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be YYYY-MM-DD") from exc
+
+    settings = get_settings()
+    markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    wallet_products_config = load_wallet_products_config(wallet_products_path)
+    avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_universe = load_holder_universe_config(holder_universe_path)
+    holder_exclusions = load_holder_exclusions_config(holder_exclusions_path)
+
+    session = Session(get_engine())
+    routescan_client = RouteScanClient(timeout_seconds=settings.request_timeout_seconds)
+    rpc_client = EvmBatchRpcClient(
+        settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    price_oracle = PriceOracle(
+        base_url=settings.defillama_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        avant_api_base_url=settings.avant_api_base_url,
+    )
+    try:
+        seed_database(
+            session=session,
+            markets=markets_config,
+            wallet_products=wallet_products_config,
+            consumer=consumer_markets_config,
+            avant_tokens=avant_tokens_config,
+        )
+        summary = build_verified_customer_cohort(
+            session=session,
+            business_date=parsed_date,
+            markets_config=markets_config,
+            wallet_products_config=wallet_products_config,
+            avant_tokens=avant_tokens_config,
+            thresholds=thresholds,
+            holder_universe=holder_universe,
+            holder_exclusions=holder_exclusions,
+            routescan_client=routescan_client,
+            rpc_client=rpc_client,
+            price_oracle=price_oracle,
+            config_dir=markets_path.parent,
+            rpc_urls=settings.evm_rpc_urls,
+        )
+        session.commit()
+        typer.echo(
+            f"sync consumer cohort complete business_date={summary.business_date.isoformat()} "
+            f"as_of={summary.as_of_ts_utc.isoformat()} candidates={summary.candidate_wallet_count} "
+            f"verified_wallets={summary.verified_wallet_count} "
+            f"cohort_wallets={summary.cohort_wallet_count} "
+            f"signoff_eligible={summary.signoff_eligible_wallet_count} "
+            f"issues_written={summary.issues_written}"
+        )
+    finally:
+        session.close()
+        routescan_client.close()
+        rpc_client.close()
+        price_oracle.close()
+
+
+@sync_app.command("holder-universe")
+def sync_holder_universe(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
+    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+) -> None:
+    """Sync the deterministic monitored holder universe for one business date."""
+
+    sync_consumer_cohort(
+        target_date=target_date,
+        markets_path=markets_path,
+        consumer_markets_path=consumer_markets_path,
+        wallet_products_path=wallet_products_path,
+        avant_tokens_path=avant_tokens_path,
+        consumer_thresholds_path=consumer_thresholds_path,
+        holder_universe_path=holder_universe_path,
+        holder_exclusions_path=holder_exclusions_path,
+    )
+
+
+@sync_app.command("consumer-holder-snapshots")
+def sync_consumer_holder_snapshots(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+) -> None:
+    """Sync customer wallet-balance and consumer-market position snapshots."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be YYYY-MM-DD") from exc
+
+    markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    wallet_products_config = load_wallet_products_config(wallet_products_path)
+    avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
+
+    with Session(get_engine()) as seed_session:
+        seed_database(
+            session=seed_session,
+            markets=markets_config,
+            wallet_products=wallet_products_config,
+            consumer=consumer_markets_config,
+            avant_tokens=avant_tokens_config,
+        )
+        wallet_addresses = seed_session.scalars(
+            select(ConsumerHolderUniverseDaily.wallet_address).where(
+                ConsumerHolderUniverseDaily.business_date == parsed_date
+            )
+        ).all()
+        seed_session.commit()
+
+    if not wallet_addresses:
+        typer.echo(
+            f"no consumer holder-universe rows found for business_date={parsed_date.isoformat()}"
+        )
+        return
+
+    _, as_of_ts_utc = denver_business_bounds_utc(parsed_date)
+    runner, session, closeables = _build_customer_snapshot_runner(
+        business_date=parsed_date,
+        wallet_addresses=list(wallet_addresses),
+        markets_path=markets_path,
+        consumer_markets_path=consumer_markets_path,
+        avant_tokens_path=avant_tokens_path,
+        progress_callback=typer.echo,
+    )
+
+    try:
+        result = runner.sync_snapshot(as_of_ts_utc=as_of_ts_utc)
+        _finalize_sync_command(
+            session=session,
+            result=result,
+            operation="sync consumer holder snapshots",
+            as_of_ts_utc=as_of_ts_utc,
+        )
+    finally:
+        session.close()
+        for closeable in closeables:
+            closeable.close()
+
+
+@sync_app.command("holder-positions")
+def sync_holder_positions(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+) -> None:
+    """Sync customer wallet-balance and supported canonical protocol positions."""
+
+    sync_consumer_holder_snapshots(
+        target_date=target_date,
+        markets_path=markets_path,
+        consumer_markets_path=consumer_markets_path,
+        wallet_products_path=wallet_products_path,
+        avant_tokens_path=avant_tokens_path,
+    )
 
 
 @sync_app.command("coverage-report")
@@ -730,6 +1080,196 @@ def sync_debank_coverage_audit(
         payload = serialize_audit_result(result, unmatched_limit=unmatched_limit)
         output_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         typer.echo(f"wrote json report: {output_json}")
+
+
+@sync_app.command("consumer-debank-visibility")
+def sync_consumer_debank_visibility_command(
+    target_date: str = DATE_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    min_leg_usd: str = DEBANK_MIN_LEG_USD_OPTION,
+    max_concurrency: int = DEBANK_MAX_CONCURRENCY_OPTION,
+    max_wallets: int | None = DEBANK_MAX_WALLETS_OPTION,
+) -> None:
+    """Snapshot DeBank visibility for the union of consumer seeds and discovered cohort wallets."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be YYYY-MM-DD") from exc
+
+    try:
+        min_leg_usd_decimal = Decimal(min_leg_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("min-leg-usd must be a valid decimal") from exc
+    if min_leg_usd_decimal < 0:
+        raise typer.BadParameter("min-leg-usd must be non-negative")
+    if max_concurrency < 1:
+        raise typer.BadParameter("max-concurrency must be >= 1")
+    if max_wallets is not None and max_wallets < 1:
+        raise typer.BadParameter("max-wallets must be >= 1 when provided")
+
+    settings = get_settings()
+    api_key = (settings.debank_cloud_api_key or "").strip()
+    if not api_key:
+        typer.echo("missing AVANT_DEBANK_CLOUD_API_KEY; unable to run consumer DeBank visibility")
+        raise typer.Exit(code=1)
+
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    session = Session(get_engine())
+    client = DebankCloudClient(
+        base_url=settings.debank_cloud_base_url,
+        api_key=api_key,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+
+    try:
+        summary = sync_consumer_debank_visibility(
+            session=session,
+            client=client,
+            business_date=parsed_date,
+            consumer_markets_config=consumer_markets_config,
+            config_dir=consumer_markets_path.parent,
+            min_leg_usd=min_leg_usd_decimal,
+            max_concurrency=max_concurrency,
+            max_wallets=max_wallets,
+        )
+        session.commit()
+    finally:
+        session.close()
+        client.close()
+
+    typer.echo(
+        "sync consumer debank visibility complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" as_of={summary.as_of_ts_utc.isoformat()}"
+        f" union_wallets={summary.union_wallet_count}"
+        f" seed_wallets={summary.seed_wallet_count}"
+        f" verified_cohort={summary.verified_cohort_wallet_count}"
+        f" signoff_cohort={summary.signoff_cohort_wallet_count}"
+        f" new_discovered_not_in_seed={summary.new_discovered_not_in_seed_count}"
+        f" fetched_wallets={summary.fetched_wallet_count}"
+        f" fetch_errors={summary.fetch_error_count}"
+        f" active_wallets={summary.active_wallet_count}"
+        f" borrow_wallets={summary.borrow_wallet_count}"
+        f" configured_surface_wallets={summary.configured_surface_wallet_count}"
+        f" wallet_rows_written={summary.wallet_rows_written}"
+        f" protocol_rows_written={summary.protocol_rows_written}"
+        f" issues_written={summary.issues_written}"
+    )
+
+
+@sync_app.command("holder-visibility")
+def sync_holder_visibility(
+    target_date: str = DATE_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    min_leg_usd: str = DEBANK_MIN_LEG_USD_OPTION,
+    max_concurrency: int = DEBANK_MAX_CONCURRENCY_OPTION,
+    max_wallets: int | None = DEBANK_MAX_WALLETS_OPTION,
+) -> None:
+    """Sync supplemental DeBank visibility for the monitored holder universe."""
+
+    sync_consumer_debank_visibility_command(
+        target_date=target_date,
+        consumer_markets_path=consumer_markets_path,
+        min_leg_usd=min_leg_usd,
+        max_concurrency=max_concurrency,
+        max_wallets=max_wallets,
+    )
+
+
+@sync_app.command("holder-supply-inputs")
+def sync_holder_supply_inputs_command(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+    min_leg_usd: str = DEBANK_MIN_LEG_USD_OPTION,
+    max_concurrency: int = DEBANK_MAX_CONCURRENCY_OPTION,
+) -> None:
+    """Sync holder-ledger rows and token-level DeBank legs for the scorecard token."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be YYYY-MM-DD") from exc
+
+    try:
+        min_leg_usd_decimal = Decimal(min_leg_usd)
+    except (InvalidOperation, ValueError) as exc:
+        raise typer.BadParameter("min-leg-usd must be a valid decimal") from exc
+    if min_leg_usd_decimal < 0:
+        raise typer.BadParameter("min-leg-usd must be non-negative")
+    if max_concurrency < 1:
+        raise typer.BadParameter("max-concurrency must be >= 1")
+
+    settings = get_settings()
+    api_key = (settings.debank_cloud_api_key or "").strip()
+    if not api_key:
+        typer.echo("missing AVANT_DEBANK_CLOUD_API_KEY; unable to run holder supply sync")
+        raise typer.Exit(code=1)
+
+    markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    wallet_products_config = load_wallet_products_config(wallet_products_path)
+    avant_tokens = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_exclusions = load_holder_exclusions_config(holder_exclusions_path)
+
+    routescan_client = RouteScanClient(timeout_seconds=settings.request_timeout_seconds)
+    debank_client = DebankCloudClient(
+        base_url=settings.debank_cloud_base_url,
+        api_key=api_key,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    price_oracle = PriceOracle(
+        base_url=settings.defillama_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        avant_api_base_url=settings.avant_api_base_url,
+    )
+    session = Session(get_engine())
+    try:
+        summary = sync_holder_supply_inputs(
+            session=session,
+            business_date=parsed_date,
+            routescan_client=routescan_client,
+            debank_client=debank_client,
+            price_oracle=price_oracle,
+            markets_config=markets_config,
+            consumer_markets_config=consumer_markets_config,
+            wallet_products_config=wallet_products_config,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+            holder_exclusions=holder_exclusions,
+            markets_path=markets_path,
+            consumer_markets_path=consumer_markets_path,
+            wallet_products_path=wallet_products_path,
+            avant_tokens_path=avant_tokens_path,
+            min_leg_usd=min_leg_usd_decimal,
+            max_concurrency=max_concurrency,
+        )
+        session.commit()
+    finally:
+        session.close()
+        routescan_client.close()
+        debank_client.close()
+        price_oracle.close()
+
+    typer.echo(
+        "sync holder supply inputs complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" as_of={summary.as_of_ts_utc.isoformat()}"
+        f" chain={summary.chain_code}"
+        f" token={summary.token_symbol}"
+        f" raw_holder_rows={summary.raw_holder_rows}"
+        f" monitoring_wallets={summary.monitoring_wallet_count}"
+        f" holder_rows_written={summary.holder_rows_written}"
+        f" debank_wallets_scanned={summary.debank_wallets_scanned}"
+        f" debank_token_rows_written={summary.debank_token_rows_written}"
+        f" issues_written={summary.issues_written}"
+    )
 
 
 @sync_app.command("discover-dolomite-wallets")
@@ -1074,6 +1614,202 @@ def compute_markets(
         f" rows_written={summary.rows_written}"
         f" health_rows={market_view_summary.health_rows_written}"
         f" exposure_rows={market_view_summary.exposure_rows_written}"
+        f" executive_rows={executive_summary.rows_written}"
+    )
+
+
+@compute_app.command("holder-behavior")
+def compute_holder_behavior(
+    target_date: str = DATE_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+) -> None:
+    """Compute daily customer holder behavior rows."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    avant_tokens = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    session = Session(get_engine())
+    try:
+        summary = HolderBehaviorEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute holder behavior complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" rows_written={summary.rows_written}"
+    )
+
+
+@compute_app.command("consumer-capacity")
+def compute_consumer_capacity(
+    target_date: str = DATE_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
+) -> None:
+    """Compute daily customer market demand and capacity rows."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    avant_tokens = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
+    session = Session(get_engine())
+    try:
+        scorecard_engine = HolderScorecardEngine(session, thresholds=thresholds)
+        dashboard_engine = HolderDashboardEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+            holder_protocol_map=holder_protocol_map,
+        )
+        summary = ConsumerCapacityEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        scorecard_summary = scorecard_engine.compute_daily(business_date=parsed_date)
+        dashboard_summary = dashboard_engine.compute_daily(business_date=parsed_date)
+        executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute consumer capacity complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" rows_written={summary.rows_written}"
+        f" holder_scorecard_rows={scorecard_summary.scorecard_rows_written}"
+        f" holder_protocol_gap_rows={scorecard_summary.protocol_gap_rows_written}"
+        f" dashboard_segment_rows={dashboard_summary.segment_rows_written}"
+        f" dashboard_deploy_rows={dashboard_summary.protocol_rows_written}"
+        f" executive_rows={executive_summary.rows_written}"
+    )
+
+
+@compute_app.command("holder-scorecard")
+def compute_holder_scorecard(
+    target_date: str = DATE_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
+) -> None:
+    """Compute the persisted CEO holder scorecard and protocol gap tables."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    avant_tokens = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
+    session = Session(get_engine())
+    try:
+        supply_summary = HolderSupplyCoverageEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        summary = HolderScorecardEngine(session, thresholds=thresholds).compute_daily(
+            business_date=parsed_date,
+            write_protocol_gaps=False,
+        )
+        dashboard_summary = HolderDashboardEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+            holder_protocol_map=holder_protocol_map,
+        ).compute_daily(business_date=parsed_date)
+        executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute holder scorecard complete"
+        f" business_date={summary.business_date.isoformat()}"
+        f" supply_rows_written={supply_summary.rows_written}"
+        f" scorecard_rows_written={summary.scorecard_rows_written}"
+        f" protocol_gap_rows_written={summary.protocol_gap_rows_written}"
+        f" dashboard_segment_rows={dashboard_summary.segment_rows_written}"
+        f" dashboard_deploy_rows={dashboard_summary.protocol_rows_written}"
+        f" executive_rows={executive_summary.rows_written}"
+    )
+
+
+@compute_app.command("holder-analytics")
+def compute_holder_analytics(
+    target_date: str = DATE_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
+) -> None:
+    """Compute daily holder behavior, capacity, scorecards, and served dashboard rollups."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be formatted as YYYY-MM-DD") from exc
+
+    avant_tokens = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
+    session = Session(get_engine())
+    try:
+        behavior_summary = HolderBehaviorEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        capacity_summary = ConsumerCapacityEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        supply_summary = HolderSupplyCoverageEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+        ).compute_daily(business_date=parsed_date)
+        scorecard_summary = HolderScorecardEngine(session, thresholds=thresholds).compute_daily(
+            business_date=parsed_date
+        )
+        dashboard_summary = HolderDashboardEngine(
+            session,
+            avant_tokens=avant_tokens,
+            thresholds=thresholds,
+            holder_protocol_map=holder_protocol_map,
+        ).compute_daily(business_date=parsed_date)
+        executive_summary = ExecutiveSummaryEngine(session).compute_daily(business_date=parsed_date)
+        session.commit()
+    finally:
+        session.close()
+
+    typer.echo(
+        "compute holder analytics complete"
+        f" business_date={parsed_date.isoformat()}"
+        f" holder_behavior_rows={behavior_summary.rows_written}"
+        f" capacity_rows={capacity_summary.rows_written}"
+        f" supply_rows={supply_summary.rows_written}"
+        f" scorecard_rows={scorecard_summary.scorecard_rows_written}"
+        f" protocol_gap_rows={scorecard_summary.protocol_gap_rows_written}"
+        f" dashboard_segment_rows={dashboard_summary.segment_rows_written}"
+        f" dashboard_deploy_rows={dashboard_summary.protocol_rows_written}"
         f" executive_rows={executive_summary.rows_written}"
     )
 

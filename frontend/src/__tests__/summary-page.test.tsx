@@ -11,10 +11,6 @@ vi.mock("next/link", () => ({
   ),
 }));
 
-vi.mock("../components/charts/fee-waterfall-chart", () => ({
-  FeeWaterfallChart: () => <div data-testid="fee-waterfall-chart" />,
-}));
-
 const useSummaryMock = vi.fn();
 
 vi.mock("../lib/hooks/use-summary", () => ({
@@ -49,6 +45,27 @@ function makeSummary(
       open_alert_count: 3,
       customer_metrics_ready: false,
       ...overrides,
+    },
+    holder_summary: {
+      supply_coverage_token_symbol: "savUSD",
+      supply_coverage_chain_code: "avalanche",
+      monitored_holder_count: 154,
+      attributed_holder_count: 81,
+      attribution_completion_pct: "0.5259740260",
+      core_holder_wallet_count: 57,
+      whale_wallet_count: 12,
+      strategy_supply_usd: "5400000",
+      strategy_deployed_supply_usd: "3200000",
+      net_customer_float_usd: "80620000",
+      covered_supply_usd: "18040503.53",
+      covered_supply_pct: "0.2237760230",
+      cross_chain_supply_usd: "7508005.17",
+      total_canonical_avant_exposure_usd: "12450000",
+      staked_share: "0.71",
+      configured_deployed_share: "0.24",
+      top10_holder_share: "0.63",
+      visibility_gap_wallet_count: 118,
+      markets_needing_capacity_review: 2,
     },
     portfolio_summary: {
       business_date: "2026-03-03",
@@ -108,20 +125,27 @@ describe("SummaryPage", () => {
     expect(screen.getByText("Deployed Strategy NAV")).toBeTruthy();
     expect(screen.getByText("Market Stability Ops")).toBeTruthy();
     expect(screen.getByText("Trader Joe + Etherex")).toBeTruthy();
+    expect(screen.getByText("Holder Strip")).toBeTruthy();
+    expect(screen.getByText("Monitored Wallets")).toBeTruthy();
+    expect(screen.getByText("Core Holders")).toBeTruthy();
+    expect(screen.getByText("Whales")).toBeTruthy();
+    expect(screen.getByText("Net Customer Float")).toBeTruthy();
+    expect(screen.getByText("Covered Supply")).toBeTruthy();
     expect(screen.getByText("Portfolio Shape")).toBeTruthy();
     expect(screen.getByText("Market & Risk Posture")).toBeTruthy();
-    expect(screen.getByText("Watchlist:")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open Portfolio" }).getAttribute("href")).toBe(
+    expect(screen.getByText(/Watchlist:/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Open Portfolio/ }).getAttribute("href")).toBe(
       "/portfolio",
     );
-    expect(screen.getByRole("link", { name: "Open Markets" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: /Open Markets/ }).getAttribute("href")).toBe(
       "/markets",
     );
     expect(screen.getByRole("link", { name: /DQ issues/i }).getAttribute("href")).toBe("/risk");
-    expect(screen.getByText("Gross Yield (MTD)")).toBeTruthy();
-    expect(screen.getByText("Strategy Fee (MTD)")).toBeTruthy();
-    expect(screen.getByText("Net Yield (MTD)")).toBeTruthy();
-    expect(screen.getByTestId("fee-waterfall-chart")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /Open Consumer/ }).getAttribute("href")).toBe(
+      "/consumer",
+    );
+    expect(screen.getByText("Avant Exposure")).toBeTruthy();
+    expect(screen.getByText("Top-10 / Staked")).toBeTruthy();
   });
 
   it("renders dashes for nullable summary metrics and keeps ops capital at zero", () => {

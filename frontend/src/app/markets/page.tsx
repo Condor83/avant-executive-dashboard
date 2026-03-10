@@ -23,6 +23,8 @@ import type { MarketExposureFilters, MarketExposureRow, OptionItem } from "@/lib
 
 const MIN_VISIBLE_COLLATERAL_LTV = 0.001;
 
+type WatchlistFilterValue = "yes" | "no";
+
 function formatCollateralLtv(value: string | null | undefined): string {
   if (!value) {
     return "N/A";
@@ -34,15 +36,40 @@ function formatCollateralLtv(value: string | null | undefined): string {
   return formatPercent(value);
 }
 
+function sortableNumber(value: string | null | undefined) {
+  if (!value) {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function watchlistFilterValue(searchParams: URLSearchParams): WatchlistFilterValue | undefined {
+  const watchlist = searchParams.get("watchlist");
+  if (watchlist === "yes" || watchlist === "no") {
+    return watchlist;
+  }
+  const legacyWatchOnly = searchParams.get("watch_only");
+  if (legacyWatchOnly === "true") {
+    return "yes";
+  }
+  if (legacyWatchOnly === "false") {
+    return "no";
+  }
+  return undefined;
+}
+
 function exposureColumns(): Column<MarketExposureRow>[] {
   return [
     {
       key: "display_name",
       header: "Exposure",
+      sortable: true,
+      sortValue: (row) => row.display_name,
       cell: (row) => (
         <div>
-          <div className="font-medium text-slate-900">{row.display_name}</div>
-          <div className="text-xs text-slate-500">{row.protocol_code} / {row.chain_code}</div>
+          <div className="font-medium text-purple-600 dark:text-purple-400">{row.display_name}</div>
+          <div className="text-xs text-muted-foreground">{row.protocol_code} / {row.chain_code}</div>
           <div className="mt-1">
             <SeverityBadge
               severity={
@@ -61,14 +88,16 @@ function exposureColumns(): Column<MarketExposureRow>[] {
     {
       key: "total_supply_usd",
       header: "Collateral Detail",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.total_supply_usd),
       cell: (row) => (
-        <div className="text-right">
-          <div>{formatUSDCompact(row.total_supply_usd)}</div>
-          <div className="text-xs text-slate-500">{row.supply_symbol ?? "---"}</div>
-          <div className="text-xs text-slate-500">
+        <div className="text-right tabular-nums tracking-tight">
+          <div className="text-foreground">{formatUSDCompact(row.total_supply_usd)}</div>
+          <div className="text-xs text-muted-foreground">{row.supply_symbol ?? "---"}</div>
+          <div className="text-xs text-muted-foreground">
             Yield {formatAPY(row.collateral_yield_apy)}
           </div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-muted-foreground">
             Max LTV {formatCollateralLtv(row.collateral_max_ltv)}
           </div>
         </div>
@@ -77,11 +106,13 @@ function exposureColumns(): Column<MarketExposureRow>[] {
     {
       key: "total_borrow_usd",
       header: "Borrow Detail",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.total_borrow_usd),
       cell: (row) => (
-        <div className="text-right">
-          <div>{formatUSDCompact(row.total_borrow_usd)}</div>
-          <div className="text-xs text-slate-500">{row.debt_symbol ?? "---"}</div>
-          <div className="text-xs text-slate-500">
+        <div className="text-right tabular-nums tracking-tight">
+          <div className="text-foreground">{formatUSDCompact(row.total_borrow_usd)}</div>
+          <div className="text-xs text-muted-foreground">{row.debt_symbol ?? "---"}</div>
+          <div className="text-xs text-muted-foreground">
             Cost {formatAPY(row.weighted_borrow_apy)}
           </div>
         </div>
@@ -91,9 +122,11 @@ function exposureColumns(): Column<MarketExposureRow>[] {
       key: "available_liquidity_usd",
       header: "Available Liquidity",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.available_liquidity_usd),
       cell: (row) => (
-        <div className="text-right">
-          <div>{formatUSDCompact(row.available_liquidity_usd)}</div>
+        <div className="text-right tabular-nums tracking-tight">
+          <div className="text-foreground">{formatUSDCompact(row.available_liquidity_usd)}</div>
         </div>
       ),
     },
@@ -101,25 +134,31 @@ function exposureColumns(): Column<MarketExposureRow>[] {
       key: "spread_apy",
       header: "Spread",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.spread_apy),
       cell: (row) => <DecimalCell value={row.spread_apy} formatter={formatAPY} />,
     },
     {
       key: "avant_borrow_share",
       header: "Avant Exposure",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.avant_borrow_share),
       cell: (row) => <DecimalCell value={row.avant_borrow_share} formatter={formatPercent} />,
     },
     {
       key: "utilization",
       header: "Borrow Utilization Rate",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.utilization),
       cell: (row) => {
         const utilPercent = Number(row.utilization) * 100;
         const validUtil = Number.isFinite(utilPercent) ? Math.min(Math.max(utilPercent, 0), 100) : 0;
         return (
-          <div className="flex flex-col items-end justify-center gap-1.5 pt-1">
+          <div className="flex flex-col items-end justify-center gap-1.5 pt-1 tabular-nums tracking-tight text-foreground">
             <span className="leading-none">{formatPercent(row.utilization)}</span>
-            <div className="w-16 h-[2px] bg-muted overflow-hidden rounded-full">
+            <div className="w-16 h-1.5 bg-muted overflow-hidden rounded-full">
               <div
                 className="h-full bg-avant-navy transition-all border-none"
                 style={{ width: `${validUtil}%` }}
@@ -133,6 +172,8 @@ function exposureColumns(): Column<MarketExposureRow>[] {
       key: "distance_to_kink",
       header: "Distance To Kink",
       align: "right",
+      sortable: true,
+      sortValue: (row) => sortableNumber(row.distance_to_kink),
       cell: (row) => <DecimalCell value={row.distance_to_kink} formatter={formatPercent} />,
     },
   ];
@@ -145,8 +186,11 @@ function filterSelect(
   onChange: (value: string) => void,
 ) {
   return (
-    <Select value={value ?? "__all__"} onValueChange={onChange}>
-      <SelectTrigger className="h-8 w-[150px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
+    <Select
+      value={value}
+      onValueChange={(nextValue) => onChange(nextValue === "__all__" ? "" : nextValue)}
+    >
+      <SelectTrigger className="h-8 w-[150px] border border-border bg-card/50 text-xs text-foreground shadow-sm hover:bg-muted/50 transition-colors focus:ring-1 focus:ring-ring">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -184,17 +228,21 @@ function MarketsContent() {
   const searchParams = useSearchParams();
   const metadata = useUiMetadata();
   const summary = useMarketSummary();
+  const watchlist = watchlistFilterValue(searchParams);
 
   const filters: MarketExposureFilters = {
     protocol_code: searchParams.get("protocol_code") ?? undefined,
     chain_code: searchParams.get("chain_code") ?? undefined,
-    watch_only: searchParams.get("watch_only") === "true",
+    watchlist,
   };
   const exposures = useMarketExposures(filters);
 
   const setParam = useCallback(
     (key: string, value: string) => {
       const params = new URLSearchParams(searchParams.toString());
+      if (key === "watchlist") {
+        params.delete("watch_only");
+      }
       if (!value || value === "__all__") {
         params.delete(key);
       } else {
@@ -238,8 +286,8 @@ function MarketsContent() {
         )}
       </section>
 
-      <section>
-        <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Exposures</h2>
+      <section className="mt-12">
+        <h2 className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Exposures</h2>
         <DataTable
           columns={exposureColumns()}
           data={exposures.data ?? []}
@@ -262,15 +310,16 @@ function MarketsContent() {
                 (value) => setParam("chain_code", value),
               )}
               <Select
-                value={filters.watch_only ? "true" : "__all__"}
-                onValueChange={(value) => setParam("watch_only", value)}
+                value={filters.watchlist}
+                onValueChange={(value) => setParam("watchlist", value === "__all__" ? "" : value)}
               >
-                <SelectTrigger className="h-8 w-[140px] border-none bg-transparent text-xs text-muted-foreground shadow-none hover:bg-muted/50 hover:text-foreground transition-colors focus:ring-0">
+                <SelectTrigger className="h-8 w-[140px] border border-border bg-card/50 text-xs text-foreground shadow-sm hover:bg-muted/50 transition-colors focus:ring-1 focus:ring-ring">
                   <SelectValue placeholder="Watchlist" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__all__">All</SelectItem>
-                  <SelectItem value="true">Watchlist</SelectItem>
+                  <SelectItem value="yes">Yes</SelectItem>
+                  <SelectItem value="no">No</SelectItem>
                 </SelectContent>
               </Select>
             </div>

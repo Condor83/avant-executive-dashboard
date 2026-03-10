@@ -22,8 +22,13 @@ SECONDS_PER_YEAR_FLOAT = 31536000.0
 PCT_TO_UNIT = Decimal("100")
 MERKL_OPPORTUNITIES_PATH = "/v4/opportunities"
 MERKL_REWARD_SOURCE = "merkl_api_v4"
-MERKL_REWARD_CHAIN_SCOPE = "ethereum_campaign_global_application"
-MERKL_CHAIN_ID = 1
+MERKL_REWARD_CHAIN_SCOPE = "chain_local_application"
+MERKL_CHAIN_IDS = {
+    "ethereum": 1,
+    "mantle": 5000,
+    "plasma": 9745,
+    "ink": 57073,
+}
 MERKL_TARGET_SYMBOLS = frozenset({"usde", "susde"})
 MAX_HEALTH_FACTOR_NUMERIC_ABS = Decimal("1e10")
 
@@ -424,6 +429,7 @@ class _ReserveRuntime:
 @dataclass(frozen=True)
 class _MerklRewardContext:
     reward_apy: Decimal
+    merkl_chain_id: int
     opportunity_id: str | None
     identifier: str | None
     name: str | None
@@ -451,7 +457,7 @@ class AaveV3Adapter:
         )
         self.merkl_base_url = merkl_base_url.rstrip("/") if merkl_base_url else None
         self.merkl_timeout_seconds = merkl_timeout_seconds
-        self._merkl_reward_context_cache: _MerklRewardContext | None = None
+        self._merkl_reward_context_cache: dict[str, _MerklRewardContext] = {}
 
     @staticmethod
     def _normalize_health_factor(raw_health_factor_wad: int) -> Decimal:
@@ -497,10 +503,33 @@ class AaveV3Adapter:
     def _is_merkl_reward_symbol(symbol: str) -> bool:
         return symbol.strip().lower() in MERKL_TARGET_SYMBOLS
 
-    def _merkl_issue_chain_code(self) -> str:
-        if "ethereum" in self.markets_config.aave_v3:
-            return "ethereum"
-        return next(iter(self.markets_config.aave_v3.keys()), "ethereum")
+    @staticmethod
+    def _all_chain_reserve_markets(
+        chain_config: AaveChainConfig,
+        *,
+        include_reference_markets: bool,
+    ) -> list[AaveMarket]:
+        deduped: dict[str, AaveMarket] = {}
+        for market in chain_config.markets:
+            deduped[canonical_address(market.asset)] = market
+        if include_reference_markets:
+            for market in chain_config.rate_reference_markets:
+                deduped.setdefault(canonical_address(market.asset), market)
+        return list(deduped.values())
+
+    @staticmethod
+    def _chain_has_tracked_merkl_symbol(chain_config: AaveChainConfig) -> bool:
+        return any(
+            AaveV3Adapter._is_merkl_reward_symbol(market.symbol) for market in chain_config.markets
+        )
+
+    @staticmethod
+    def _chain_has_tracked_susde(chain_config: AaveChainConfig) -> bool:
+        return any(market.symbol.strip().lower() == "susde" for market in chain_config.markets)
+
+    @staticmethod
+    def _merkl_chain_id_for_chain(chain_code: str) -> int | None:
+        return MERKL_CHAIN_IDS.get(chain_code)
 
     @staticmethod
     def _select_merkl_usde_loop_opportunity(opportunities: list[object]) -> dict[str, object]:
@@ -541,32 +570,31 @@ class AaveV3Adapter:
 
     @staticmethod
     def _parse_merkl_reward_apy(opportunity: dict[str, object]) -> Decimal:
-        max_apr = opportunity.get("maxApr")
-        if max_apr is not None:
-            try:
-                parsed = Decimal(str(max_apr))
-            except (InvalidOperation, ValueError, TypeError) as exc:
-                raise RuntimeError(f"invalid Merkl maxApr value: {max_apr}") from exc
-            if parsed < 0:
-                raise RuntimeError(f"Merkl maxApr is negative: {parsed}")
-            return parsed
-
-        apr = opportunity.get("apr")
-        if apr is None:
-            raise RuntimeError("Merkl opportunity missing both maxApr and apr")
+        raw_apr = opportunity.get("apr")
+        source_field = "apr"
+        if raw_apr is None:
+            raw_apr = opportunity.get("maxApr")
+            source_field = "maxApr"
+        if raw_apr is None:
+            raise RuntimeError("Merkl opportunity missing both apr and maxApr")
 
         try:
-            parsed_apr = Decimal(str(apr))
+            parsed_apr = Decimal(str(raw_apr))
         except (InvalidOperation, ValueError, TypeError) as exc:
-            raise RuntimeError(f"invalid Merkl apr value: {apr}") from exc
+            raise RuntimeError(f"invalid Merkl {source_field} value: {raw_apr}") from exc
 
         if parsed_apr < 0:
-            raise RuntimeError(f"Merkl apr is negative: {parsed_apr}")
+            raise RuntimeError(f"Merkl {source_field} is negative: {parsed_apr}")
         if parsed_apr > Decimal("1"):
-            return parsed_apr / PCT_TO_UNIT
-        return parsed_apr
+            parsed_apr /= PCT_TO_UNIT
+        return apr_to_apy(parsed_apr)
 
-    def _fetch_merkl_usde_loop_reward_context(self) -> _MerklRewardContext:
+    def _fetch_merkl_usde_loop_reward_context(
+        self,
+        *,
+        chain_code: str,
+        merkl_chain_id: int,
+    ) -> _MerklRewardContext:
         if not self.merkl_base_url:
             raise RuntimeError("Merkl base URL is not configured")
 
@@ -574,7 +602,7 @@ class AaveV3Adapter:
             f"{self.merkl_base_url}{MERKL_OPPORTUNITIES_PATH}",
             params={
                 "mainProtocolId": "aave",
-                "chainId": MERKL_CHAIN_ID,
+                "chainId": merkl_chain_id,
                 "name": "USDe",
                 "campaigns": "true",
             },
@@ -590,6 +618,7 @@ class AaveV3Adapter:
         reward_apy = self._parse_merkl_reward_apy(opportunity)
         return _MerklRewardContext(
             reward_apy=reward_apy,
+            merkl_chain_id=merkl_chain_id,
             opportunity_id=(
                 str(opportunity.get("id")) if opportunity.get("id") is not None else None
             ),
@@ -606,26 +635,38 @@ class AaveV3Adapter:
         *,
         as_of_ts_utc: datetime,
         stage: str,
+        chain_code: str,
     ) -> tuple[_MerklRewardContext | None, list[DataQualityIssue]]:
-        if self._merkl_reward_context_cache is not None:
-            return self._merkl_reward_context_cache, []
+        cached = self._merkl_reward_context_cache.get(chain_code)
+        if cached is not None:
+            return cached, []
         if not self.merkl_base_url:
             return None, []
 
+        merkl_chain_id = self._merkl_chain_id_for_chain(chain_code)
+        if merkl_chain_id is None:
+            return None, []
+
         try:
-            context = self._fetch_merkl_usde_loop_reward_context()
+            context = self._fetch_merkl_usde_loop_reward_context(
+                chain_code=chain_code,
+                merkl_chain_id=merkl_chain_id,
+            )
         except Exception as exc:
             issue = self._issue(
                 as_of_ts_utc=as_of_ts_utc,
                 stage=stage,
                 error_type="aave_merkl_reward_apy_fetch_failed",
                 error_message=str(exc),
-                chain_code=self._merkl_issue_chain_code(),
-                payload_json={"merkl_base_url": self.merkl_base_url},
+                chain_code=chain_code,
+                payload_json={
+                    "merkl_base_url": self.merkl_base_url,
+                    "merkl_chain_id": merkl_chain_id,
+                },
             )
             return None, [issue]
 
-        self._merkl_reward_context_cache = context
+        self._merkl_reward_context_cache[chain_code] = context
         return context, []
 
     @staticmethod
@@ -638,37 +679,47 @@ class AaveV3Adapter:
     @staticmethod
     def _resolve_usde_supply_apy_by_chain(
         reserve_maps_by_chain: dict[str, dict[str, _ReserveRuntime]],
-    ) -> tuple[dict[str, Decimal], Decimal]:
+    ) -> dict[str, Decimal]:
         by_chain: dict[str, Decimal] = {}
         for chain_code, reserve_map in reserve_maps_by_chain.items():
             usde_supply = AaveV3Adapter._find_chain_usde_supply_apy(reserve_map)
             if usde_supply is not None:
                 by_chain[chain_code] = usde_supply
-
-        if "ethereum" in by_chain:
-            default_supply = by_chain["ethereum"]
-        elif by_chain:
-            default_supply = next(iter(by_chain.values()))
-        else:
-            default_supply = Decimal("0")
-
-        return by_chain, default_supply
+        return by_chain
 
     @staticmethod
     def _susde_reward_apy_aligned_to_usde(
         *,
-        chain_code: str,
         susde_supply_apy: Decimal,
         merkl_reward_apy: Decimal,
-        usde_supply_apy_by_chain: dict[str, Decimal],
-        default_usde_supply_apy: Decimal,
+        usde_supply_apy: Decimal,
     ) -> Decimal:
-        usde_supply_apy = usde_supply_apy_by_chain.get(chain_code, default_usde_supply_apy)
         target_total_apy = usde_supply_apy + merkl_reward_apy
         adjusted_reward = target_total_apy - susde_supply_apy
         if adjusted_reward < 0:
             return Decimal("0")
         return adjusted_reward
+
+    def _missing_usde_reference_issue(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        stage: str,
+        chain_code: str,
+    ) -> DataQualityIssue:
+        merkl_chain_id = self._merkl_chain_id_for_chain(chain_code)
+        return self._issue(
+            as_of_ts_utc=as_of_ts_utc,
+            stage=stage,
+            error_type="aave_usde_reference_supply_apy_missing",
+            error_message="same-chain USDe reference supply APY unavailable for sUSDe alignment",
+            chain_code=chain_code,
+            payload_json={
+                "expected_symbol": "USDe",
+                "merkl_chain_id": merkl_chain_id,
+                "reward_chain_scope": MERKL_REWARD_CHAIN_SCOPE,
+            },
+        )
 
     def _fetch_defillama_pool_apy(self, pool_id: str) -> Decimal:
         """Fetch latest pool APY from DefiLlama chart endpoint in 0.0-1.0 units."""
@@ -723,7 +774,15 @@ class AaveV3Adapter:
                 )
             )
 
-        for market in chain_config.markets:
+        include_reference_markets = (
+            self.merkl_base_url is not None
+            and self._chain_has_tracked_susde(chain_config)
+            and self._merkl_chain_id_for_chain(chain_code) is not None
+        )
+        for market in self._all_chain_reserve_markets(
+            chain_config,
+            include_reference_markets=include_reference_markets,
+        ):
             market_ref = canonical_address(market.asset)
             try:
                 reserve_data = self.rpc_client.get_reserve_data(
@@ -796,12 +855,6 @@ class AaveV3Adapter:
     ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
         positions: list[PositionSnapshotInput] = []
         issues: list[DataQualityIssue] = []
-        merkl_context, merkl_issues = self._resolve_merkl_reward_context(
-            as_of_ts_utc=as_of_ts_utc,
-            stage="sync_snapshot",
-        )
-        issues.extend(merkl_issues)
-
         reserve_maps_by_chain: dict[str, dict[str, _ReserveRuntime]] = {}
         block_by_chain: dict[str, str | None] = {}
         for chain_code, chain_config in self.markets_config.aave_v3.items():
@@ -815,13 +868,37 @@ class AaveV3Adapter:
             reserve_maps_by_chain[chain_code] = reserve_map
             block_by_chain[chain_code] = block_number_or_slot
 
-        usde_supply_apy_by_chain, default_usde_supply_apy = self._resolve_usde_supply_apy_by_chain(
-            reserve_maps_by_chain
-        )
+        merkl_context_by_chain: dict[str, _MerklRewardContext | None] = {}
+        for chain_code, chain_config in self.markets_config.aave_v3.items():
+            merkl_context: _MerklRewardContext | None = None
+            if self._chain_has_tracked_merkl_symbol(chain_config):
+                merkl_context, merkl_issues = self._resolve_merkl_reward_context(
+                    as_of_ts_utc=as_of_ts_utc,
+                    stage="sync_snapshot",
+                    chain_code=chain_code,
+                )
+                issues.extend(merkl_issues)
+            merkl_context_by_chain[chain_code] = merkl_context
+
+        usde_supply_apy_by_chain = self._resolve_usde_supply_apy_by_chain(reserve_maps_by_chain)
+        for chain_code, chain_config in self.markets_config.aave_v3.items():
+            if (
+                merkl_context_by_chain.get(chain_code) is not None
+                and self._chain_has_tracked_susde(chain_config)
+                and chain_code not in usde_supply_apy_by_chain
+            ):
+                issues.append(
+                    self._missing_usde_reference_issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_snapshot",
+                        chain_code=chain_code,
+                    )
+                )
 
         for chain_code, chain_config in self.markets_config.aave_v3.items():
             reserve_map = reserve_maps_by_chain[chain_code]
             block_number_or_slot = block_by_chain[chain_code]
+            merkl_context = merkl_context_by_chain[chain_code]
             for wallet in chain_config.wallets:
                 wallet_address = canonical_address(wallet)
                 account_data: UserAccountData | None = None
@@ -923,13 +1000,11 @@ class AaveV3Adapter:
                     if supplied_amount > 0 and merkl_context is not None:
                         if symbol_lower == "usde":
                             reward_apy = merkl_context.reward_apy
-                        elif symbol_lower == "susde":
+                        elif symbol_lower == "susde" and chain_code in usde_supply_apy_by_chain:
                             reward_apy = self._susde_reward_apy_aligned_to_usde(
-                                chain_code=chain_code,
                                 susde_supply_apy=reserve_runtime.supply_apy,
                                 merkl_reward_apy=merkl_context.reward_apy,
-                                usde_supply_apy_by_chain=usde_supply_apy_by_chain,
-                                default_usde_supply_apy=default_usde_supply_apy,
+                                usde_supply_apy=usde_supply_apy_by_chain[chain_code],
                             )
 
                     positions.append(
@@ -966,12 +1041,6 @@ class AaveV3Adapter:
     ) -> tuple[list[MarketSnapshotInput], list[DataQualityIssue]]:
         snapshots: list[MarketSnapshotInput] = []
         issues: list[DataQualityIssue] = []
-        merkl_context, merkl_issues = self._resolve_merkl_reward_context(
-            as_of_ts_utc=as_of_ts_utc,
-            stage="sync_markets",
-        )
-        issues.extend(merkl_issues)
-
         reserve_maps_by_chain: dict[str, dict[str, _ReserveRuntime]] = {}
         block_by_chain: dict[str, str | None] = {}
         for chain_code, chain_config in self.markets_config.aave_v3.items():
@@ -985,13 +1054,37 @@ class AaveV3Adapter:
             reserve_maps_by_chain[chain_code] = reserve_map
             block_by_chain[chain_code] = block_number_or_slot
 
-        usde_supply_apy_by_chain, default_usde_supply_apy = self._resolve_usde_supply_apy_by_chain(
-            reserve_maps_by_chain
-        )
+        merkl_context_by_chain: dict[str, _MerklRewardContext | None] = {}
+        for chain_code, chain_config in self.markets_config.aave_v3.items():
+            merkl_context: _MerklRewardContext | None = None
+            if self._chain_has_tracked_merkl_symbol(chain_config):
+                merkl_context, merkl_issues = self._resolve_merkl_reward_context(
+                    as_of_ts_utc=as_of_ts_utc,
+                    stage="sync_markets",
+                    chain_code=chain_code,
+                )
+                issues.extend(merkl_issues)
+            merkl_context_by_chain[chain_code] = merkl_context
+
+        usde_supply_apy_by_chain = self._resolve_usde_supply_apy_by_chain(reserve_maps_by_chain)
+        for chain_code, chain_config in self.markets_config.aave_v3.items():
+            if (
+                merkl_context_by_chain.get(chain_code) is not None
+                and self._chain_has_tracked_susde(chain_config)
+                and chain_code not in usde_supply_apy_by_chain
+            ):
+                issues.append(
+                    self._missing_usde_reference_issue(
+                        as_of_ts_utc=as_of_ts_utc,
+                        stage="sync_markets",
+                        chain_code=chain_code,
+                    )
+                )
 
         for chain_code, chain_config in self.markets_config.aave_v3.items():
             reserve_map = reserve_maps_by_chain[chain_code]
             block_number_or_slot = block_by_chain[chain_code]
+            merkl_context = merkl_context_by_chain[chain_code]
             for market in chain_config.markets:
                 market_ref = canonical_address(market.asset)
                 reserve_runtime = reserve_map.get(market_ref)
@@ -1086,13 +1179,11 @@ class AaveV3Adapter:
                     if merkl_context is not None:
                         if symbol_lower == "usde":
                             merkl_reward_apy = merkl_context.reward_apy
-                        elif symbol_lower == "susde":
+                        elif symbol_lower == "susde" and chain_code in usde_supply_apy_by_chain:
                             merkl_reward_apy = self._susde_reward_apy_aligned_to_usde(
-                                chain_code=chain_code,
                                 susde_supply_apy=reserve_runtime.supply_apy,
                                 merkl_reward_apy=merkl_context.reward_apy,
-                                usde_supply_apy_by_chain=usde_supply_apy_by_chain,
-                                default_usde_supply_apy=default_usde_supply_apy,
+                                usde_supply_apy=usde_supply_apy_by_chain[chain_code],
                             )
                     target_total_apy = reserve_runtime.supply_apy + merkl_reward_apy
                     irm_params_json["merkl_reward_apy"] = str(merkl_reward_apy)
@@ -1101,6 +1192,9 @@ class AaveV3Adapter:
                         MERKL_REWARD_SOURCE if merkl_context is not None else "unavailable"
                     )
                     irm_params_json["merkl_reward_chain_scope"] = MERKL_REWARD_CHAIN_SCOPE
+                    irm_params_json["merkl_chain_id"] = (
+                        merkl_context.merkl_chain_id if merkl_context is not None else None
+                    )
                     irm_params_json["merkl_opportunity_id"] = (
                         merkl_context.opportunity_id if merkl_context is not None else None
                     )

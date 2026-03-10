@@ -3,7 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import alerts, data_quality, markets, meta, portfolio, summary, wallets
+from api.routers import alerts, consumer, data_quality, markets, meta, portfolio, summary, wallets
 
 
 def create_app() -> FastAPI:
@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
     )
 
     application.include_router(summary.router)
+    application.include_router(consumer.router)
     application.include_router(portfolio.router)
     application.include_router(wallets.router)
     application.include_router(markets.router)

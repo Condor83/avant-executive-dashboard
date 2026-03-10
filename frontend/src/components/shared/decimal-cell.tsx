@@ -8,7 +8,7 @@ interface DecimalCellProps {
 }
 
 export function DecimalCell({ value, formatter, colored }: DecimalCellProps) {
-  const colorClass = colored ? financialColor(value) : "text-slate-900";
+  const colorClass = colored ? financialColor(value) : "text-foreground";
   return (
     <span className={cn("tabular-nums", colorClass)}>
       {formatter(value)}

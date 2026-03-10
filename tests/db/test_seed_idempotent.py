@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from core.config import (
+    load_avant_tokens_config,
     load_consumer_markets_config,
     load_markets_config,
     load_wallet_products_config,
@@ -39,6 +40,7 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
     markets = load_markets_config(Path("config/markets.yaml"))
     wallet_products = load_wallet_products_config(Path("config/wallet_products.yaml"))
     consumer_markets = load_consumer_markets_config(Path("config/consumer_markets.yaml"))
+    avant_tokens = load_avant_tokens_config(Path("config/avant_tokens.yaml"))
 
     from sqlalchemy import create_engine
 
@@ -46,7 +48,11 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
 
     with Session(engine) as session:
         seed_database(
-            session, markets=markets, wallet_products=wallet_products, consumer=consumer_markets
+            session,
+            markets=markets,
+            wallet_products=wallet_products,
+            consumer=consumer_markets,
+            avant_tokens=avant_tokens,
         )
         session.commit()
 
@@ -55,7 +61,11 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
 
     with Session(engine) as session:
         seed_database(
-            session, markets=markets, wallet_products=wallet_products, consumer=consumer_markets
+            session,
+            markets=markets,
+            wallet_products=wallet_products,
+            consumer=consumer_markets,
+            avant_tokens=avant_tokens,
         )
         session.commit()
 
@@ -122,6 +132,20 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
         morpho_wbtc_collateral = session.get(Token, morpho_wbtc_market.collateral_token_id)
         assert morpho_wbtc_collateral is not None
         assert morpho_wbtc_collateral.symbol == "WBTC"
+
+        avusdx_market = session.execute(
+            select(Market)
+            .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+            .join(Chain, Chain.chain_id == Market.chain_id)
+            .where(Protocol.protocol_code == "wallet_balances")
+            .where(Chain.chain_code == "avalanche")
+            .where(Market.market_address == "0xdd1cdfa52e7d8474d434cd016fd346701db6b3b9")
+        ).scalar_one()
+        assert avusdx_market.base_asset_token_id is not None
+        assert avusdx_market.market_kind == "wallet_balance_token"
+        assert isinstance(avusdx_market.metadata_json, dict)
+        assert avusdx_market.metadata_json["asset_family"] == "usd"
+        assert avusdx_market.metadata_json["wrapper_class"] == "boosted"
 
     assert first_counts == second_counts
     assert wallet_map_count == distinct_wallets

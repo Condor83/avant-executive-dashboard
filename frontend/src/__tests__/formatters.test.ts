@@ -130,15 +130,15 @@ describe("formatRatio", () => {
 
 describe("financialColor", () => {
   it("returns green for positive", () => {
-    expect(financialColor("100")).toBe("text-emerald-600");
+    expect(financialColor("100")).toBe("text-avant-success");
   });
   it("returns red for negative", () => {
-    expect(financialColor("-50")).toBe("text-red-600");
+    expect(financialColor("-50")).toBe("text-avant-danger");
   });
   it("returns neutral for zero", () => {
-    expect(financialColor("0")).toBe("text-slate-900");
+    expect(financialColor("0")).toBe("text-foreground");
   });
   it("returns neutral for null", () => {
-    expect(financialColor(null)).toBe("text-slate-900");
+    expect(financialColor(null)).toBe("text-foreground");
   });
 });

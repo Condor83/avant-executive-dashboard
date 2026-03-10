@@ -13,10 +13,12 @@ from sqlalchemy.orm import Session
 
 from analytics.market_exposures import ensure_market_exposures
 from core.config import (
+    AvantTokensConfig,
     ConsumerMarketsConfig,
     MarketsConfig,
     WalletProductsConfig,
     canonical_address,
+    load_avant_tokens_config,
     load_consumer_markets_config,
     load_markets_config,
     load_wallet_products_config,
@@ -128,7 +130,11 @@ def _normalize_token_address(value: str) -> str:
     return cleaned
 
 
-def _collect_chain_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig) -> set[str]:
+def _collect_chain_codes(
+    markets: MarketsConfig,
+    consumer: ConsumerMarketsConfig,
+    avant_tokens: AvantTokensConfig | None = None,
+) -> set[str]:
     chains: set[str] = set()
     for section in (
         markets.aave_v3,
@@ -146,10 +152,16 @@ def _collect_chain_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig
         chains.update(section.keys())
     for market in consumer.markets:
         chains.add(market.chain)
+    for token in avant_tokens.tokens if avant_tokens is not None else []:
+        chains.add(token.chain_code)
     return chains
 
 
-def _collect_protocol_codes(markets: MarketsConfig, consumer: ConsumerMarketsConfig) -> set[str]:
+def _collect_protocol_codes(
+    markets: MarketsConfig,
+    consumer: ConsumerMarketsConfig,
+    avant_tokens: AvantTokensConfig | None = None,
+) -> set[str]:
     protocols = {
         "aave_v3",
         "spark",
@@ -165,6 +177,8 @@ def _collect_protocol_codes(markets: MarketsConfig, consumer: ConsumerMarketsCon
     }
     for market in consumer.markets:
         protocols.add(market.protocol)
+    if avant_tokens is not None and avant_tokens.tokens:
+        protocols.add("wallet_balances")
     return protocols
 
 
@@ -202,7 +216,9 @@ def _collect_wallet_rows(
 
 
 def _collect_token_rows(
-    markets: MarketsConfig, consumer: ConsumerMarketsConfig
+    markets: MarketsConfig,
+    consumer: ConsumerMarketsConfig,
+    avant_tokens: AvantTokensConfig | None = None,
 ) -> list[dict[str, Any]]:
     token_rows: list[dict[str, Any]] = []
 
@@ -358,12 +374,21 @@ def _collect_token_rows(
             consumer_market.borrow_token.decimals,
         )
 
+    for token in avant_tokens.tokens if avant_tokens is not None else []:
+        add_token(
+            token.chain_code,
+            token.token_address,
+            token.symbol,
+            token.decimals,
+        )
+
     return _dedupe(token_rows, keys=("chain_code", "address_or_mint"))
 
 
 def _collect_market_rows(
     markets: MarketsConfig,
     consumer: ConsumerMarketsConfig,
+    avant_tokens: AvantTokensConfig | None,
     chain_ids: dict[str, int],
     protocol_ids: dict[str, int],
     token_ids: dict[tuple[str, str], int],
@@ -696,6 +721,53 @@ def _collect_market_rows(
                 },
             )
 
+    for token in avant_tokens.tokens if avant_tokens is not None else []:
+        token_address = _normalize_token_address(token.token_address)
+        token_id = token_ids.get((token.chain_code, token_address))
+        add_market(
+            protocol_code="wallet_balances",
+            chain_code=token.chain_code,
+            market_address=token_address,
+            market_kind="wallet_balance_token",
+            display_name=market_display_name(
+                protocol_code="wallet_balances",
+                base_symbol=token.symbol,
+                collateral_symbol=None,
+                metadata_json={"kind": "wallet_balance_token"},
+                market_address=token_address,
+            ),
+            base_asset_token_id=token_id,
+            collateral_token_id=None,
+            metadata={
+                "symbol": token.symbol,
+                "decimals": token.decimals,
+                "kind": "wallet_balance_token",
+                "include_in_yield": False,
+                "capital_bucket": "pending_deployment",
+                "exposure_class": "idle_capital",
+                "asset_family": token.asset_family,
+                "wrapper_class": token.wrapper_class,
+                "pricing_policy": token.pricing_policy,
+                "underlying_token_address": (
+                    _normalize_token_address(token.underlying_token_address)
+                    if token.underlying_token_address is not None
+                    else None
+                ),
+                "exchange_rate_contract": (
+                    _normalize_token_address(token.exchange_rate_contract)
+                    if token.exchange_rate_contract is not None
+                    else None
+                ),
+                "nav_contract": (
+                    _normalize_token_address(token.nav_contract)
+                    if token.nav_contract is not None
+                    else None
+                ),
+                "active_from": token.active_from.isoformat() if token.active_from else None,
+                "active_to": token.active_to.isoformat() if token.active_to else None,
+            },
+        )
+
     for chain_code, traderjoe_chain in markets.traderjoe_lp.items():
         for traderjoe_pool in traderjoe_chain.pools:
             token_x_id = token_ids.get(
@@ -863,17 +935,22 @@ def seed_database(
     markets: MarketsConfig,
     wallet_products: WalletProductsConfig,
     consumer: ConsumerMarketsConfig,
+    avant_tokens: AvantTokensConfig | None = None,
 ) -> dict[str, TableSeedStats]:
     """Seed canonical dimensions deterministically and idempotently."""
 
     stats: dict[str, TableSeedStats] = {}
 
-    chain_rows = [{"chain_code": code} for code in sorted(_collect_chain_codes(markets, consumer))]
+    chain_rows = [
+        {"chain_code": code}
+        for code in sorted(_collect_chain_codes(markets, consumer, avant_tokens))
+    ]
     stats["chains"] = _upsert_do_nothing(session, Chain, chain_rows, ["chain_code"])
     chain_ids = _resolve_id_map(session, Chain, key_col="chain_code", id_col="chain_id")
 
     protocol_rows = [
-        {"protocol_code": code} for code in sorted(_collect_protocol_codes(markets, consumer))
+        {"protocol_code": code}
+        for code in sorted(_collect_protocol_codes(markets, consumer, avant_tokens))
     ]
     stats["protocols"] = _upsert_do_nothing(session, Protocol, protocol_rows, ["protocol_code"])
     protocol_ids = _resolve_id_map(session, Protocol, key_col="protocol_code", id_col="protocol_id")
@@ -891,7 +968,7 @@ def seed_database(
     stats["wallets"] = _upsert_do_nothing(session, Wallet, wallet_rows, ["address"])
     wallet_ids = _resolve_id_map(session, Wallet, key_col="address", id_col="wallet_id")
 
-    token_candidates = _collect_token_rows(markets, consumer)
+    token_candidates = _collect_token_rows(markets, consumer, avant_tokens)
     token_rows = [
         {
             "chain_id": chain_ids[row["chain_code"]],
@@ -925,6 +1002,7 @@ def seed_database(
     market_rows = _collect_market_rows(
         markets,
         consumer,
+        avant_tokens,
         chain_ids=chain_ids,
         protocol_ids=protocol_ids,
         token_ids=token_ids,
@@ -971,6 +1049,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--consumer-markets", type=Path, default=Path("config/consumer_markets.yaml")
     )
+    parser.add_argument("--avant-tokens", type=Path, default=Path("config/avant_tokens.yaml"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--truncate-dimensions",
@@ -988,6 +1067,7 @@ def main() -> None:
     markets_cfg = load_markets_config(args.markets)
     wallet_products_cfg = load_wallet_products_config(args.wallet_products)
     consumer_cfg = load_consumer_markets_config(args.consumer_markets)
+    avant_tokens_cfg = load_avant_tokens_config(args.avant_tokens)
 
     engine = get_engine()
     with Session(engine) as session:
@@ -999,6 +1079,7 @@ def main() -> None:
             markets=markets_cfg,
             wallet_products=wallet_products_cfg,
             consumer=consumer_cfg,
+            avant_tokens=avant_tokens_cfg,
         )
 
         if args.dry_run:

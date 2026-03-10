@@ -95,6 +95,10 @@ aave_v3:
       asset: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2'
       decimals: 18
       supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
+    rate_reference_markets:
+    - symbol: USDe
+      asset: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34'
+      decimals: 18
   mantle:
     pool: '0x458F293454fE0d67EC0655f3672301301DD51422'
     pool_data_provider: '0x487c5c669D9eee6057C44973207101276cf73b68'
@@ -113,6 +117,10 @@ aave_v3:
       asset: '0x211Cc4DD073734dA055fbF44a2b4667d5E5fE5d2'
       decimals: 18
       supply_apy_fallback_pool_id: '66985a81-9c51-46ca-9977-42b4fe7bc6df'
+    rate_reference_markets:
+    - symbol: USDe
+      asset: '0x5d3a1Ff2b6BAb83b63cd9AD0787074081a52ef34'
+      decimals: 18
   plasma:
     pool: '0x925a2A7214Ed92428B5b1B090F80b25700095e12'
     pool_data_provider: '0xf2D6E38B407e31E7E7e4a16E6769728b76c7419F'

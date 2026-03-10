@@ -78,10 +78,10 @@ export function formatRatio(value: string | null | undefined): string {
   return `${n.toFixed(2)}x`;
 }
 
-export type ValueColor = "text-emerald-600" | "text-red-600" | "text-slate-900";
+export type ValueColor = "text-avant-success" | "text-avant-danger" | "text-foreground";
 
 export function financialColor(value: string | null | undefined): ValueColor {
   const n = parse(value);
-  if (n === null || n === 0) return "text-slate-900";
-  return n > 0 ? "text-emerald-600" : "text-red-600";
+  if (n === null || n === 0) return "text-foreground";
+  return n > 0 ? "text-avant-success" : "text-avant-danger";
 }

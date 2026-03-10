@@ -38,7 +38,7 @@ const ALERT_COLUMNS: Column<AlertRow>[] = [
   {
     key: "entity",
     header: "Entity",
-    cell: (row) => <span className="text-xs text-slate-600">{row.entity_type}:{row.entity_id}</span>,
+    cell: (row) => <span className="text-xs text-muted-foreground">{row.entity_type}:{row.entity_id}</span>,
   },
   {
     key: "status",
@@ -61,7 +61,7 @@ const DQ_COLUMNS: Column<DqIssueRow>[] = [
     key: "error_message",
     header: "Message",
     cell: (row) => (
-      <span className="max-w-[300px] truncate text-xs text-slate-600" title={row.error_message}>
+      <span className="max-w-[300px] truncate text-xs text-muted-foreground" title={row.error_message}>
         {row.error_message}
       </span>
     ),

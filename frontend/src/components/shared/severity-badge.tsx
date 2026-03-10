@@ -10,15 +10,20 @@ export function SeverityBadge({
   label?: string;
 }) {
   const colors = SEVERITY_COLORS[severity.toLowerCase()] ?? {
-    bg: "bg-slate-100",
-    text: "text-slate-700",
+    bg: "bg-transparent",
+    text: "text-muted-foreground",
+    border: "border-border",
   };
   return (
-    <Badge
-      variant="secondary"
-      className={cn("text-xs font-medium", colors.bg, colors.text)}
+    <div
+      className={cn(
+        "inline-flex items-center rounded-sm border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors",
+        colors.bg,
+        colors.text,
+        colors.border
+      )}
     >
       {label ?? severity}
-    </Badge>
+    </div>
   );
 }
