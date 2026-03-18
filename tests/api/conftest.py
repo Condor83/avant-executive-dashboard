@@ -23,6 +23,7 @@ from api.deps import get_session
 from core.db.models import (
     Alert,
     Chain,
+    ConsumerHolderUniverseDaily,
     DataQuality,
     HolderScorecardDaily,
     HolderSupplyCoverageDaily,
@@ -83,6 +84,13 @@ def seeded_session(
             w3,
         ]
     )
+    session.flush()
+
+    customer_wallets = [
+        Wallet(address=f"0x{1000 + index:040x}", wallet_type="customer")
+        for index in range(154)
+    ]
+    session.add_all(customer_wallets)
     session.flush()
 
     token_usdc = Token(
@@ -148,6 +156,33 @@ def seeded_session(
             WalletProductMap(wallet_id=w1.wallet_id, product_id=product_senior.product_id),
             WalletProductMap(wallet_id=w2.wallet_id, product_id=product_junior.product_id),
             WalletProductMap(wallet_id=w3.wallet_id, product_id=product_btc.product_id),
+        ]
+    )
+    session.add_all(
+        [
+            ConsumerHolderUniverseDaily(
+                business_date=BUSINESS_DATE,
+                as_of_ts_utc=eod_ts,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                verified_total_avant_usd=Decimal("1000"),
+                verified_family_usd_usd=Decimal("1000"),
+                verified_family_btc_usd=Decimal("0"),
+                verified_family_eth_usd=Decimal("0"),
+                verified_base_usd=Decimal("0"),
+                verified_staked_usd=Decimal("1000"),
+                verified_boosted_usd=Decimal("0"),
+                verified_staked_usd_usd=Decimal("1000"),
+                verified_staked_eth_usd=Decimal("0"),
+                verified_staked_btc_usd=Decimal("0"),
+                discovery_sources_json={"sources": ["routescan_holder"]},
+                is_signoff_eligible=True,
+                exclusion_reason=None,
+                has_usd_exposure=True,
+                has_eth_exposure=False,
+                has_btc_exposure=False,
+            )
+            for wallet in customer_wallets
         ]
     )
 

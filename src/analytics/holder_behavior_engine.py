@@ -327,8 +327,14 @@ class HolderBehaviorEngine:
             for row in wallet_balance_rows:
                 chain_family_totals[(row.chain_code, row.asset_family)] += row.usd_value
 
+            wallet_staked_family: dict[str, Decimal] = {
+                "usd": Decimal(str(cohort.verified_staked_usd_usd)),
+                "eth": Decimal(str(cohort.verified_staked_eth_usd)),
+                "btc": Decimal(str(cohort.verified_staked_btc_usd)),
+            }
             deployed_family_totals: dict[str, Decimal] = defaultdict(lambda: ZERO)
             deployed_wrapper_totals: dict[str, Decimal] = defaultdict(lambda: ZERO)
+            deployed_staked_family: dict[str, Decimal] = defaultdict(lambda: ZERO)
             protocol_codes: set[str] = set()
             market_ids_seen: set[int] = set()
             chain_codes: set[str] = {row.chain_code for row in wallet_balance_rows}
@@ -343,6 +349,8 @@ class HolderBehaviorEngine:
                 configured_deployed_avant_usd += row.collateral_usd
                 deployed_family_totals[row.collateral_family] += row.collateral_usd
                 deployed_wrapper_totals[row.collateral_wrapper_class] += row.collateral_usd
+                if row.collateral_wrapper_class == "staked":
+                    deployed_staked_family[row.collateral_family] += row.collateral_usd
                 if row.health_factor is not None:
                     health_factors.append(row.health_factor)
 
@@ -414,6 +422,12 @@ class HolderBehaviorEngine:
                     "base_usd": total_wrapper_totals.get("base", ZERO),
                     "staked_usd": total_wrapper_totals.get("staked", ZERO),
                     "boosted_usd": total_wrapper_totals.get("boosted", ZERO),
+                    "wallet_staked_usd_usd": wallet_staked_family.get("usd", ZERO),
+                    "wallet_staked_eth_usd": wallet_staked_family.get("eth", ZERO),
+                    "wallet_staked_btc_usd": wallet_staked_family.get("btc", ZERO),
+                    "deployed_staked_usd_usd": deployed_staked_family.get("usd", ZERO),
+                    "deployed_staked_eth_usd": deployed_staked_family.get("eth", ZERO),
+                    "deployed_staked_btc_usd": deployed_staked_family.get("btc", ZERO),
                     "family_count": family_count,
                     "wrapper_count": wrapper_count,
                     "multi_asset_flag": family_count >= 2,

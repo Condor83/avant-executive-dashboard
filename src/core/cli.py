@@ -69,6 +69,8 @@ from core.customer_cohort import (
     ROUTESCAN_BASE_URL,
     EvmBatchRpcClient,
     RouteScanClient,
+    build_holder_discovery_report_payload,
+    build_holder_protocol_wallet_scopes,
     build_customer_snapshot_markets_config,
     build_customer_wallet_cohort,
     build_verified_customer_cohort,
@@ -495,6 +497,7 @@ def _build_customer_snapshot_runner(
     *,
     business_date: date,
     wallet_addresses: list[str],
+    protocol_wallets_by_adapter: dict[str, dict[str, list[str]]] | None,
     markets_path: Path,
     consumer_markets_path: Path,
     avant_tokens_path: Path,
@@ -504,15 +507,55 @@ def _build_customer_snapshot_runner(
     markets_config = load_markets_config(markets_path)
     consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
     avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
-    customer_markets_config = build_customer_snapshot_markets_config(
+    wallet_markets_config = build_customer_snapshot_markets_config(
         markets_config=markets_config,
         avant_tokens=avant_tokens_config,
         business_date=business_date,
         wallet_addresses=wallet_addresses,
+        wallet_balance_wallets=wallet_addresses,
     )
+    protocol_wallets_by_adapter = protocol_wallets_by_adapter or {}
+
+    def _protocol_wallets(protocol_code: str) -> list[str]:
+        return sorted(
+            {
+                canonical_address(wallet_address)
+                for wallets in protocol_wallets_by_adapter.get(protocol_code, {}).values()
+                for wallet_address in wallets
+            }
+        )
+
+    def _protocol_markets_config(protocol_code: str) -> MarketsConfig:
+        protocol_wallets = _protocol_wallets(protocol_code)
+        scoped_protocols = (
+            {protocol_code: protocol_wallets_by_adapter.get(protocol_code, {})}
+            if protocol_wallets_by_adapter
+            else {}
+        )
+        return build_customer_snapshot_markets_config(
+            markets_config=markets_config,
+            avant_tokens=avant_tokens_config,
+            business_date=business_date,
+            wallet_addresses=wallet_addresses,
+            wallet_balance_wallets=(
+                protocol_wallets
+                if protocol_wallets_by_adapter
+                else (protocol_wallets or wallet_addresses)
+            ),
+            protocol_wallets_by_adapter=scoped_protocols,
+        )
+
     pt_fixed_yield_overrides = load_pt_fixed_yield_overrides_config(PT_FIXED_YIELD_OVERRIDES_PATH)
 
     balance_client = EvmRpcBalanceClient(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    aave_client = EvmRpcAaveV3Client(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    spark_client = EvmRpcSparkClient(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
@@ -524,6 +567,10 @@ def _build_customer_snapshot_runner(
         timeout_seconds=settings.request_timeout_seconds
     )
     euler_client = EvmRpcEulerV2Client(
+        rpc_urls=settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    dolomite_client = EvmRpcDolomiteClient(
         rpc_urls=settings.evm_rpc_urls,
         timeout_seconds=settings.request_timeout_seconds,
     )
@@ -544,11 +591,11 @@ def _build_customer_snapshot_runner(
         timeout_seconds=settings.request_timeout_seconds,
     )
     wallet_adapter = WalletBalancesAdapter(
-        markets_config=customer_markets_config,
+        markets_config=wallet_markets_config,
         balance_client=balance_client,
     )
     morpho_adapter = MorphoAdapter(
-        markets_config=customer_markets_config,
+        markets_config=_protocol_markets_config("morpho"),
         rpc_client=morpho_client,
         defillama_timeout_seconds=settings.request_timeout_seconds,
         yield_oracle=yield_oracle,
@@ -557,9 +604,55 @@ def _build_customer_snapshot_runner(
         vault_yield_client=morpho_vault_yield_client,
     )
     euler_adapter = EulerV2Adapter(
-        markets_config=customer_markets_config,
+        markets_config=_protocol_markets_config("euler_v2"),
         rpc_client=euler_client,
         avant_yield_oracle=avant_yield_oracle,
+    )
+    aave_adapter = AaveV3Adapter(
+        markets_config=_protocol_markets_config("aave_v3"),
+        rpc_client=aave_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        merkl_base_url=settings.merkl_base_url,
+        merkl_timeout_seconds=settings.merkl_timeout_seconds,
+        yield_oracle=yield_oracle,
+    )
+    spark_adapter = SparkAdapter(
+        markets_config=_protocol_markets_config("spark"),
+        rpc_client=spark_client,
+        defillama_timeout_seconds=settings.request_timeout_seconds,
+        yield_oracle=yield_oracle,
+    )
+    dolomite_adapter = DolomiteAdapter(
+        markets_config=_protocol_markets_config("dolomite"),
+        rpc_client=dolomite_client,
+        avant_yield_oracle=avant_yield_oracle,
+        yield_oracle=yield_oracle,
+    )
+    kamino_client = KaminoApiClient(
+        base_url=settings.kamino_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    kamino_adapter = KaminoAdapter(
+        markets_config=_protocol_markets_config("kamino"),
+        client=kamino_client,
+        yield_oracle=yield_oracle,
+    )
+    pendle_adapter = PendleAdapter(
+        markets_config=_protocol_markets_config("pendle"),
+        client=pendle_history_client,
+    )
+    stacks_client = StacksClient(
+        base_url=settings.stacks_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    zest_client = StacksApiZestClient(
+        stacks_client=stacks_client,
+        zest_api_base_url=settings.zest_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    zest_adapter = ZestAdapter(
+        markets_config=_protocol_markets_config("zest"),
+        client=zest_client,
     )
     silo_client = SiloApiClient(
         base_url=settings.silo_api_base_url,
@@ -567,7 +660,7 @@ def _build_customer_snapshot_runner(
         points_base_url=settings.silo_points_api_base_url,
     )
     silo_adapter = SiloV2Adapter(
-        markets_config=customer_markets_config,
+        markets_config=_protocol_markets_config("silo_v2"),
         consumer_markets_config=consumer_markets_config,
         client=silo_client,
         top_holders_limit=settings.silo_top_holders_limit,
@@ -582,23 +675,35 @@ def _build_customer_snapshot_runner(
     session = Session(get_engine())
     runner = SnapshotRunner(
         session=session,
-        markets_config=customer_markets_config,
+        markets_config=wallet_markets_config,
         price_oracle=price_oracle,
         pendle_history_client=pendle_history_client,
         pt_fixed_yield_overrides=pt_fixed_yield_overrides,
         progress_callback=progress_callback,
         position_adapters=[
             wallet_adapter,
+            aave_adapter,
+            spark_adapter,
             morpho_adapter,
             euler_adapter,
+            dolomite_adapter,
+            kamino_adapter,
+            pendle_adapter,
+            zest_adapter,
             silo_adapter,
         ],
     )
     closeables: list[Closeable] = [
         balance_client,
+        aave_client,
+        spark_client,
         morpho_client,
         morpho_vault_yield_client,
         euler_client,
+        dolomite_client,
+        kamino_client,
+        stacks_client,
+        zest_client,
         silo_client,
         price_oracle,
         yield_oracle,
@@ -732,8 +837,136 @@ def sync_consumer_cohort(
     consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
     holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
     holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
 ) -> None:
     """Discover and verify the tracked customer cohort for one business date."""
+
+    try:
+        parsed_date = date.fromisoformat(target_date)
+    except ValueError as exc:
+        raise typer.BadParameter("date must be YYYY-MM-DD") from exc
+
+    settings = get_settings()
+    markets_config = load_markets_config(markets_path)
+    consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
+    wallet_products_config = load_wallet_products_config(wallet_products_path)
+    avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
+    thresholds = load_consumer_thresholds_config(consumer_thresholds_path)
+    holder_universe = load_holder_universe_config(holder_universe_path)
+    holder_exclusions = load_holder_exclusions_config(holder_exclusions_path)
+    holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
+
+    session = Session(get_engine())
+    routescan_client = RouteScanClient(timeout_seconds=settings.request_timeout_seconds)
+    rpc_client = EvmBatchRpcClient(
+        settings.evm_rpc_urls,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    price_oracle = PriceOracle(
+        base_url=settings.defillama_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        avant_api_base_url=settings.avant_api_base_url,
+    )
+    silo_client = SiloApiClient(
+        base_url=settings.silo_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        points_base_url=settings.silo_points_api_base_url,
+    )
+    debank_client = (
+        DebankCloudClient(
+            base_url=settings.debank_cloud_base_url,
+            api_key=settings.debank_cloud_api_key,
+            timeout_seconds=settings.request_timeout_seconds,
+        )
+        if settings.debank_cloud_api_key
+        else None
+    )
+    try:
+        seed_database(
+            session=session,
+            markets=markets_config,
+            wallet_products=wallet_products_config,
+            consumer=consumer_markets_config,
+            avant_tokens=avant_tokens_config,
+        )
+        summary = build_verified_customer_cohort(
+            session=session,
+            business_date=parsed_date,
+            markets_config=markets_config,
+            consumer_markets_config=consumer_markets_config,
+            wallet_products_config=wallet_products_config,
+            avant_tokens=avant_tokens_config,
+            thresholds=thresholds,
+            holder_universe=holder_universe,
+            holder_exclusions=holder_exclusions,
+            holder_protocol_map=holder_protocol_map,
+            routescan_client=routescan_client,
+            rpc_client=rpc_client,
+            price_oracle=price_oracle,
+            debank_client=debank_client,
+            silo_client=silo_client,
+            config_dir=markets_path.parent,
+            silo_top_holders_limit=settings.silo_top_holders_limit,
+            rpc_urls=settings.evm_rpc_urls,
+        )
+        session.commit()
+        typer.echo(
+            f"sync consumer cohort complete business_date={summary.business_date.isoformat()} "
+            f"as_of={summary.as_of_ts_utc.isoformat()} candidates={summary.candidate_wallet_count} "
+            f"verified_wallets={summary.verified_wallet_count} "
+            f"cohort_wallets={summary.cohort_wallet_count} "
+            f"signoff_eligible={summary.signoff_eligible_wallet_count} "
+            f"issues_written={summary.issues_written}"
+        )
+    finally:
+        session.close()
+        routescan_client.close()
+        rpc_client.close()
+        price_oracle.close()
+        silo_client.close()
+        if debank_client is not None:
+            debank_client.close()
+
+
+@sync_app.command("holder-universe")
+def sync_holder_universe(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
+    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
+) -> None:
+    """Sync the deterministic monitored holder universe for one business date."""
+
+    sync_consumer_cohort(
+        target_date=target_date,
+        markets_path=markets_path,
+        consumer_markets_path=consumer_markets_path,
+        wallet_products_path=wallet_products_path,
+        avant_tokens_path=avant_tokens_path,
+        consumer_thresholds_path=consumer_thresholds_path,
+        holder_universe_path=holder_universe_path,
+        holder_exclusions_path=holder_exclusions_path,
+        holder_protocol_map_path=holder_protocol_map_path,
+    )
+
+
+@sync_app.command("holder-discovery-report")
+def sync_holder_discovery_report(
+    target_date: str = DATE_OPTION,
+    markets_path: Path = MARKETS_PATH_OPTION,
+    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
+    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
+    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
+    holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
+    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
+) -> None:
+    """Print a non-mutating report for same-day holder discovery and admission."""
 
     try:
         parsed_date = date.fromisoformat(target_date)
@@ -760,6 +993,11 @@ def sync_consumer_cohort(
         timeout_seconds=settings.request_timeout_seconds,
         avant_api_base_url=settings.avant_api_base_url,
     )
+    silo_client = SiloApiClient(
+        base_url=settings.silo_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+        points_base_url=settings.silo_points_api_base_url,
+    )
     try:
         seed_database(
             session=session,
@@ -768,10 +1006,11 @@ def sync_consumer_cohort(
             consumer=consumer_markets_config,
             avant_tokens=avant_tokens_config,
         )
-        summary = build_verified_customer_cohort(
+        report = build_holder_discovery_report_payload(
             session=session,
             business_date=parsed_date,
             markets_config=markets_config,
+            consumer_markets_config=consumer_markets_config,
             wallet_products_config=wallet_products_config,
             avant_tokens=avant_tokens_config,
             thresholds=thresholds,
@@ -780,48 +1019,19 @@ def sync_consumer_cohort(
             routescan_client=routescan_client,
             rpc_client=rpc_client,
             price_oracle=price_oracle,
+            silo_client=silo_client,
             config_dir=markets_path.parent,
+            silo_top_holders_limit=settings.silo_top_holders_limit,
             rpc_urls=settings.evm_rpc_urls,
         )
-        session.commit()
-        typer.echo(
-            f"sync consumer cohort complete business_date={summary.business_date.isoformat()} "
-            f"as_of={summary.as_of_ts_utc.isoformat()} candidates={summary.candidate_wallet_count} "
-            f"verified_wallets={summary.verified_wallet_count} "
-            f"cohort_wallets={summary.cohort_wallet_count} "
-            f"signoff_eligible={summary.signoff_eligible_wallet_count} "
-            f"issues_written={summary.issues_written}"
-        )
+        session.rollback()
+        typer.echo(json.dumps(report, indent=2, sort_keys=True))
     finally:
         session.close()
         routescan_client.close()
         rpc_client.close()
         price_oracle.close()
-
-
-@sync_app.command("holder-universe")
-def sync_holder_universe(
-    target_date: str = DATE_OPTION,
-    markets_path: Path = MARKETS_PATH_OPTION,
-    consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
-    wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
-    avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
-    consumer_thresholds_path: Path = CONSUMER_THRESHOLDS_PATH_OPTION,
-    holder_universe_path: Path = HOLDER_UNIVERSE_PATH_OPTION,
-    holder_exclusions_path: Path = HOLDER_EXCLUSIONS_PATH_OPTION,
-) -> None:
-    """Sync the deterministic monitored holder universe for one business date."""
-
-    sync_consumer_cohort(
-        target_date=target_date,
-        markets_path=markets_path,
-        consumer_markets_path=consumer_markets_path,
-        wallet_products_path=wallet_products_path,
-        avant_tokens_path=avant_tokens_path,
-        consumer_thresholds_path=consumer_thresholds_path,
-        holder_universe_path=holder_universe_path,
-        holder_exclusions_path=holder_exclusions_path,
-    )
+        silo_client.close()
 
 
 @sync_app.command("consumer-holder-snapshots")
@@ -831,6 +1041,7 @@ def sync_consumer_holder_snapshots(
     consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
     wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
     avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
 ) -> None:
     """Sync customer wallet-balance and consumer-market position snapshots."""
 
@@ -843,6 +1054,7 @@ def sync_consumer_holder_snapshots(
     consumer_markets_config = load_consumer_markets_config(consumer_markets_path)
     wallet_products_config = load_wallet_products_config(wallet_products_path)
     avant_tokens_config = load_avant_tokens_config(avant_tokens_path)
+    holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
 
     with Session(get_engine()) as seed_session:
         seed_database(
@@ -857,6 +1069,12 @@ def sync_consumer_holder_snapshots(
                 ConsumerHolderUniverseDaily.business_date == parsed_date
             )
         ).all()
+        protocol_wallets_by_adapter = build_holder_protocol_wallet_scopes(
+            session=seed_session,
+            business_date=parsed_date,
+            wallet_addresses=wallet_addresses,
+            holder_protocol_map=holder_protocol_map,
+        )
         seed_session.commit()
 
     if not wallet_addresses:
@@ -869,6 +1087,7 @@ def sync_consumer_holder_snapshots(
     runner, session, closeables = _build_customer_snapshot_runner(
         business_date=parsed_date,
         wallet_addresses=list(wallet_addresses),
+        protocol_wallets_by_adapter=protocol_wallets_by_adapter,
         markets_path=markets_path,
         consumer_markets_path=consumer_markets_path,
         avant_tokens_path=avant_tokens_path,
@@ -896,6 +1115,7 @@ def sync_holder_positions(
     consumer_markets_path: Path = CONSUMER_MARKETS_PATH_OPTION,
     wallet_products_path: Path = WALLET_PRODUCTS_PATH_OPTION,
     avant_tokens_path: Path = AVANT_TOKENS_PATH_OPTION,
+    holder_protocol_map_path: Path = HOLDER_PROTOCOL_MAP_PATH_OPTION,
 ) -> None:
     """Sync customer wallet-balance and supported canonical protocol positions."""
 
@@ -905,6 +1125,7 @@ def sync_holder_positions(
         consumer_markets_path=consumer_markets_path,
         wallet_products_path=wallet_products_path,
         avant_tokens_path=avant_tokens_path,
+        holder_protocol_map_path=holder_protocol_map_path,
     )
 
 
@@ -1676,7 +1897,11 @@ def compute_consumer_capacity(
     holder_protocol_map = load_holder_protocol_map_config(holder_protocol_map_path)
     session = Session(get_engine())
     try:
-        scorecard_engine = HolderScorecardEngine(session, thresholds=thresholds)
+        scorecard_engine = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        )
         dashboard_engine = HolderDashboardEngine(
             session,
             avant_tokens=avant_tokens,
@@ -1731,7 +1956,11 @@ def compute_holder_scorecard(
             avant_tokens=avant_tokens,
             thresholds=thresholds,
         ).compute_daily(business_date=parsed_date)
-        summary = HolderScorecardEngine(session, thresholds=thresholds).compute_daily(
+        summary = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        ).compute_daily(
             business_date=parsed_date,
             write_protocol_gaps=False,
         )
@@ -1792,9 +2021,11 @@ def compute_holder_analytics(
             avant_tokens=avant_tokens,
             thresholds=thresholds,
         ).compute_daily(business_date=parsed_date)
-        scorecard_summary = HolderScorecardEngine(session, thresholds=thresholds).compute_daily(
-            business_date=parsed_date
-        )
+        scorecard_summary = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        ).compute_daily(business_date=parsed_date)
         dashboard_summary = HolderDashboardEngine(
             session,
             avant_tokens=avant_tokens,

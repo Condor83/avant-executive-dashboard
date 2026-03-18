@@ -93,6 +93,9 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "has_usd_exposure",
         "has_eth_exposure",
         "has_btc_exposure",
+        "verified_staked_usd_usd",
+        "verified_staked_eth_usd",
+        "verified_staked_btc_usd",
     }.issubset(consumer_holder_universe_columns)
     holder_behavior_columns = {
         column["name"] for column in inspector.get_columns("holder_behavior_daily")
@@ -105,6 +108,12 @@ def test_migrations_apply_cleanly(postgres_database_url: str) -> None:
         "configured_deployed_avant_usd",
         "total_canonical_avant_exposure_usd",
         "borrowed_usd_delta_7d",
+        "wallet_staked_usd_usd",
+        "wallet_staked_eth_usd",
+        "wallet_staked_btc_usd",
+        "deployed_staked_usd_usd",
+        "deployed_staked_eth_usd",
+        "deployed_staked_btc_usd",
     }.issubset(holder_behavior_columns)
     holder_scorecard_columns = {
         column["name"] for column in inspector.get_columns("holder_scorecard_daily")

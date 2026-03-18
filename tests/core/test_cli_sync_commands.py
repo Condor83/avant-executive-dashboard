@@ -25,10 +25,14 @@ class DummyRunner:
 class DummySession:
     def __init__(self) -> None:
         self.commit_calls = 0
+        self.rollback_calls = 0
         self.closed = False
 
     def commit(self) -> None:
         self.commit_calls += 1
+
+    def rollback(self) -> None:
+        self.rollback_calls += 1
 
     def close(self) -> None:
         self.closed = True
@@ -99,6 +103,7 @@ def test_sync_consumer_holder_snapshots_reads_cohort_and_runs_snapshot(monkeypat
     closeable = DummyCloseable()
     result_summary = RunnerSummary(rows_written=4, issues_written=0, component_failures=0)
     captured_wallet_addresses: list[str] = []
+    captured_protocol_scope: dict[str, object] = {}
 
     monkeypatch.setattr("core.cli.load_markets_config", lambda path: object())
     monkeypatch.setattr("core.cli.load_consumer_markets_config", lambda path: object())
@@ -108,9 +113,19 @@ def test_sync_consumer_holder_snapshots_reads_cohort_and_runs_snapshot(monkeypat
     monkeypatch.setattr("core.cli.Session", lambda engine: seed_session)
     monkeypatch.setattr("core.cli.seed_database", lambda **kwargs: {})
     monkeypatch.setattr(
+        "core.cli.load_holder_protocol_map_config",
+        lambda path: "holder_protocol_map",
+    )
+    monkeypatch.setattr(
+        "core.cli.build_holder_protocol_wallet_scopes",
+        lambda **kwargs: {"morpho": {"ethereum": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}},
+    )
+    monkeypatch.setattr(
         "core.cli._build_customer_snapshot_runner",
-        lambda *, business_date, wallet_addresses, markets_path, consumer_markets_path, avant_tokens_path, progress_callback=None: (
-            captured_wallet_addresses.extend(wallet_addresses) or DummyRunner(result_summary),
+        lambda *, business_date, wallet_addresses, protocol_wallets_by_adapter, markets_path, consumer_markets_path, avant_tokens_path, progress_callback=None: (
+            captured_protocol_scope.update(protocol_wallets_by_adapter)
+            or captured_wallet_addresses.extend(wallet_addresses)
+            or DummyRunner(result_summary),
             runner_session,
             [closeable],
         ),
@@ -124,6 +139,9 @@ def test_sync_consumer_holder_snapshots_reads_cohort_and_runs_snapshot(monkeypat
     assert result.exit_code == 0
     assert "rows_written=4" in result.output
     assert captured_wallet_addresses == ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+    assert captured_protocol_scope == {
+        "morpho": {"ethereum": ["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}
+    }
     assert seed_session.commit_calls == 1
     assert seed_session.closed is True
     assert runner_session.commit_calls == 1
@@ -187,6 +205,69 @@ def test_sync_consumer_debank_visibility_runs_union_snapshot(monkeypatch) -> Non
     assert session.commit_calls == 1
     assert session.closed is True
     assert closeable.closed is True
+
+
+def test_sync_holder_discovery_report_prints_json_without_persisting(monkeypatch) -> None:
+    session = DummySession()
+    routescan = DummyCloseable()
+    silo = DummyCloseable()
+    price_oracle = DummyCloseable()
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr("core.cli.get_engine", lambda: object())
+    monkeypatch.setattr("core.cli.Session", lambda engine: session)
+    monkeypatch.setattr("core.cli.load_markets_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_consumer_markets_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_wallet_products_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_avant_tokens_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_consumer_thresholds_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_holder_universe_config", lambda path: object())
+    monkeypatch.setattr("core.cli.load_holder_exclusions_config", lambda path: object())
+    monkeypatch.setattr("core.cli.seed_database", lambda **kwargs: {})
+    monkeypatch.setattr(
+        "core.cli.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "request_timeout_seconds": 15.0,
+                "evm_rpc_urls": {"avalanche": "https://rpc.example"},
+                "defillama_base_url": "https://yields.llama.fi",
+                "avant_api_base_url": "https://api.avant",
+                "silo_api_base_url": "https://app.silo.finance",
+                "silo_points_api_base_url": "https://api-points.silo.finance",
+                "silo_top_holders_limit": 100,
+            },
+        )(),
+    )
+    monkeypatch.setattr("core.cli.RouteScanClient", lambda timeout_seconds: routescan)
+    monkeypatch.setattr("core.cli.EvmBatchRpcClient", lambda *args, **kwargs: DummyCloseable())
+    monkeypatch.setattr("core.cli.PriceOracle", lambda **kwargs: price_oracle)
+    monkeypatch.setattr("core.cli.SiloApiClient", lambda **kwargs: silo)
+    monkeypatch.setattr(
+        "core.cli.build_holder_discovery_report_payload",
+        lambda **kwargs: captured.update(kwargs)
+        or {
+            "business_date": "2026-03-09",
+            "monitored_wallet_count": 3,
+            "new_wallet_addresses": ["0xabc"],
+        },
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["sync", "holder-discovery-report", "--date", "2026-03-09"],
+    )
+
+    assert result.exit_code == 0
+    assert '"monitored_wallet_count": 3' in result.output
+    assert captured["business_date"] == date(2026, 3, 9)
+    assert session.commit_calls == 0
+    assert session.rollback_calls == 1
+    assert session.closed is True
+    assert routescan.closed is True
+    assert silo.closed is True
+    assert price_oracle.closed is True
 
 
 def test_sync_holder_supply_inputs_runs_routescan_and_debank(monkeypatch) -> None:
@@ -289,8 +370,9 @@ def test_compute_holder_scorecard_runs_scorecard_and_executive(monkeypatch) -> N
         protocol_rows_written = 2
 
     class _HolderScorecardEngine:
-        def __init__(self, _session, *, thresholds) -> None:
+        def __init__(self, _session, *, thresholds, avant_tokens) -> None:
             self.thresholds = thresholds
+            assert avant_tokens == "avant_tokens"
 
         def compute_daily(
             self,

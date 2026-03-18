@@ -500,6 +500,9 @@ Daily monitored holder universe across all active Avant tokens on supported cons
 - verified_base_usd
 - verified_staked_usd
 - verified_boosted_usd
+- verified_staked_usd_usd
+- verified_staked_eth_usd
+- verified_staked_btc_usd
 - discovery_sources_json
 - is_signoff_eligible
 - exclusion_reason (nullable)
@@ -548,6 +551,12 @@ Per-wallet consumer behavior rollup built from verified cohort balances plus con
 - base_usd
 - staked_usd
 - boosted_usd
+- wallet_staked_usd_usd
+- wallet_staked_eth_usd
+- wallet_staked_btc_usd
+- deployed_staked_usd_usd
+- deployed_staked_eth_usd
+- deployed_staked_btc_usd
 - family_count
 - wrapper_count
 - multi_asset_flag

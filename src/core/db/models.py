@@ -1018,6 +1018,15 @@ class ConsumerHolderUniverseDaily(Base):
     verified_boosted_usd: Mapped[Decimal] = mapped_column(
         Numeric(38, 18), nullable=False, default=0
     )
+    verified_staked_usd_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    verified_staked_eth_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    verified_staked_btc_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
     discovery_sources_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     is_signoff_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     exclusion_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -1164,6 +1173,24 @@ class HolderBehaviorDaily(Base):
     base_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=0)
     staked_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=0)
     boosted_usd: Mapped[Decimal] = mapped_column(Numeric(38, 18), nullable=False, default=0)
+    wallet_staked_usd_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    wallet_staked_eth_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    wallet_staked_btc_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    deployed_staked_usd_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    deployed_staked_eth_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
+    deployed_staked_btc_usd: Mapped[Decimal] = mapped_column(
+        Numeric(38, 18), nullable=False, default=0
+    )
     family_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     wrapper_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     multi_asset_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

@@ -111,6 +111,7 @@ def test_verify_customer_wallet_balances_supports_direct_and_convert_paths() -> 
             return {"0xaaaa000000000000000000000000000000000000": 4_000_000}
 
     thresholds = ConsumerThresholdsConfig(
+        verified_min_total_avant_usd=Decimal("1"),
         cohort_min_total_avant_usd=Decimal("1"),
         classification_dust_floor_usd=Decimal("100"),
         leveraged_borrow_usd_floor=Decimal("0.00000001"),
@@ -239,3 +240,74 @@ def test_build_customer_snapshot_markets_config_reuses_registry_and_wallets() ->
     assert config.wallet_balances["ethereum"].tokens[0].symbol == "savUSD"
     assert config.morpho["ethereum"].wallets == ["0xaaaa000000000000000000000000000000000000"]
     assert config.euler_v2["ethereum"].wallets == ["0xaaaa000000000000000000000000000000000000"]
+
+
+def test_build_customer_snapshot_markets_config_respects_protocol_wallet_scopes() -> None:
+    markets = MarketsConfig(
+        aave_v3={},
+        spark={},
+        morpho={
+            "ethereum": MorphoChainConfig(
+                morpho="0xmorpho",
+                wallets=["0x1111111111111111111111111111111111111111"],
+                markets=[],
+                vaults=[],
+            )
+        },
+        euler_v2={
+            "ethereum": EulerChainConfig(
+                wallets=["0x1111111111111111111111111111111111111111"],
+                vaults=[
+                    EulerVault(
+                        address="0xvault",
+                        symbol="eUSDC",
+                        asset_address="0xusdc",
+                        asset_symbol="USDC",
+                        asset_decimals=6,
+                    )
+                ],
+            )
+        },
+        dolomite={},
+        kamino={},
+        zest={},
+        wallet_balances={},
+        traderjoe_lp={},
+        stakedao={},
+        etherex={},
+    )
+    avant_tokens = AvantTokensConfig(
+        tokens=[
+            AvantToken(
+                chain_code="ethereum",
+                token_address="0xdirect",
+                symbol="savUSD",
+                asset_family="usd",
+                wrapper_class="staked",
+                decimals=18,
+                pricing_policy="direct_price",
+            )
+        ]
+    )
+
+    config = build_customer_snapshot_markets_config(
+        markets_config=markets,
+        avant_tokens=avant_tokens,
+        business_date=date(2026, 3, 9),
+        wallet_addresses=[
+            "0xaaaa000000000000000000000000000000000000",
+            "0xbbbb000000000000000000000000000000000000",
+        ],
+        protocol_wallets_by_adapter={
+            "morpho": {"ethereum": ["0xaaaa000000000000000000000000000000000000"]}
+        },
+    )
+
+    assert config.wallet_balances["ethereum"].wallets == [
+        "0xaaaa000000000000000000000000000000000000",
+        "0xbbbb000000000000000000000000000000000000",
+    ]
+    assert config.morpho["ethereum"].wallets == [
+        "0xaaaa000000000000000000000000000000000000"
+    ]
+    assert config.euler_v2 == {}
