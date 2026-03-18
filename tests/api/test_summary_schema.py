@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from tests.api.conftest import SeedMetadata
 
 
-def test_summary_has_expected_sections(api_client: tuple[TestClient, SeedMetadata]) -> None:
+def test_summary_has_expected_sections(
+    api_client: tuple[TestClient, SeedMetadata],
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "api.routers.summary.AvantYieldOracle.get_token_apy",
+        lambda self, symbol: Decimal("0.1111"),
+    )
     client, meta = api_client
     response = client.get("/summary/executive")
     assert response.status_code == 200
@@ -20,13 +29,20 @@ def test_summary_has_expected_sections(api_client: tuple[TestClient, SeedMetadat
         "holder_summary",
         "portfolio_summary",
         "market_summary",
+        "product_performance",
+        "protocol_concentration",
         "freshness",
     }
 
 
 def test_summary_executive_fields_are_populated(
     api_client: tuple[TestClient, SeedMetadata],
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "api.routers.summary.AvantYieldOracle.get_token_apy",
+        lambda self, symbol: Decimal("0.1111"),
+    )
     client, _ = api_client
     executive = client.get("/summary/executive").json()["executive"]
 
@@ -39,7 +55,14 @@ def test_summary_executive_fields_are_populated(
     assert executive["customer_metrics_ready"] is False
 
 
-def test_summary_freshness_fields_present(api_client: tuple[TestClient, SeedMetadata]) -> None:
+def test_summary_freshness_fields_present(
+    api_client: tuple[TestClient, SeedMetadata],
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "api.routers.summary.AvantYieldOracle.get_token_apy",
+        lambda self, symbol: Decimal("0.1111"),
+    )
     client, _ = api_client
     freshness = client.get("/summary/executive").json()["freshness"]
 
@@ -50,9 +73,17 @@ def test_summary_freshness_fields_present(api_client: tuple[TestClient, SeedMeta
     assert freshness["open_dq_issues_24h"] == 2
 
 
-def test_summary_holder_block_is_present(api_client: tuple[TestClient, SeedMetadata]) -> None:
+def test_summary_holder_block_is_present(
+    api_client: tuple[TestClient, SeedMetadata],
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "api.routers.summary.AvantYieldOracle.get_token_apy",
+        lambda self, symbol: Decimal("0.1111"),
+    )
     client, _ = api_client
-    holder = client.get("/summary/executive").json()["holder_summary"]
+    payload = client.get("/summary/executive").json()
+    holder = payload["holder_summary"]
 
     assert holder is not None
     assert holder["supply_coverage_token_symbol"] == "savUSD"
@@ -71,3 +102,7 @@ def test_summary_holder_block_is_present(api_client: tuple[TestClient, SeedMetad
     assert float(holder["total_canonical_avant_exposure_usd"]) > 0
     assert float(holder["top10_holder_share"]) > 0
     assert holder["visibility_gap_wallet_count"] == 118
+    assert payload["product_performance"] is not None
+    assert len(payload["product_performance"]) == 6
+    assert payload["protocol_concentration"] is not None
+    assert len(payload["protocol_concentration"]) > 0

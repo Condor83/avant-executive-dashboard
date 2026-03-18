@@ -11,11 +11,12 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from analytics.holder_scorecard_engine import HolderScorecardEngine
-from core.config import load_consumer_thresholds_config
+from core.config import load_avant_tokens_config, load_consumer_thresholds_config
 from core.db.models import (
     Chain,
     ConsumerCohortDaily,
     ConsumerDebankProtocolDaily,
+    ConsumerDebankTokenDaily,
     ConsumerDebankWalletDaily,
     ConsumerMarketDemandDaily,
     HolderBehaviorDaily,
@@ -119,6 +120,12 @@ def _holder_row(
         total_avant_usd_delta_7d=None,
         borrowed_usd_delta_7d=None,
         avant_collateral_usd_delta_7d=None,
+        wallet_staked_usd_usd=Decimal("0"),
+        wallet_staked_eth_usd=Decimal("0"),
+        wallet_staked_btc_usd=Decimal("0"),
+        deployed_staked_usd_usd=Decimal(total_staked),
+        deployed_staked_eth_usd=Decimal("0"),
+        deployed_staked_btc_usd=Decimal("0"),
     )
 
 
@@ -464,10 +471,13 @@ def test_holder_scorecard_engine_persists_scorecard_and_protocol_gaps(
         session.commit()
 
     thresholds = load_consumer_thresholds_config("config/consumer_thresholds.yaml")
+    avant_tokens = load_avant_tokens_config("config/avant_tokens.yaml")
     with Session(engine) as session:
-        summary = HolderScorecardEngine(session, thresholds=thresholds).compute_daily(
-            business_date=business_date
-        )
+        summary = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        ).compute_daily(business_date=business_date)
         session.commit()
 
         assert summary.scorecard_rows_written == 1
@@ -503,3 +513,229 @@ def test_holder_scorecard_engine_persists_scorecard_and_protocol_gaps(
         assert protocol_gaps[0].in_config_surface is False
         assert protocol_gaps[1].signoff_wallet_count == 1
         assert protocol_gaps[1].in_config_surface is True
+
+
+def test_holder_scorecard_uses_observed_wrapper_mix_for_shares(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    business_date = date(2026, 3, 9)
+    as_of_ts_utc = datetime(2026, 3, 10, 6, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        wallet = Wallet(
+            address="0xffffffffffffffffffffffffffffffffffffffff", wallet_type="customer"
+        )
+        session.add(wallet)
+        session.flush()
+        session.add(
+            ConsumerCohortDaily(
+                business_date=business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                verified_total_avant_usd=Decimal("600000"),
+                discovery_sources_json={"sources": ["debank_avasset_activity"]},
+                is_signoff_eligible=True,
+                exclusion_reason=None,
+            )
+        )
+        session.add(
+            _holder_row(
+                business_date=business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                signoff=True,
+                wallet_held="100000",
+                deployed="0",
+                borrowed="0",
+                total_base="100000",
+                total_staked="0",
+                total_boosted="0",
+            )
+        )
+        session.add_all(
+            [
+                ConsumerDebankWalletDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    wallet_id=wallet.wallet_id,
+                    wallet_address=wallet.address,
+                    in_seed_set=True,
+                    in_verified_cohort=True,
+                    in_signoff_cohort=True,
+                    seed_sources_json=["legacy_seed"],
+                    discovery_sources_json=["debank_avasset_activity"],
+                    fetch_succeeded=True,
+                    fetch_error_message=None,
+                    has_any_activity=True,
+                    has_any_borrow=False,
+                    has_configured_surface_activity=False,
+                    protocol_count=1,
+                    chain_count=1,
+                    configured_protocol_count=0,
+                    total_supply_usd=Decimal("500000"),
+                    total_borrow_usd=Decimal("0"),
+                    configured_surface_supply_usd=Decimal("0"),
+                    configured_surface_borrow_usd=Decimal("0"),
+                ),
+                ConsumerDebankTokenDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    wallet_id=wallet.wallet_id,
+                    wallet_address=wallet.address,
+                    chain_code="ethereum",
+                    protocol_code="yearn",
+                    token_symbol="savUSD",
+                    leg_type="supply",
+                    in_config_surface=False,
+                    usd_value=Decimal("300000"),
+                ),
+                ConsumerDebankTokenDaily(
+                    business_date=business_date,
+                    as_of_ts_utc=as_of_ts_utc,
+                    wallet_id=wallet.wallet_id,
+                    wallet_address=wallet.address,
+                    chain_code="ethereum",
+                    protocol_code="yearn",
+                    token_symbol="wbravUSDC",
+                    leg_type="supply",
+                    in_config_surface=False,
+                    usd_value=Decimal("200000"),
+                ),
+            ]
+        )
+        session.commit()
+
+    thresholds = load_consumer_thresholds_config("config/consumer_thresholds.yaml")
+    avant_tokens = load_avant_tokens_config("config/avant_tokens.yaml")
+    with Session(engine) as session:
+        summary = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        ).compute_daily(
+            business_date=business_date,
+            write_protocol_gaps=False,
+        )
+        session.commit()
+
+        assert summary.scorecard_rows_written == 1
+        scorecard_row = session.get(HolderScorecardDaily, business_date)
+        assert scorecard_row is not None
+        assert scorecard_row.base_share == Decimal("0.1666666667")
+        assert scorecard_row.staked_share == Decimal("0.5000000000")
+        assert scorecard_row.boosted_share == Decimal("0.3333333333")
+
+
+def test_holder_scorecard_uses_fallback_debank_date_for_gap_metrics(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+    business_date = date(2026, 3, 9)
+    debank_date = date(2026, 3, 8)
+    as_of_ts_utc = datetime(2026, 3, 10, 6, 0, tzinfo=UTC)
+
+    with Session(engine) as session:
+        wallet = Wallet(
+            address="0xabababababababababababababababababababab", wallet_type="customer"
+        )
+        session.add(wallet)
+        session.flush()
+
+        session.add(
+            ConsumerCohortDaily(
+                business_date=business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                verified_total_avant_usd=Decimal("200000"),
+                discovery_sources_json={"sources": ["routescan"]},
+                is_signoff_eligible=True,
+                exclusion_reason=None,
+            )
+        )
+        session.add(
+            _holder_row(
+                business_date=business_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                signoff=True,
+                wallet_held="200000",
+                deployed="0",
+                borrowed="0",
+                total_base="200000",
+                total_staked="0",
+                total_boosted="0",
+            )
+        )
+        session.add(
+            ConsumerDebankWalletDaily(
+                business_date=debank_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                in_seed_set=True,
+                in_verified_cohort=True,
+                in_signoff_cohort=True,
+                seed_sources_json=["routescan"],
+                discovery_sources_json=["routescan"],
+                fetch_succeeded=True,
+                fetch_error_message=None,
+                has_any_activity=True,
+                has_any_borrow=True,
+                has_configured_surface_activity=False,
+                protocol_count=1,
+                chain_count=1,
+                configured_protocol_count=0,
+                total_supply_usd=Decimal("125000"),
+                total_borrow_usd=Decimal("25000"),
+                configured_surface_supply_usd=Decimal("0"),
+                configured_surface_borrow_usd=Decimal("0"),
+            )
+        )
+        session.add(
+            ConsumerDebankProtocolDaily(
+                business_date=debank_date,
+                as_of_ts_utc=as_of_ts_utc,
+                wallet_id=wallet.wallet_id,
+                wallet_address=wallet.address,
+                chain_code="ethereum",
+                protocol_code="aave_v3",
+                in_config_surface=False,
+                supply_usd=Decimal("125000"),
+                borrow_usd=Decimal("25000"),
+            )
+        )
+        session.commit()
+
+    thresholds = load_consumer_thresholds_config("config/consumer_thresholds.yaml")
+    avant_tokens = load_avant_tokens_config("config/avant_tokens.yaml")
+    with Session(engine) as session:
+        summary = HolderScorecardEngine(
+            session,
+            thresholds=thresholds,
+            avant_tokens=avant_tokens,
+        ).compute_daily(business_date=business_date)
+        session.commit()
+
+        assert summary.scorecard_rows_written == 1
+        assert summary.protocol_gap_rows_written == 1
+
+        scorecard_row = session.get(HolderScorecardDaily, business_date)
+        assert scorecard_row is not None
+        assert scorecard_row.visibility_gap_wallet_count == 1
+
+        protocol_gap = session.scalar(
+            select(HolderProtocolGapDaily).where(
+                HolderProtocolGapDaily.business_date == business_date,
+                HolderProtocolGapDaily.protocol_code == "aave_v3",
+            )
+        )
+        assert protocol_gap is not None
+        assert protocol_gap.signoff_wallet_count == 1
+        assert protocol_gap.total_borrow_usd == Decimal("25000")

@@ -26,8 +26,10 @@ import {
   formatROE,
   formatUSD,
   formatUSDCompact,
+  roeColor,
 } from "@/lib/formatters";
 import type {
+  BenchmarkYield,
   OptionItem,
   PortfolioPositionRow,
   PositionFilters,
@@ -115,6 +117,26 @@ function supplyLegs(row: PortfolioPositionRow) {
   return row.supply_legs?.length ? row.supply_legs : [row.supply_leg];
 }
 
+function rateSpread(row: PortfolioPositionRow): number | null {
+  const legs = supplyLegs(row);
+  const supplyTotal = legs.reduce((s, l) => s + decimalValue(l.usd_value), 0);
+  const borrowTotal = row.borrow_legs.reduce(
+    (s, l) => s + decimalValue(l.usd_value),
+    0,
+  );
+  if (supplyTotal <= 0) return null;
+  const wSupplyApy =
+    legs.reduce((s, l) => s + decimalValue(l.apy) * decimalValue(l.usd_value), 0) /
+    supplyTotal;
+  if (borrowTotal <= 0) return wSupplyApy;
+  const wBorrowApy =
+    row.borrow_legs.reduce(
+      (s, l) => s + decimalValue(l.apy) * decimalValue(l.usd_value),
+      0,
+    ) / borrowTotal;
+  return wSupplyApy - wBorrowApy;
+}
+
 function positionTitle(row: PortfolioPositionRow) {
   const supplySymbols = supplyLegs(row)
     .map((leg) => leg.symbol)
@@ -158,7 +180,41 @@ function debankProfileUrl(walletAddress: string) {
   return `https://debank.com/profile/${encodeURIComponent(walletAddress)}`;
 }
 
-function positionColumns(): Column<PortfolioPositionRow>[] {
+// Map product_code -> benchmark APY (annualized, 0-1 scale).
+// Junior products benchmark against their senior counterpart.
+const PRODUCT_BENCHMARK_FAMILY: Record<string, string> = {
+  stablecoin_senior: "stablecoin_senior",
+  stablecoin_junior: "stablecoin_senior",
+  eth_senior: "eth_senior",
+  eth_junior: "eth_senior",
+  btc_senior: "btc_senior",
+  btc_junior: "btc_senior",
+};
+
+function buildBenchmarkMap(
+  benchmarks: BenchmarkYield[] | undefined,
+): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!benchmarks) return map;
+  for (const b of benchmarks) {
+    map.set(b.product_code, Number(b.apy));
+  }
+  return map;
+}
+
+function benchmarkForProduct(
+  productCode: string | null,
+  benchmarkMap: Map<string, number>,
+): number | null {
+  if (!productCode) return null;
+  const family = PRODUCT_BENCHMARK_FAMILY[productCode];
+  if (!family) return null;
+  return benchmarkMap.get(family) ?? null;
+}
+
+function positionColumns(
+  benchmarkMap: Map<string, number>,
+): Column<PortfolioPositionRow>[] {
   return [
     {
       key: "wallet",
@@ -262,6 +318,28 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       cell: (row) => <DecimalCell value={row.leverage_ratio} formatter={formatRatio} />,
     },
     {
+      key: "rate_spread",
+      header: "Rate Spread",
+      align: "right",
+      sortable: true,
+      sortValue: (row) => rateSpread(row),
+      cell: (row) => {
+        const spread = rateSpread(row);
+        if (spread === null) return <span className="text-muted-foreground/70">---</span>;
+        const color =
+          spread > 0
+            ? "text-avant-success"
+            : spread < 0
+              ? "text-avant-danger"
+              : "text-foreground";
+        return (
+          <span className={`font-medium ${color}`}>
+            {(spread * 100).toFixed(2)}%
+          </span>
+        );
+      },
+    },
+    {
       key: "daily_gross_yield",
       header: "Daily Gross Yield",
       align: "right",
@@ -319,18 +397,25 @@ function positionColumns(): Column<PortfolioPositionRow>[] {
       align: "right",
       sortable: true,
       sortValue: (row) => sortableNumber(grossRoeAnnualized(row)),
-      cell: (row) => (
-        <div className="space-y-0.5 text-right">
-          <DecimalCell
-            value={grossRoeAnnualized(row)}
-            formatter={formatROE}
-            colored
-          />
-          <div className="text-[11px] text-muted-foreground">
-            1D {formatROE(grossRoeDaily(row))}
+      cell: (row) => {
+        const benchmark = benchmarkForProduct(row.product_code, benchmarkMap);
+        const color = roeColor(grossRoeAnnualized(row), benchmark);
+        return (
+          <div className="space-y-0.5 text-right">
+            <span className={`font-medium ${color}`}>
+              {formatROE(grossRoeAnnualized(row))}
+            </span>
+            <div className="text-[11px] text-muted-foreground">
+              1D {formatROE(grossRoeDaily(row))}
+              {benchmark !== null && (
+                <span className="ml-1 text-muted-foreground/60">
+                  vs {(benchmark * 100).toFixed(1)}%
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
   ];
 }
@@ -426,6 +511,10 @@ function PortfolioContent() {
   const showHidden = filterValue(searchParams, "show_hidden") === "1";
 
   const metadata = useUiMetadata();
+  const benchmarkMap = useMemo(
+    () => buildBenchmarkMap(metadata.data?.benchmarks),
+    [metadata.data?.benchmarks],
+  );
   const summary = usePortfolioSummary();
   const positions = usePositions(filters);
   const visiblePositions = useMemo(() => {
@@ -493,7 +582,7 @@ function PortfolioContent() {
       <section>
         <h2 className="mb-6 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Core Lending Positions</h2>
         <DataTable
-          columns={positionColumns()}
+          columns={positionColumns(benchmarkMap)}
           data={visiblePositions}
           isLoading={positions.isLoading || metadata.isLoading}
           rowKey={(row) => row.position_key}

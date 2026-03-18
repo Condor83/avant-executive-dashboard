@@ -58,10 +58,30 @@ class HolderSummarySnapshot(BaseModel):
     markets_needing_capacity_review: int
 
 
+class ProductPerformanceItem(BaseModel):
+    product_code: str
+    product_label: str
+    gross_roe_daily: Decimal | None
+    gross_roe_annualized: Decimal | None
+    avg_equity_usd: Decimal | None
+    gross_yield_daily_usd: Decimal
+    net_yield_daily_usd: Decimal
+    benchmark_apy: Decimal | None
+
+
+class ProtocolConcentrationItem(BaseModel):
+    protocol_code: str
+    protocol_label: str
+    net_equity_usd: Decimal
+    share_pct: Decimal
+
+
 class SummaryResponse(BaseModel):
     business_date: date
     executive: ExecutiveSummarySnapshot
     holder_summary: HolderSummarySnapshot | None
     portfolio_summary: PortfolioSummaryResponse | None
     market_summary: MarketSummaryResponse | None
+    product_performance: list[ProductPerformanceItem] | None = None
+    protocol_concentration: list[ProtocolConcentrationItem] | None = None
     freshness: FreshnessSummary

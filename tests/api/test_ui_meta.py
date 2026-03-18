@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from tests.api.conftest import SeedMetadata
@@ -9,7 +11,12 @@ from tests.api.conftest import SeedMetadata
 
 def test_ui_metadata_contains_products_protocols_and_alert_labels(
     api_client: tuple[TestClient, SeedMetadata],
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        "api.routers.meta.AvantYieldOracle.get_token_apy",
+        lambda self, symbol: Decimal("0.1234"),
+    )
     client, _ = api_client
     data = client.get("/meta/ui").json()
     sort_option_values = {option["value"] for option in data["position_sort_options"]}
@@ -38,3 +45,12 @@ def test_ui_metadata_contains_products_protocols_and_alert_labels(
     assert "net_yield_mtd_usd" not in sort_option_values
     assert "Daily Performance Fee" in sort_option_labels
     assert "Daily GOP" in sort_option_labels
+    assert len(data["benchmarks"]) == 6
+    assert any(
+        item["product_code"] == "stablecoin_senior" and item["token_symbol"] == "savusd"
+        for item in data["benchmarks"]
+    )
+    assert any(
+        item["product_code"] == "stablecoin_junior" and item["token_symbol"] == "savusd"
+        for item in data["benchmarks"]
+    )

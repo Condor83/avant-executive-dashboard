@@ -17,6 +17,15 @@ PRODUCT_LABELS = {
     "btc_junior": "avBTCx (Junior BTC)",
 }
 
+PRODUCT_BENCHMARK_TOKEN_MAP: dict[str, str] = {
+    "stablecoin_senior": "SAVUSD",
+    "stablecoin_junior": "SAVUSD",
+    "eth_senior": "SAVETH",
+    "eth_junior": "SAVETH",
+    "btc_senior": "SAVBTC",
+    "btc_junior": "SAVBTC",
+}
+
 ALERT_SEVERITY_LABELS = {
     "low": "Low",
     "med": "Medium",

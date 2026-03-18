@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -13,9 +14,20 @@ from api.deps import get_session
 from api.schemas.common import FreshnessSummary
 from api.schemas.markets import MarketSummaryResponse
 from api.schemas.portfolio import PortfolioSummaryResponse
-from api.schemas.summary import ExecutiveSummarySnapshot, HolderSummarySnapshot, SummaryResponse
+from api.schemas.summary import (
+    ExecutiveSummarySnapshot,
+    HolderSummarySnapshot,
+    ProductPerformanceItem,
+    ProtocolConcentrationItem,
+    SummaryResponse,
+)
 from core.config import load_consumer_thresholds_config
-from core.dashboard_contracts import leverage_ratio
+from core.dashboard_contracts import (
+    PRODUCT_BENCHMARK_TOKEN_MAP,
+    code_label,
+    leverage_ratio,
+    product_label,
+)
 from core.db.models import (
     ConsumerHolderUniverseDaily,
     DataQuality,
@@ -26,11 +38,18 @@ from core.db.models import (
     HolderSupplyCoverageDaily,
     MarketSnapshot,
     MarketSummaryDaily,
+    PortfolioPositionCurrent,
     PortfolioSummaryDaily,
     PositionSnapshot,
+    Product,
+    Protocol,
+    YieldDaily,
 )
+from core.settings import get_settings
+from core.yields import AvantYieldOracle
 
 router = APIRouter(prefix="/summary")
+logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
 ANNUALIZATION_DAYS = Decimal("365")
@@ -135,6 +154,134 @@ def _market_summary(session: Session, business_date: date) -> MarketSummaryRespo
     )
 
 
+def _fetch_benchmark_map() -> dict[str, Decimal]:
+    """Fetch benchmark APYs keyed by product_code. Returns empty dict on failure."""
+    settings = get_settings()
+    oracle = AvantYieldOracle(
+        base_url=settings.avant_api_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+    try:
+        result: dict[str, Decimal] = {}
+        seen_symbols: set[str] = set()
+        for product_code, symbol in PRODUCT_BENCHMARK_TOKEN_MAP.items():
+            if symbol in seen_symbols:
+                # Reuse already-fetched APY for same symbol
+                for prev_code, prev_sym in PRODUCT_BENCHMARK_TOKEN_MAP.items():
+                    if prev_sym == symbol and prev_code in result:
+                        result[product_code] = result[prev_code]
+                        break
+                continue
+            try:
+                apy = oracle.get_token_apy(symbol)
+                result[product_code] = apy
+                seen_symbols.add(symbol)
+            except Exception:
+                logger.warning("failed to fetch benchmark APY for %s", symbol, exc_info=True)
+        return result
+    except Exception:
+        logger.warning("failed to fetch benchmarks", exc_info=True)
+        return {}
+    finally:
+        oracle.close()
+
+
+PRODUCT_SORT_ORDER = [
+    "stablecoin_senior",
+    "stablecoin_junior",
+    "eth_senior",
+    "eth_junior",
+    "btc_senior",
+    "btc_junior",
+]
+
+
+def _product_performance(
+    session: Session, business_date: date
+) -> list[ProductPerformanceItem] | None:
+    """Build per-product ROE items from yield_daily product rollup rows."""
+    rows = session.execute(
+        select(YieldDaily, Product.product_code)
+        .join(Product, Product.product_id == YieldDaily.product_id)
+        .where(
+            YieldDaily.business_date == business_date,
+            YieldDaily.row_key.like("product:%"),
+            YieldDaily.method == "apy_prorated_sod_eod",
+        )
+    ).all()
+
+    benchmark_map = _fetch_benchmark_map()
+
+    # Index by product_code for backfill
+    yield_by_product: dict[str, YieldDaily] = {}
+    for yield_row, product_code in rows:
+        yield_by_product[product_code] = yield_row
+
+    # If no yield data AND no benchmarks, nothing to show
+    if not yield_by_product and not benchmark_map:
+        return None
+
+    items: list[ProductPerformanceItem] = []
+    for code in PRODUCT_SORT_ORDER:
+        yield_row = yield_by_product.get(code)
+        items.append(
+            ProductPerformanceItem(
+                product_code=code,
+                product_label=product_label(code) or code,
+                gross_roe_daily=_normalized_roe(yield_row.gross_roe) if yield_row else None,
+                gross_roe_annualized=(
+                    _annualize_daily_roe(yield_row.gross_roe) if yield_row else None
+                ),
+                avg_equity_usd=yield_row.avg_equity_usd if yield_row else None,
+                gross_yield_daily_usd=yield_row.gross_yield_usd if yield_row else ZERO,
+                net_yield_daily_usd=yield_row.net_yield_usd if yield_row else ZERO,
+                benchmark_apy=benchmark_map.get(code),
+            )
+        )
+    return items
+
+
+MARKET_STABILITY_OPS_PROTOCOLS = {"traderjoe_lp", "etherex", "wallet_balances"}
+
+
+def _protocol_concentration(
+    session: Session, business_date: date
+) -> list[ProtocolConcentrationItem] | None:
+    """Build protocol concentration breakdown from portfolio_positions_current."""
+    rows = session.execute(
+        select(
+            Protocol.protocol_code,
+            func.sum(PortfolioPositionCurrent.net_equity_usd).label("total_equity"),
+        )
+        .join(Protocol, Protocol.protocol_id == PortfolioPositionCurrent.protocol_id)
+        .where(
+            PortfolioPositionCurrent.business_date == business_date,
+            PortfolioPositionCurrent.scope_segment == "strategy_only",
+            Protocol.protocol_code.notin_(MARKET_STABILITY_OPS_PROTOCOLS),
+        )
+        .group_by(Protocol.protocol_code)
+        .having(func.sum(PortfolioPositionCurrent.net_equity_usd) > 0)
+    ).all()
+
+    if not rows:
+        return None
+
+    grand_total = sum(row.total_equity for row in rows)
+    if grand_total <= ZERO:
+        return None
+
+    sorted_rows = sorted(rows, key=lambda r: r.total_equity, reverse=True)
+    return [
+        ProtocolConcentrationItem(
+            protocol_code=row.protocol_code,
+            protocol_label=code_label(row.protocol_code) or row.protocol_code,
+            net_equity_usd=row.total_equity,
+            share_pct=row.total_equity / grand_total,
+        )
+        for row in sorted_rows
+    ]
+
+
 def _empty_summary(today: date) -> SummaryResponse:
     return SummaryResponse(
         business_date=today,
@@ -162,6 +309,8 @@ def _empty_summary(today: date) -> SummaryResponse:
         holder_summary=None,
         portfolio_summary=None,
         market_summary=None,
+        product_performance=None,
+        protocol_concentration=None,
         freshness=FreshnessSummary(
             last_position_snapshot_utc=None,
             last_market_snapshot_utc=None,
@@ -223,16 +372,12 @@ def _summary_payload(session: Session) -> SummaryResponse:
             1 for row in holder_rows if row.total_canonical_avant_exposure_usd >= whale_threshold
         )
         monitored_holder_count = (
-            supply_coverage.monitoring_wallet_count
-            if supply_coverage is not None
-            else (
-                session.scalar(
-                    select(func.count())
-                    .select_from(ConsumerHolderUniverseDaily)
-                    .where(ConsumerHolderUniverseDaily.business_date == business_date)
-                )
-                or 0
+            session.scalar(
+                select(func.count())
+                .select_from(ConsumerHolderUniverseDaily)
+                .where(ConsumerHolderUniverseDaily.business_date == business_date)
             )
+            or 0
         )
         attributed_holder_count = (
             all_segment.holder_count
@@ -339,6 +484,8 @@ def _summary_payload(session: Session) -> SummaryResponse:
         holder_summary=holder_summary,
         portfolio_summary=_portfolio_summary(session, business_date),
         market_summary=_market_summary(session, business_date),
+        product_performance=_product_performance(session, business_date),
+        protocol_concentration=_protocol_concentration(session, business_date),
         freshness=_freshness(session),
     )
 

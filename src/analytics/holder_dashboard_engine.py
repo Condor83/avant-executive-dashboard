@@ -30,6 +30,7 @@ from core.db.models import (
 )
 
 ZERO = Decimal("0")
+DEBANK_LOOKBACK_DAYS = 7
 PRODUCT_SCOPES = ("all", "avusd", "aveth", "avbtc")
 PRODUCT_SCOPE_LABELS = {
     "all": "All Products",
@@ -70,7 +71,9 @@ class WalletDashboardMetrics:
     fixed_yield_by_scope: dict[str, Decimal] = field(default_factory=dict)
     yield_token_by_scope: dict[str, Decimal] = field(default_factory=dict)
     other_defi_by_scope: dict[str, Decimal] = field(default_factory=dict)
+    base_by_scope: dict[str, Decimal] = field(default_factory=dict)
     staked_by_scope: dict[str, Decimal] = field(default_factory=dict)
+    boosted_by_scope: dict[str, Decimal] = field(default_factory=dict)
     borrowed_by_scope: dict[str, Decimal] = field(default_factory=dict)
     asset_symbols_by_scope: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -158,6 +161,51 @@ def family_for_token_symbol(token_symbol: str) -> str | None:
         if family_matches_token_symbol(family_code, token_symbol):
             return family_code
     return None
+
+
+def _avant_symbol_registry(
+    avant_tokens: AvantTokensConfig,
+    *,
+    business_date: date,
+) -> tuple[dict[str, tuple[str, str]], list[tuple[str, tuple[str, str]]]]:
+    by_symbol: dict[str, tuple[str, str]] = {}
+    symbols_sorted: list[tuple[str, tuple[str, str]]] = []
+    seen: set[str] = set()
+    for token in avant_tokens.tokens:
+        if token.active_from is not None and business_date < token.active_from:
+            continue
+        if token.active_to is not None and business_date > token.active_to:
+            continue
+        symbol_key = token.symbol.strip().upper()
+        if not symbol_key:
+            continue
+        by_symbol.setdefault(symbol_key, (token.asset_family, token.wrapper_class))
+        if symbol_key in seen:
+            continue
+        seen.add(symbol_key)
+        symbols_sorted.append((symbol_key, (token.asset_family, token.wrapper_class)))
+    symbols_sorted.sort(key=lambda item: len(item[0]), reverse=True)
+    return by_symbol, symbols_sorted
+
+
+def _family_and_wrapper_for_token_symbol(
+    token_symbol: str,
+    *,
+    registry_by_symbol: dict[str, tuple[str, str]],
+    registry_symbols_sorted: list[tuple[str, tuple[str, str]]],
+) -> tuple[str | None, str | None]:
+    normalized = token_symbol.strip().upper()
+    if not normalized:
+        return None, None
+    if normalized.startswith("PT-") or normalized.startswith("YT-"):
+        return family_for_token_symbol(token_symbol), None
+    direct_match = registry_by_symbol.get(normalized)
+    if direct_match is not None:
+        return direct_match
+    for symbol_key, value in registry_symbols_sorted:
+        if symbol_key in normalized:
+            return value
+    return family_for_token_symbol(token_symbol), None
 
 
 def is_pendle_pt(protocol_code: str, token_symbol: str) -> bool:
@@ -265,6 +313,26 @@ def _exposure_by_scope(
     return family_scopes
 
 
+def _resolve_debank_date(session: Session, target_date: date) -> date | None:
+    """Return *target_date* if DeBank wallet rows exist, else the most recent
+    earlier date within DEBANK_LOOKBACK_DAYS.  Returns None when no data at all."""
+    has_exact = session.scalar(
+        select(func.count())
+        .select_from(ConsumerDebankWalletDaily)
+        .where(ConsumerDebankWalletDaily.business_date == target_date)
+    )
+    if has_exact:
+        return target_date
+    fallback = session.scalar(
+        select(func.max(ConsumerDebankWalletDaily.business_date)).where(
+            ConsumerDebankWalletDaily.business_date
+            >= target_date - timedelta(days=DEBANK_LOOKBACK_DAYS),
+            ConsumerDebankWalletDaily.business_date < target_date,
+        )
+    )
+    return fallback
+
+
 def _build_wallet_metrics(
     *,
     business_date: date,
@@ -274,29 +342,41 @@ def _build_wallet_metrics(
     balance_rows,
     consumer_rows,
     first_seen_by_wallet: dict[int, date],
+    registry_by_symbol: dict[str, tuple[str, str]],
+    registry_symbols_sorted: list[tuple[str, tuple[str, str]]],
 ) -> list[WalletDashboardMetrics]:
     visibility_by_wallet = {row.wallet_id: row for row in visibility_rows}
     token_rows_by_wallet: dict[int, list[ConsumerDebankTokenDaily]] = defaultdict(list)
     for row in token_rows:
         token_rows_by_wallet[row.wallet_id].append(row)
 
-    staked_by_wallet_family: dict[int, dict[str, Decimal]] = defaultdict(
-        lambda: defaultdict(lambda: ZERO)
+    staked_by_wallet_family: dict[int, dict[str, Decimal]] = {}
+    for row in holder_rows:
+        staked_by_wallet_family[row.wallet_id] = {
+            "usd": row.wallet_staked_usd_usd + row.deployed_staked_usd_usd,
+            "eth": row.wallet_staked_eth_usd + row.deployed_staked_eth_usd,
+            "btc": row.wallet_staked_btc_usd + row.deployed_staked_btc_usd,
+        }
+    canonical_wrapper_by_wallet_family: dict[int, dict[str, dict[str, Decimal]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(lambda: ZERO))
     )
     asset_symbols_by_wallet_family: dict[int, dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set)
     )
     for row in balance_rows:
         asset_symbols_by_wallet_family[row.wallet_id][row.asset_family].add(row.symbol)
-        if row.wrapper_class == "staked":
-            staked_by_wallet_family[row.wallet_id][row.asset_family] += row.usd_value
+        canonical_wrapper_by_wallet_family[row.wallet_id][row.asset_family][
+            row.wrapper_class
+        ] += row.usd_value
     for row in consumer_rows:
         if row.collateral_symbol != "unknown":
             asset_symbols_by_wallet_family[row.wallet_id][row.collateral_family].add(
                 row.collateral_symbol
             )
-        if row.collateral_wrapper_class == "staked":
-            staked_by_wallet_family[row.wallet_id][row.collateral_family] += row.collateral_usd
+        if row.collateral_family != "unknown":
+            canonical_wrapper_by_wallet_family[row.wallet_id][row.collateral_family][
+                row.collateral_wrapper_class
+            ] += row.collateral_usd
 
     wallet_metrics: list[WalletDashboardMetrics] = []
     for row in holder_rows:
@@ -314,13 +394,20 @@ def _build_wallet_metrics(
         fixed_yield_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
         yield_token_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
         other_defi_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        external_base_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        external_staked_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
+        external_boosted_usd: dict[str, Decimal] = defaultdict(lambda: ZERO)
         asset_symbols_family = asset_symbols_by_wallet_family[row.wallet_id]
         for token_row in token_rows_by_wallet.get(row.wallet_id, []):
             if token_row.leg_type == "borrow" or token_row.in_config_surface:
                 continue
             if is_excluded_visibility_protocol(token_row.protocol_code):
                 continue
-            family_code = family_for_token_symbol(token_row.token_symbol)
+            family_code, wrapper_class = _family_and_wrapper_for_token_symbol(
+                token_row.token_symbol,
+                registry_by_symbol=registry_by_symbol,
+                registry_symbols_sorted=registry_symbols_sorted,
+            )
             if family_code is None:
                 continue
             asset_symbols_family[family_code].add(token_row.token_symbol)
@@ -330,6 +417,12 @@ def _build_wallet_metrics(
                 yield_token_usd[family_code] += token_row.usd_value
             else:
                 other_defi_usd[family_code] += token_row.usd_value
+            if wrapper_class == "base":
+                external_base_usd[family_code] += token_row.usd_value
+            elif wrapper_class == "staked":
+                external_staked_usd[family_code] += token_row.usd_value
+            elif wrapper_class == "boosted":
+                external_boosted_usd[family_code] += token_row.usd_value
 
         observed_by_scope = _exposure_by_scope(
             wallet_usd=wallet_usd,
@@ -368,12 +461,37 @@ def _build_wallet_metrics(
             "avbtc": other_defi_usd.get("btc", ZERO),
         }
         other_defi_by_scope["all"] = sum(other_defi_by_scope.values(), ZERO)
+        canonical_wrapper_family = canonical_wrapper_by_wallet_family[row.wallet_id]
+        base_by_scope = {
+            "avusd": canonical_wrapper_family["usd"].get("base", ZERO)
+            + external_base_usd.get("usd", ZERO),
+            "aveth": canonical_wrapper_family["eth"].get("base", ZERO)
+            + external_base_usd.get("eth", ZERO),
+            "avbtc": canonical_wrapper_family["btc"].get("base", ZERO)
+            + external_base_usd.get("btc", ZERO),
+        }
+        base_by_scope["all"] = row.total_base_usd + sum(external_base_usd.values(), ZERO)
         staked_by_scope = {
             "avusd": staked_by_wallet_family[row.wallet_id].get("usd", ZERO),
             "aveth": staked_by_wallet_family[row.wallet_id].get("eth", ZERO),
             "avbtc": staked_by_wallet_family[row.wallet_id].get("btc", ZERO),
         }
-        staked_by_scope["all"] = sum(staked_by_scope.values(), ZERO)
+        staked_by_scope["avusd"] += external_staked_usd.get("usd", ZERO)
+        staked_by_scope["aveth"] += external_staked_usd.get("eth", ZERO)
+        staked_by_scope["avbtc"] += external_staked_usd.get("btc", ZERO)
+        staked_by_scope["all"] = row.total_staked_usd + sum(external_staked_usd.values(), ZERO)
+        boosted_by_scope = {
+            "avusd": canonical_wrapper_family["usd"].get("boosted", ZERO)
+            + external_boosted_usd.get("usd", ZERO),
+            "aveth": canonical_wrapper_family["eth"].get("boosted", ZERO)
+            + external_boosted_usd.get("eth", ZERO),
+            "avbtc": canonical_wrapper_family["btc"].get("boosted", ZERO)
+            + external_boosted_usd.get("btc", ZERO),
+        }
+        boosted_by_scope["all"] = row.total_boosted_usd + sum(
+            external_boosted_usd.values(),
+            ZERO,
+        )
         borrowed_by_scope = {
             "avusd": row.borrowed_usd if deployed_usd.get("usd", ZERO) > ZERO else ZERO,
             "aveth": row.borrowed_usd if deployed_usd.get("eth", ZERO) > ZERO else ZERO,
@@ -408,7 +526,9 @@ def _build_wallet_metrics(
                 fixed_yield_by_scope=fixed_yield_by_scope,
                 yield_token_by_scope=yield_token_by_scope,
                 other_defi_by_scope=other_defi_by_scope,
+                base_by_scope=base_by_scope,
                 staked_by_scope=staked_by_scope,
+                boosted_by_scope=boosted_by_scope,
                 borrowed_by_scope=borrowed_by_scope,
                 asset_symbols_by_scope=symbol_sets_by_scope,
             )
@@ -489,6 +609,8 @@ def _build_prior_exposure_map(
     *,
     holder_rows: list[HolderBehaviorDaily],
     token_rows: list[ConsumerDebankTokenDaily],
+    registry_by_symbol: dict[str, tuple[str, str]],
+    registry_symbols_sorted: list[tuple[str, tuple[str, str]]],
 ) -> dict[tuple[int, str], Decimal]:
     token_rows_by_wallet: dict[int, list[ConsumerDebankTokenDaily]] = defaultdict(list)
     for row in token_rows:
@@ -514,7 +636,11 @@ def _build_prior_exposure_map(
                 continue
             if is_excluded_visibility_protocol(token_row.protocol_code):
                 continue
-            family_code = family_for_token_symbol(token_row.token_symbol)
+            family_code, _wrapper_class = _family_and_wrapper_for_token_symbol(
+                token_row.token_symbol,
+                registry_by_symbol=registry_by_symbol,
+                registry_symbols_sorted=registry_symbols_sorted,
+            )
             if family_code is None:
                 continue
             if is_pendle_pt(token_row.protocol_code, token_row.token_symbol):
@@ -542,6 +668,10 @@ def build_holder_dashboard_context(
     avant_tokens: AvantTokensConfig,
     thresholds: ConsumerThresholdsConfig,
 ) -> HolderDashboardContext:
+    registry_by_symbol, registry_symbols_sorted = _avant_symbol_registry(
+        avant_tokens,
+        business_date=business_date,
+    )
     holder_rows = session.scalars(
         select(HolderBehaviorDaily).where(HolderBehaviorDaily.business_date == business_date)
     ).all()
@@ -553,16 +683,21 @@ def build_holder_dashboard_context(
             prior_exposure_by_wallet_scope={},
         )
 
-    visibility_rows = session.scalars(
-        select(ConsumerDebankWalletDaily).where(
-            ConsumerDebankWalletDaily.business_date == business_date
-        )
-    ).all()
-    token_rows = session.scalars(
-        select(ConsumerDebankTokenDaily).where(
-            ConsumerDebankTokenDaily.business_date == business_date
-        )
-    ).all()
+    debank_date = _resolve_debank_date(session, business_date)
+    if debank_date is not None:
+        visibility_rows = session.scalars(
+            select(ConsumerDebankWalletDaily).where(
+                ConsumerDebankWalletDaily.business_date == debank_date
+            )
+        ).all()
+        token_rows = session.scalars(
+            select(ConsumerDebankTokenDaily).where(
+                ConsumerDebankTokenDaily.business_date == debank_date
+            )
+        ).all()
+    else:
+        visibility_rows = []
+        token_rows = []
     helper = HolderBehaviorEngine(
         session,
         avant_tokens=avant_tokens,
@@ -596,11 +731,16 @@ def build_holder_dashboard_context(
             HolderBehaviorDaily.business_date == business_date - timedelta(days=7)
         )
     ).all()
-    prior_token_rows = session.scalars(
-        select(ConsumerDebankTokenDaily).where(
-            ConsumerDebankTokenDaily.business_date == business_date - timedelta(days=7)
-        )
-    ).all()
+    prior_debank_date = _resolve_debank_date(session, business_date - timedelta(days=7))
+    prior_token_rows = (
+        session.scalars(
+            select(ConsumerDebankTokenDaily).where(
+                ConsumerDebankTokenDaily.business_date == prior_debank_date
+            )
+        ).all()
+        if prior_debank_date is not None
+        else []
+    )
     wallets = _build_wallet_metrics(
         business_date=business_date,
         holder_rows=holder_rows,
@@ -609,6 +749,8 @@ def build_holder_dashboard_context(
         balance_rows=balance_rows,
         consumer_rows=consumer_rows,
         first_seen_by_wallet=first_seen_by_wallet,
+        registry_by_symbol=registry_by_symbol,
+        registry_symbols_sorted=registry_symbols_sorted,
     )
     timestamps = [row.as_of_ts_utc for row in holder_rows]
     timestamps.extend(row.as_of_ts_utc for row in visibility_rows)
@@ -622,6 +764,8 @@ def build_holder_dashboard_context(
         prior_exposure_by_wallet_scope=_build_prior_exposure_map(
             holder_rows=prior_holder_rows,
             token_rows=prior_token_rows,
+            registry_by_symbol=registry_by_symbol,
+            registry_symbols_sorted=registry_symbols_sorted,
         ),
     )
 
@@ -851,11 +995,16 @@ class HolderDashboardEngine:
         current_holder_rows = self.session.scalars(
             select(HolderBehaviorDaily).where(HolderBehaviorDaily.business_date == business_date)
         ).all()
-        current_token_rows = self.session.scalars(
-            select(ConsumerDebankTokenDaily).where(
-                ConsumerDebankTokenDaily.business_date == business_date
-            )
-        ).all()
+        deploy_debank_date = _resolve_debank_date(self.session, business_date)
+        current_token_rows = (
+            self.session.scalars(
+                select(ConsumerDebankTokenDaily).where(
+                    ConsumerDebankTokenDaily.business_date == deploy_debank_date
+                )
+            ).all()
+            if deploy_debank_date is not None
+            else []
+        )
         helper = HolderBehaviorEngine(
             self.session,
             avant_tokens=self.avant_tokens,

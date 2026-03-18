@@ -80,7 +80,9 @@ class AvantYieldOracle:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
-        self._client = client or httpx.Client(timeout=timeout_seconds)
+        self._client = client or httpx.Client(
+            timeout=timeout_seconds, follow_redirects=True
+        )
         self._cache: dict[str, Decimal] = {}
 
     def close(self) -> None:

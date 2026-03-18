@@ -16,7 +16,10 @@ import {
   formatRatio,
   formatROE,
   formatUSDCompact,
+  roeColor,
 } from "@/lib/formatters";
+import { getProtocolColor } from "@/lib/constants";
+import type { ProductPerformanceItem, ProtocolConcentrationItem } from "@/lib/types";
 
 type CashWindow = "daily" | "mtd";
 const ANNUALIZATION_DAYS = 365;
@@ -259,6 +262,95 @@ export default function SummaryPage() {
         </div>
       </section>
 
+      {data.product_performance && data.product_performance.length > 0 && (
+        <section className="mb-12">
+          <Card className="p-8">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Product Performance
+              </p>
+              <p className="mt-1 text-sm text-foreground/80">
+                Gross ROE vs customer benchmark yield
+              </p>
+            </div>
+            <div className="mt-8 grid grid-cols-2 gap-6 lg:grid-cols-3">
+              {data.product_performance.map((item: ProductPerformanceItem) => {
+                const benchmark = item.benchmark_apy ? Number(item.benchmark_apy) : null;
+                const color = roeColor(item.gross_roe_annualized, benchmark);
+                return (
+                  <div key={item.product_code} className="flex flex-col">
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                      {item.product_label.split(" (")[0]}
+                    </p>
+                    <p className={`mt-1 text-2xl font-semibold tabular-nums ${color}`}>
+                      {displayROE(item.gross_roe_annualized)}
+                    </p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {benchmark !== null
+                        ? `vs ${(benchmark * 100).toFixed(1)}%`
+                        : "no benchmark"}
+                      {item.avg_equity_usd
+                        ? ` · ${displayUSD(item.avg_equity_usd)} equity`
+                        : ""}
+                    </p>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </section>
+      )}
+
+      {data.protocol_concentration && data.protocol_concentration.length > 0 && (
+        <section className="mb-12">
+          <Card className="p-8">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                Protocol Concentration
+              </p>
+              <p className="mt-1 text-sm text-foreground/80">
+                Net equity distribution across core lending protocols
+              </p>
+            </div>
+            <div className="mt-6 flex h-7 w-full overflow-hidden rounded">
+              {data.protocol_concentration.map((item: ProtocolConcentrationItem, idx: number) => {
+                const pct = Number(item.share_pct) * 100;
+                return (
+                  <div
+                    key={item.protocol_code}
+                    className="h-full transition-all"
+                    style={{
+                      width: `${pct}%`,
+                      backgroundColor: getProtocolColor(item.protocol_code, idx),
+                      minWidth: pct > 0 ? "2px" : undefined,
+                    }}
+                    title={`${item.protocol_label}: ${pct.toFixed(1)}%`}
+                  />
+                );
+              })}
+            </div>
+            <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2">
+              {data.protocol_concentration.map((item: ProtocolConcentrationItem, idx: number) => {
+                const pct = Number(item.share_pct) * 100;
+                return (
+                  <div key={item.protocol_code} className="flex items-center gap-2 text-sm">
+                    <span
+                      className="inline-block h-3 w-3 rounded-sm"
+                      style={{ backgroundColor: getProtocolColor(item.protocol_code, idx) }}
+                    />
+                    <span className="text-muted-foreground">{item.protocol_label}</span>
+                    <span className="font-semibold tabular-nums">{pct.toFixed(1)}%</span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {displayUSD(item.net_equity_usd)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        </section>
+      )}
+
       <section className="mb-12">
         <Card className="p-8">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -275,7 +367,7 @@ export default function SummaryPage() {
               href="/consumer"
               className="text-xs font-medium uppercase tracking-widest text-avant-warning transition-colors hover:text-foreground"
             >
-              ↳ Open Consumer
+              ↳ Open Holders
             </Link>
           </div>
           <div className="mt-8 grid grid-cols-2 gap-x-4 gap-y-8 lg:grid-cols-6">

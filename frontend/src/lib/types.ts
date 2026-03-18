@@ -108,12 +108,32 @@ export interface MarketSummaryResponse {
   markets_on_watchlist_count: number;
 }
 
+export interface ProductPerformanceItem {
+  product_code: string;
+  product_label: string;
+  gross_roe_daily: string | null;
+  gross_roe_annualized: string | null;
+  avg_equity_usd: string | null;
+  gross_yield_daily_usd: string;
+  net_yield_daily_usd: string;
+  benchmark_apy: string | null;
+}
+
+export interface ProtocolConcentrationItem {
+  protocol_code: string;
+  protocol_label: string;
+  net_equity_usd: string;
+  share_pct: string;
+}
+
 export interface SummaryResponse {
   business_date: string;
   executive: ExecutiveSummarySnapshot;
   holder_summary: HolderSummarySnapshot | null;
   portfolio_summary: PortfolioSummaryResponse | null;
   market_summary: MarketSummaryResponse | null;
+  product_performance: ProductPerformanceItem[] | null;
+  protocol_concentration: ProtocolConcentrationItem[] | null;
   freshness: FreshnessSummary;
 }
 
@@ -584,6 +604,12 @@ export interface DataQualityResponse {
   issue_count_24h: number;
 }
 
+export interface BenchmarkYield {
+  product_code: string;
+  token_symbol: string;
+  apy: string;
+}
+
 export interface UiMetadataResponse {
   products: OptionItem[];
   protocols: OptionItem[];
@@ -592,4 +618,5 @@ export interface UiMetadataResponse {
   position_sort_options: OptionItem[];
   alert_severity_options: OptionItem[];
   alert_status_options: OptionItem[];
+  benchmarks: BenchmarkYield[];
 }

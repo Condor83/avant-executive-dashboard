@@ -105,3 +105,15 @@ export function financialColor(value: string | null | undefined): ValueColor {
   if (n === null || n === 0) return "text-foreground";
   return n > 0 ? "text-avant-success" : "text-avant-danger";
 }
+
+export function roeColor(
+  annualizedRoe: string | null | undefined,
+  benchmark: number | null,
+): string {
+  const roe = annualizedRoe ? Number(annualizedRoe) : null;
+  if (roe === null || !Number.isFinite(roe)) return "text-foreground";
+  if (benchmark === null) return roe > 0 ? "text-avant-success" : "text-avant-danger";
+  if (roe >= benchmark) return "text-avant-success";
+  if (roe >= benchmark * 0.75) return "text-amber-500";
+  return "text-avant-danger";
+}

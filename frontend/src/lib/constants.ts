@@ -32,3 +32,23 @@ export const NAV_ITEMS = [
 
 export const TIME_WINDOWS = ["yesterday", "7d", "30d"] as const;
 export type TimeWindow = (typeof TIME_WINDOWS)[number];
+
+export const PROTOCOL_COLORS: Record<string, string> = {
+  aave_v3: "#2563EB",
+  morpho: "#7C3AED",
+  spark: "#0F766E",
+  euler_v2: "#B45309",
+  dolomite: "#0891B2",
+  kamino: "#059669",
+  zest: "#D97706",
+  silo_v2: "#6366F1",
+  stakedao: "#EC4899",
+};
+
+const PROTOCOL_COLOR_FALLBACKS = [
+  "#64748B", "#94A3B8", "#78716C", "#A1A1AA", "#9CA3AF",
+] as const;
+
+export function getProtocolColor(code: string, index: number): string {
+  return PROTOCOL_COLORS[code] ?? PROTOCOL_COLOR_FALLBACKS[index % PROTOCOL_COLOR_FALLBACKS.length];
+}
