@@ -540,7 +540,7 @@ export default function ConsumerPage() {
 
   if (hasError) {
     return (
-      <PageContainer title="Consumer">
+      <PageContainer title="Holders">
         <ErrorState
           onRetry={() => {
             for (const query of queries) {
@@ -553,7 +553,7 @@ export default function ConsumerPage() {
   }
 
   return (
-    <PageContainer title="Consumer">
+    <PageContainer title="Holders">
       <ProductSwitcher value={product} onChange={setProduct} />
 
       <section className="mb-8">

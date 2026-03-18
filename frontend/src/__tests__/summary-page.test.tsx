@@ -141,7 +141,7 @@ describe("SummaryPage", () => {
       "/markets",
     );
     expect(screen.getByRole("link", { name: /DQ issues/i }).getAttribute("href")).toBe("/risk");
-    expect(screen.getByRole("link", { name: /Open Consumer/ }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: /Open Holders/ }).getAttribute("href")).toBe(
       "/consumer",
     );
     expect(screen.getByText("Avant Exposure")).toBeTruthy();
