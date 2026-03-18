@@ -149,6 +149,27 @@ class KaminoChainConfig(ConfigModel):
     markets: list[KaminoMarket]
 
 
+class PendleToken(ConfigModel):
+    symbol: str
+    address: str
+    decimals: int = Field(ge=0, le=36)
+
+
+class PendleMarket(ConfigModel):
+    market_address: str
+    name: str
+    expiry: date
+    pt_token: PendleToken
+    yt_token: PendleToken
+    underlying_token: PendleToken | None = None
+    sy_token_address: str | None = None
+
+
+class PendleChainConfig(ConfigModel):
+    wallets: list[str] = Field(default_factory=list)
+    markets: list[PendleMarket]
+
+
 class ZestMarket(ConfigModel):
     symbol: str
     asset_contract: str
@@ -264,6 +285,7 @@ class MarketsConfig(ConfigModel):
     euler_v2: dict[str, EulerChainConfig]
     dolomite: dict[str, DolomiteChainConfig]
     kamino: dict[str, KaminoChainConfig]
+    pendle: dict[str, PendleChainConfig] = Field(default_factory=dict)
     zest: dict[str, ZestChainConfig]
     wallet_balances: dict[str, WalletBalanceChainConfig]
     traderjoe_lp: dict[str, TraderJoeChainConfig] = Field(default_factory=dict)

@@ -68,6 +68,7 @@ Current top-level served surfaces:
   - `stakedao`
   - `etherex`
   - `kamino`
+  - `pendle`
   - `zest`
   - `silo_v2`
 - Market adapters:
@@ -77,6 +78,7 @@ Current top-level served surfaces:
   - `euler_v2`
   - `dolomite`
   - `kamino`
+  - `pendle`
   - `zest`
   - `silo_v2`
 
@@ -94,7 +96,7 @@ Data quality is intentionally multi-layered:
    Adapter failures and missing prices are written to `data_quality` during `sync snapshot` and `sync markets`.
 
 2) Internal coverage checks  
-   `sync coverage-report` compares configured expected rows vs written rows for core lending adapters (`spark`, `morpho`, `euler_v2`, `dolomite`).
+   `sync coverage-report` compares configured expected rows vs written rows for core lending adapters (`spark`, `morpho`, `euler_v2`, `dolomite`, `pendle`).
 
 3) External reconciliation checks  
    `sync debank-coverage-audit` compares DeBank-discovered legs against DB snapshot legs for strategy wallets. This is a completeness audit, not a source-of-truth override. See `docs/debank-db-audit.md`.

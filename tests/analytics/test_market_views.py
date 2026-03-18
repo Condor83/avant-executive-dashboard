@@ -520,6 +520,122 @@ def test_market_exposure_descriptors_keep_direct_monitored_consumer_markets(
         assert descriptor.component_roles == ((market.market_id, "primary_market"),)
 
 
+def test_market_views_include_direct_pendle_native_market_exposures(
+    postgres_database_url: str,
+) -> None:
+    _migrate_to_head(postgres_database_url)
+    engine = create_engine(postgres_database_url)
+
+    business_date = date(2026, 3, 17)
+    sod_ts_utc, _ = denver_business_bounds_utc(business_date)
+    as_of_ts_utc = sod_ts_utc + timedelta(hours=9)
+
+    with Session(engine) as session:
+        chain = Chain(chain_code="ethereum")
+        protocol = Protocol(protocol_code="pendle")
+        wallet = Wallet(
+            address="0x8888888888888888888888888888888888888888",
+            wallet_type="strategy",
+        )
+        session.add_all([chain, protocol, wallet])
+        session.flush()
+
+        pt_token = _token(
+            symbol="PT-avUSD-14MAY2026",
+            chain_id=chain.chain_id,
+            address="0x0000000000000000000000000000000000009000",
+        )
+        yt_token = _token(
+            symbol="YT-avUSD-14MAY2026",
+            chain_id=chain.chain_id,
+            address="0x0000000000000000000000000000000000009001",
+        )
+        session.add_all([pt_token, yt_token])
+        session.flush()
+
+        market = Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_kind="other",
+            market_address="0x0000000000000000000000000000000000009002",
+            display_name="avUSD Pendle 14MAY2026",
+            base_asset_token_id=pt_token.token_id,
+            collateral_token_id=yt_token.token_id,
+            metadata_json={"kind": "other"},
+        )
+        session.add(market)
+        session.flush()
+
+        session.add(
+            MarketSnapshot(
+                as_of_ts_utc=as_of_ts_utc,
+                block_number_or_slot="1",
+                market_id=market.market_id,
+                total_supply_usd=Decimal("6718030.283938309"),
+                total_borrow_usd=Decimal("0"),
+                utilization=Decimal("0"),
+                supply_apy=Decimal("0.0896106824"),
+                borrow_apy=Decimal("0"),
+                available_liquidity_usd=Decimal("2372327.659932984"),
+                max_ltv=None,
+                liquidation_threshold=None,
+                liquidation_penalty=None,
+                caps_json=None,
+                irm_params_json=None,
+                source="rpc",
+            )
+        )
+        session.add(
+            PositionSnapshot(
+                as_of_ts_utc=as_of_ts_utc,
+                block_number_or_slot="1",
+                wallet_id=wallet.wallet_id,
+                market_id=market.market_id,
+                position_key="pendle:ethereum:test-wallet:market:pt",
+                supplied_amount=Decimal("1712745.645602986044342614"),
+                supplied_usd=Decimal("1689664.7144845591"),
+                borrowed_amount=Decimal("0"),
+                borrowed_usd=Decimal("0"),
+                supply_apy=Decimal("0"),
+                borrow_apy=Decimal("0"),
+                reward_apy=Decimal("0"),
+                equity_usd=Decimal("1689664.7144845591"),
+                health_factor=None,
+                ltv=None,
+                source="rpc",
+            )
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        summary = MarketViewEngine(session, thresholds=None).compute_daily(
+            business_date=business_date
+        )
+        session.commit()
+
+        assert summary.exposure_rows_written == 1
+        exposure = session.scalar(
+            select(MarketExposure).where(MarketExposure.display_name == "avUSD Pendle 14MAY2026")
+        )
+        assert exposure is not None
+        exposure_row = session.scalar(
+            select(MarketExposureDaily).where(
+                MarketExposureDaily.business_date == business_date,
+                MarketExposureDaily.market_exposure_id == exposure.market_exposure_id,
+            )
+        )
+        assert exposure_row is not None
+        assert exposure.exposure_kind == "native_market"
+        assert exposure.supply_token_id == pt_token.token_id
+        assert exposure.collateral_token_id == yt_token.token_id
+        assert exposure_row.total_supply_usd == Decimal("6718030.283938309000000000")
+        assert exposure_row.total_borrow_usd == Decimal("0")
+        assert exposure_row.weighted_supply_apy == Decimal("0.0896106824")
+        assert exposure_row.strategy_position_count == 1
+        assert exposure_row.customer_position_count == 0
+        assert exposure_row.scope_segment == "strategy_only"
+
+
 def test_market_summary_dedupes_shared_borrow_reserve_components(
     postgres_database_url: str,
 ) -> None:

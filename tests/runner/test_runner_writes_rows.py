@@ -250,6 +250,46 @@ class MockPendlePtAdapter:
         )
 
 
+class MockDirectPendlePtAdapter:
+    protocol_code = "pendle"
+
+    def __init__(self, *, supplied_amount: Decimal) -> None:
+        self.supplied_amount = supplied_amount
+
+    def collect_positions(
+        self,
+        *,
+        as_of_ts_utc: datetime,
+        prices_by_token: dict[tuple[str, str], Decimal],
+    ) -> tuple[list[PositionSnapshotInput], list[DataQualityIssue]]:
+        del prices_by_token
+        return (
+            [
+                PositionSnapshotInput(
+                    as_of_ts_utc=as_of_ts_utc,
+                    protocol_code="pendle",
+                    chain_code="ethereum",
+                    wallet_address="0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd",
+                    market_ref="0xf968b785b4bfd5a6c0fc197b42264beeecf58d85",
+                    position_key=(
+                        "pendle:ethereum:0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd:"
+                        "0xf968b785b4bfd5a6c0fc197b42264beeecf58d85:pt"
+                    ),
+                    supplied_amount=self.supplied_amount,
+                    supplied_usd=Decimal("1691521.205088223"),
+                    borrowed_amount=Decimal("0"),
+                    borrowed_usd=Decimal("0"),
+                    supply_apy=Decimal("0"),
+                    borrow_apy=Decimal("0"),
+                    reward_apy=Decimal("0"),
+                    equity_usd=Decimal("1691521.205088223"),
+                    source="rpc",
+                )
+            ],
+            [],
+        )
+
+
 class StubPendleHistoryClient:
     def __init__(
         self, *, trades: list[object] | None = None, error: Exception | None = None
@@ -312,6 +352,51 @@ def _seed_morpho_pt_dimensions(session: Session) -> None:
             base_asset_token_id=loan_token.token_id,
             collateral_token_id=pt_token.token_id,
             metadata_json={"kind": "market"},
+        )
+    )
+    session.commit()
+
+
+def _seed_pendle_pt_dimensions(session: Session) -> None:
+    chain = Chain(chain_code="ethereum")
+    protocol = Protocol(protocol_code="pendle")
+    wallet = Wallet(
+        address="0x6cc60a0b57bc882a0471980d0e2d4ad7ddf3c4bd",
+        wallet_type="strategy",
+    )
+    session.add_all([chain, protocol, wallet])
+    session.flush()
+
+    pt_token = Token(
+        chain_id=chain.chain_id,
+        address_or_mint="0xcc16cd49194e7aa3dca780c742580e2f9b418874",
+        symbol="PT-avUSD-14MAY2026",
+        decimals=18,
+    )
+    yt_token = Token(
+        chain_id=chain.chain_id,
+        address_or_mint="0x5d928577454dfb826dd6163c75a487ab96032c2d",
+        symbol="YT-avUSD-14MAY2026",
+        decimals=18,
+    )
+    session.add_all([pt_token, yt_token])
+    session.flush()
+
+    session.add(
+        Market(
+            chain_id=chain.chain_id,
+            protocol_id=protocol.protocol_id,
+            market_address="0xf968b785b4bfd5a6c0fc197b42264beeecf58d85",
+            market_kind="other",
+            display_name="avUSD Pendle 14MAY2026",
+            base_asset_token_id=pt_token.token_id,
+            collateral_token_id=yt_token.token_id,
+            metadata_json={
+                "kind": "other",
+                "name": "avUSD Pendle 14MAY2026",
+                "pt_token_symbol": "PT-avUSD-14MAY2026",
+                "yt_token_symbol": "YT-avUSD-14MAY2026",
+            },
         )
     )
     session.commit()
@@ -1029,3 +1114,62 @@ def test_runner_sync_snapshot_uses_manual_pt_fixed_yield_override_without_pendle
         assert snapshot is not None
         assert snapshot.supply_apy == Decimal("0.6256258359")
         assert session.scalar(select(func.count()).select_from(DataQuality)) == 0
+
+
+def test_runner_sync_snapshot_resolves_direct_pendle_pt_fixed_yield(
+    postgres_database_url: str,
+) -> None:
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", postgres_database_url)
+    command.upgrade(config, "head")
+
+    engine = create_engine(postgres_database_url)
+    as_of_ts = datetime(2026, 3, 17, 4, 16, tzinfo=UTC)
+
+    with Session(engine) as session:
+        _seed_pendle_pt_dimensions(session)
+
+    pendle = StubPendleHistoryClient(
+        trades=[
+            PendleTrade(
+                market_address="0xf968b785b4bfd5a6c0fc197b42264beeecf58d85",
+                action="BUY_PT",
+                timestamp=datetime(2026, 1, 10, 0, 0, tzinfo=UTC),
+                implied_apy=Decimal("0.08"),
+                pt_notional=Decimal("1.0"),
+            ),
+            PendleTrade(
+                market_address="0xf968b785b4bfd5a6c0fc197b42264beeecf58d85",
+                action="BUY_PT",
+                timestamp=datetime(2026, 1, 12, 0, 0, tzinfo=UTC),
+                implied_apy=Decimal("0.10"),
+                pt_notional=Decimal("0.5"),
+            ),
+        ]
+    )
+
+    with Session(engine) as session:
+        runner = SnapshotRunner(
+            session=session,
+            markets_config=load_markets_config("config/markets.yaml"),
+            price_oracle=None,
+            position_adapters=[MockDirectPendlePtAdapter(supplied_amount=Decimal("1.5"))],
+            pendle_history_client=pendle,
+        )
+        summary = runner.sync_snapshot(as_of_ts_utc=as_of_ts)
+        session.commit()
+
+        assert summary.rows_written == 1
+        assert summary.issues_written == 0
+
+        snapshot = session.scalar(select(PositionSnapshot))
+        assert snapshot is not None
+        assert snapshot.supply_apy == Decimal("0.0866666667")
+
+        cache_row = session.scalar(select(PositionFixedYieldCache))
+        assert cache_row is not None
+        assert cache_row.protocol_code == "pendle"
+        assert cache_row.collateral_symbol == "PT-avUSD-14MAY2026"
+        assert cache_row.position_size_native_at_refresh == Decimal("1.5")
+        assert pendle.market_calls == 1
+        assert pendle.trade_calls == 1

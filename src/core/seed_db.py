@@ -143,6 +143,7 @@ def _collect_chain_codes(
         markets.euler_v2,
         markets.dolomite,
         markets.kamino,
+        markets.pendle,
         markets.zest,
         markets.wallet_balances,
         markets.traderjoe_lp,
@@ -169,6 +170,7 @@ def _collect_protocol_codes(
         "euler_v2",
         "dolomite",
         "kamino",
+        "pendle",
         "zest",
         "wallet_balances",
         "traderjoe_lp",
@@ -199,6 +201,7 @@ def _collect_wallet_rows(
         markets.euler_v2,
         markets.dolomite,
         markets.kamino,
+        markets.pendle,
         markets.zest,
         markets.wallet_balances,
         markets.traderjoe_lp,
@@ -352,6 +355,28 @@ def _collect_token_rows(
                     kamino_market.borrow_token.mint,
                     kamino_market.borrow_token.symbol,
                     kamino_market.borrow_token.decimals,
+                )
+
+    for chain_code, pendle_chain in markets.pendle.items():
+        for pendle_market in pendle_chain.markets:
+            add_token(
+                chain_code,
+                pendle_market.pt_token.address,
+                pendle_market.pt_token.symbol,
+                pendle_market.pt_token.decimals,
+            )
+            add_token(
+                chain_code,
+                pendle_market.yt_token.address,
+                pendle_market.yt_token.symbol,
+                pendle_market.yt_token.decimals,
+            )
+            if pendle_market.underlying_token is not None:
+                add_token(
+                    chain_code,
+                    pendle_market.underlying_token.address,
+                    pendle_market.underlying_token.symbol,
+                    pendle_market.underlying_token.decimals,
                 )
 
     for chain_code, zest_chain in markets.zest.items():
@@ -660,6 +685,55 @@ def _collect_market_rows(
                     "borrow_token_symbol": (
                         kamino_market.borrow_token.symbol
                         if kamino_market.borrow_token is not None
+                        else None
+                    ),
+                },
+            )
+
+    for chain_code, pendle_chain in markets.pendle.items():
+        for pendle_market in pendle_chain.markets:
+            pt_token_id = token_ids.get(
+                (chain_code, _normalize_token_address(pendle_market.pt_token.address))
+            )
+            yt_token_id = token_ids.get(
+                (chain_code, _normalize_token_address(pendle_market.yt_token.address))
+            )
+            add_market(
+                protocol_code="pendle",
+                chain_code=chain_code,
+                market_address=pendle_market.market_address,
+                market_kind="other",
+                display_name=pendle_market.name,
+                base_asset_token_id=pt_token_id,
+                collateral_token_id=yt_token_id,
+                metadata={
+                    "kind": "other",
+                    "name": pendle_market.name,
+                    "expiry": pendle_market.expiry.isoformat(),
+                    "pt_token_symbol": pendle_market.pt_token.symbol,
+                    "pt_token_address": _normalize_token_address(pendle_market.pt_token.address),
+                    "pt_token_decimals": pendle_market.pt_token.decimals,
+                    "yt_token_symbol": pendle_market.yt_token.symbol,
+                    "yt_token_address": _normalize_token_address(pendle_market.yt_token.address),
+                    "yt_token_decimals": pendle_market.yt_token.decimals,
+                    "underlying_token_symbol": (
+                        pendle_market.underlying_token.symbol
+                        if pendle_market.underlying_token is not None
+                        else None
+                    ),
+                    "underlying_token_address": (
+                        _normalize_token_address(pendle_market.underlying_token.address)
+                        if pendle_market.underlying_token is not None
+                        else None
+                    ),
+                    "underlying_token_decimals": (
+                        pendle_market.underlying_token.decimals
+                        if pendle_market.underlying_token is not None
+                        else None
+                    ),
+                    "sy_token_address": (
+                        _normalize_token_address(pendle_market.sy_token_address)
+                        if pendle_market.sy_token_address is not None
                         else None
                     ),
                 },

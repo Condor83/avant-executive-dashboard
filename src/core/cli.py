@@ -22,7 +22,7 @@ from adapters.etherex import EtherexAdapter, EvmRpcEtherexClient
 from adapters.euler_v2 import EulerV2Adapter, EvmRpcEulerV2Client
 from adapters.kamino import KaminoAdapter, KaminoApiClient
 from adapters.morpho import EvmRpcMorphoClient, MorphoAdapter, MorphoVaultYieldClient
-from adapters.pendle import PendleHistoryClient
+from adapters.pendle import PendleAdapter, PendleHistoryClient
 from adapters.silo_v2 import SiloApiClient, SiloV2Adapter
 from adapters.spark import EvmRpcSparkClient, SparkAdapter
 from adapters.stakedao import EvmRpcStakedaoClient, StakedaoAdapter
@@ -399,6 +399,10 @@ def _build_runner(
         client=kamino_client,
         yield_oracle=yield_oracle,
     )
+    pendle_adapter = PendleAdapter(
+        markets_config=markets_config,
+        client=pendle_history_client,
+    )
     stacks_client = StacksClient(
         base_url=settings.stacks_api_base_url,
         timeout_seconds=settings.request_timeout_seconds,
@@ -447,6 +451,7 @@ def _build_runner(
             stakedao_adapter,
             etherex_adapter,
             kamino_adapter,
+            pendle_adapter,
             zest_adapter,
             silo_adapter,
         ],
@@ -457,6 +462,7 @@ def _build_runner(
             euler_adapter,
             dolomite_adapter,
             kamino_adapter,
+            pendle_adapter,
             zest_adapter,
             silo_adapter,
         ],

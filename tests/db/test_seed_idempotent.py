@@ -147,5 +147,24 @@ def test_seed_is_idempotent(postgres_database_url: str) -> None:
         assert avusdx_market.metadata_json["asset_family"] == "usd"
         assert avusdx_market.metadata_json["wrapper_class"] == "boosted"
 
+        pendle_market = session.execute(
+            select(Market)
+            .join(Protocol, Protocol.protocol_id == Market.protocol_id)
+            .join(Chain, Chain.chain_id == Market.chain_id)
+            .where(Protocol.protocol_code == "pendle")
+            .where(Chain.chain_code == "ethereum")
+            .where(Market.market_address == "0xf968b785b4bfd5a6c0fc197b42264beeecf58d85")
+        ).scalar_one()
+        assert pendle_market.base_asset_token_id is not None
+        assert pendle_market.collateral_token_id is not None
+        assert pendle_market.market_kind == "other"
+
+        pendle_pt = session.get(Token, pendle_market.base_asset_token_id)
+        pendle_yt = session.get(Token, pendle_market.collateral_token_id)
+        assert pendle_pt is not None
+        assert pendle_yt is not None
+        assert pendle_pt.symbol == "PT-avUSD-14MAY2026"
+        assert pendle_yt.symbol == "YT-avUSD-14MAY2026"
+
     assert first_counts == second_counts
     assert wallet_map_count == distinct_wallets

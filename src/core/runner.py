@@ -122,6 +122,16 @@ class _MarketDetail:
     metadata_json: dict[str, Any] | None
 
 
+@dataclass(frozen=True)
+class _PtFixedYieldTarget:
+    position: PositionSnapshotInput
+    market_detail: _MarketDetail
+    pt_token_address: str
+    pt_symbol: str
+    position_size_native: Decimal
+    position_size_usd: Decimal
+
+
 class SnapshotRunner:
     """Coordinates pricing, adapters, and DB persistence for sync commands."""
 
@@ -384,7 +394,7 @@ class SnapshotRunner:
         }
 
     @staticmethod
-    def _is_pt_collateral_symbol(symbol: str | None) -> bool:
+    def _is_pt_symbol(symbol: str | None) -> bool:
         return bool(symbol and symbol.strip().upper().startswith("PT-"))
 
     def _load_position_fixed_yield_cache(
@@ -403,7 +413,9 @@ class SnapshotRunner:
         self,
         *,
         position: PositionSnapshotInput,
-        collateral_symbol: str,
+        pt_symbol: str,
+        position_size_native: Decimal,
+        position_size_usd: Decimal,
         fixed_apy: Decimal,
         lot_count: int,
         first_acquired_at_utc: datetime | None,
@@ -416,11 +428,11 @@ class SnapshotRunner:
             "chain_code": position.chain_code,
             "wallet_address": self._normalize_address(position.wallet_address),
             "market_ref": self._normalize_address(position.market_ref),
-            "collateral_symbol": collateral_symbol,
+            "collateral_symbol": pt_symbol,
             "fixed_apy": fixed_apy,
             "source": "pendle_history",
-            "position_size_native_at_refresh": position.collateral_amount or ZERO,
-            "position_size_usd_at_refresh": position.collateral_usd or ZERO,
+            "position_size_native_at_refresh": position_size_native,
+            "position_size_usd_at_refresh": position_size_usd,
             "lot_count": lot_count,
             "first_acquired_at_utc": first_acquired_at_utc,
             "last_refreshed_at_utc": last_refreshed_at_utc,
@@ -450,12 +462,12 @@ class SnapshotRunner:
     def _resolve_pt_fixed_apy(
         self,
         *,
-        position: PositionSnapshotInput,
-        market_detail: _MarketDetail,
+        target: _PtFixedYieldTarget,
         chain_id: int,
     ) -> tuple[
         Decimal | None, int, datetime | None, dict[str, Any] | None, DataQualityIssue | None
     ]:
+        position = target.position
         if self.pendle_history_client is None:
             return (
                 None,
@@ -475,30 +487,10 @@ class SnapshotRunner:
                 ),
             )
 
-        pt_address = market_detail.collateral_token_address
-        if not pt_address:
-            return (
-                None,
-                0,
-                None,
-                None,
-                DataQualityIssue(
-                    as_of_ts_utc=position.as_of_ts_utc,
-                    stage="sync_snapshot",
-                    error_type="pt_fixed_apy_unresolved",
-                    error_message="PT collateral token address is missing",
-                    protocol_code=position.protocol_code,
-                    chain_code=position.chain_code,
-                    wallet_address=position.wallet_address,
-                    market_ref=position.market_ref,
-                    payload_json={"position_key": position.position_key},
-                ),
-            )
-
         try:
             market_addresses = self.pendle_history_client.get_market_addresses_for_pt(
                 chain_id=chain_id,
-                pt_token_address=pt_address,
+                pt_token_address=target.pt_token_address,
             )
             trades = self.pendle_history_client.get_wallet_trades(
                 chain_id=chain_id,
@@ -521,8 +513,8 @@ class SnapshotRunner:
                     market_ref=position.market_ref,
                     payload_json={
                         "position_key": position.position_key,
-                        "collateral_symbol": market_detail.collateral_symbol,
-                        "collateral_token_address": pt_address,
+                        "pt_symbol": target.pt_symbol,
+                        "pt_token_address": target.pt_token_address,
                     },
                 ),
             )
@@ -571,7 +563,7 @@ class SnapshotRunner:
                     market_ref=position.market_ref,
                     payload_json={
                         "position_key": position.position_key,
-                        "collateral_symbol": market_detail.collateral_symbol,
+                        "pt_symbol": target.pt_symbol,
                         "matched_market_count": len(market_addresses),
                         "matched_trade_count": len(matched_trades),
                     },
@@ -586,7 +578,39 @@ class SnapshotRunner:
         }
         return weighted_fixed_apy, len(lots), first_acquired_at_utc, metadata_json, None
 
-    def _apply_morpho_pt_fixed_yields(
+    def _pt_fixed_yield_target(
+        self,
+        *,
+        position: PositionSnapshotInput,
+        market_detail: _MarketDetail,
+    ) -> _PtFixedYieldTarget | None:
+        if position.protocol_code == "morpho":
+            pt_symbol = market_detail.collateral_symbol
+            pt_token_address = market_detail.collateral_token_address
+            position_size_native = position.collateral_amount or ZERO
+            position_size_usd = position.collateral_usd or ZERO
+        elif position.protocol_code == "pendle":
+            pt_symbol = market_detail.base_asset_symbol
+            pt_token_address = market_detail.base_asset_address
+            position_size_native = position.supplied_amount
+            position_size_usd = position.supplied_usd
+        else:
+            return None
+
+        if position_size_native <= ZERO or not self._is_pt_symbol(pt_symbol):
+            return None
+        if not pt_token_address:
+            return None
+        return _PtFixedYieldTarget(
+            position=position,
+            market_detail=market_detail,
+            pt_token_address=pt_token_address,
+            pt_symbol=pt_symbol or "PT",
+            position_size_native=position_size_native,
+            position_size_usd=position_size_usd,
+        )
+
+    def _apply_pt_fixed_yields(
         self,
         *,
         positions: list[PositionSnapshotInput],
@@ -597,9 +621,9 @@ class SnapshotRunner:
         if self.pendle_history_client is None and not self.pt_fixed_yield_overrides:
             return positions, []
 
-        pt_positions: list[tuple[PositionSnapshotInput, _MarketDetail]] = []
+        pt_positions: list[_PtFixedYieldTarget] = []
         for position in positions:
-            if position.protocol_code != "morpho" or (position.collateral_amount or ZERO) <= ZERO:
+            if position.protocol_code not in {"morpho", "pendle"}:
                 continue
             market_id = market_ids.get(
                 (
@@ -611,20 +635,23 @@ class SnapshotRunner:
             if market_id is None:
                 continue
             detail = market_details.get(market_id)
-            if detail is None or not self._is_pt_collateral_symbol(detail.collateral_symbol):
+            if detail is None:
                 continue
-            pt_positions.append((position, detail))
+            target = self._pt_fixed_yield_target(position=position, market_detail=detail)
+            if target is not None:
+                pt_positions.append(target)
 
         if not pt_positions:
             return positions, []
 
         cache_rows = self._load_position_fixed_yield_cache(
-            [position.position_key for position, _detail in pt_positions]
+            [target.position.position_key for target in pt_positions]
         )
         issues: list[DataQualityIssue] = []
         resolved: dict[str, PositionSnapshotInput] = {}
 
-        for position, detail in pt_positions:
+        for target in pt_positions:
+            position = target.position
             override = self.pt_fixed_yield_overrides.get(position.position_key)
             if override is not None:
                 resolved[position.position_key] = replace(
@@ -635,11 +662,11 @@ class SnapshotRunner:
                 continue
 
             cache_row = cache_rows.get(position.position_key)
-            current_collateral_amount = position.collateral_amount or ZERO
+            current_position_amount = target.position_size_native
             if (
                 cache_row is not None
                 and cache_row.position_size_native_at_refresh > ZERO
-                and current_collateral_amount
+                and current_position_amount
                 <= cache_row.position_size_native_at_refresh * PT_BALANCE_GROWTH_THRESHOLD
             ):
                 resolved[position.position_key] = replace(
@@ -656,7 +683,7 @@ class SnapshotRunner:
                         as_of_ts_utc=as_of_ts_utc,
                         stage="sync_snapshot",
                         error_type="pt_fixed_apy_unresolved",
-                        error_message="Pendle chain mapping is missing for PT collateral position",
+                        error_message="Pendle chain mapping is missing for PT position",
                         protocol_code=position.protocol_code,
                         chain_code=position.chain_code,
                         wallet_address=position.wallet_address,
@@ -671,8 +698,7 @@ class SnapshotRunner:
 
             fixed_apy, lot_count, first_acquired_at_utc, metadata_json, issue = (
                 self._resolve_pt_fixed_apy(
-                    position=position,
-                    market_detail=detail,
+                    target=target,
                     chain_id=chain_id,
                 )
             )
@@ -686,7 +712,9 @@ class SnapshotRunner:
 
             self._upsert_position_fixed_yield_cache_row(
                 position=position,
-                collateral_symbol=detail.collateral_symbol or "PT",
+                pt_symbol=target.pt_symbol,
+                position_size_native=target.position_size_native,
+                position_size_usd=target.position_size_usd,
                 fixed_apy=fixed_apy,
                 lot_count=lot_count,
                 first_acquired_at_utc=first_acquired_at_utc,
@@ -1046,7 +1074,7 @@ class SnapshotRunner:
 
         market_ids = self._resolve_market_ids()
         market_details = self._resolve_market_details()
-        all_positions, pt_fixed_yield_issues = self._apply_morpho_pt_fixed_yields(
+        all_positions, pt_fixed_yield_issues = self._apply_pt_fixed_yields(
             positions=all_positions,
             market_ids=market_ids,
             market_details=market_details,

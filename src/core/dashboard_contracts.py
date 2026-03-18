@@ -44,6 +44,7 @@ POSITION_SORT_OPTIONS = [
 
 CODE_LABEL_OVERRIDES = {
     "aave_v3": "Aave V3",
+    "pendle": "Pendle",
     "spark": "Spark",
 }
 
@@ -149,6 +150,8 @@ def market_exposure_kind(
 ) -> str:
     if market_kind_value == "reserve":
         return "reserve_pair"
+    if market_kind_value == "other":
+        return "native_market"
     if collateral_token_id is not None and collateral_token_id != base_token_id:
         return "reserve_pair"
     if market_kind_value in {"vault", "vault_underlying"}:

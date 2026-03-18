@@ -36,6 +36,7 @@ RESERVE_USAGE_PROTOCOLS = {"aave_v3", "spark"}
 ACCOUNT_GROUPED_PROTOCOLS = {"dolomite"}
 PRODUCT_GROUPED_PROTOCOLS = {"zest"}
 LIVE_NATIVE_MARKET_KINDS = {"market", "consumer_market"}
+DIRECT_NATIVE_PROTOCOLS = {"pendle"}
 
 
 @dataclass(frozen=True)
@@ -250,6 +251,37 @@ def _direct_supply_symbol(record: _MarketRecord) -> str | None:
     return record.base_symbol
 
 
+def _is_direct_native_market(record: _MarketRecord) -> bool:
+    if record.market_kind in LIVE_NATIVE_MARKET_KINDS:
+        return True
+    return record.protocol_code in DIRECT_NATIVE_PROTOCOLS and record.market_kind == "other"
+
+
+def _direct_exposure_shape(
+    record: _MarketRecord,
+) -> tuple[int | None, int | None, int | None, str | None, str | None]:
+    if record.protocol_code == "pendle":
+        return (
+            record.base_asset_token_id,
+            None,
+            record.collateral_token_id,
+            None,
+            None,
+        )
+
+    supply_token_id = _direct_supply_token_id(record)
+    debt_token_id = (
+        record.base_asset_token_id if supply_token_id != record.base_asset_token_id else None
+    )
+    return (
+        supply_token_id,
+        debt_token_id,
+        record.collateral_token_id,
+        _direct_supply_symbol(record),
+        record.base_symbol if debt_token_id is not None else None,
+    )
+
+
 def _upsert_state(
     states: dict[str, _ExposureState],
     *,
@@ -362,7 +394,7 @@ def _iter_direct_live_states(
             ACCOUNT_GROUPED_PROTOCOLS | PRODUCT_GROUPED_PROTOCOLS | RESERVE_USAGE_PROTOCOLS
         ):
             continue
-        if record.market_kind not in LIVE_NATIVE_MARKET_KINDS:
+        if not _is_direct_native_market(record):
             continue
         if (
             row.supplied_usd <= ZERO
@@ -371,14 +403,22 @@ def _iter_direct_live_states(
         ):
             continue
 
-        supply_token_id = _direct_supply_token_id(record)
-        debt_token_id = (
-            record.base_asset_token_id if supply_token_id != record.base_asset_token_id else None
-        )
+        (
+            supply_token_id,
+            debt_token_id,
+            collateral_token_id,
+            supply_symbol,
+            debt_symbol,
+        ) = _direct_exposure_shape(record)
         if supply_token_id is None:
             continue
         if debt_token_id is None and record.market_kind == "consumer_market":
             continue
+        collateral_yield_apy: Decimal | None = row.supply_apy + row.reward_apy
+        collateral_yield_weight_usd = _economic_supply_usd(row)
+        if record.protocol_code == "pendle":
+            collateral_yield_apy = None
+            collateral_yield_weight_usd = ZERO
         _upsert_state(
             states,
             protocol_id=record.protocol_id,
@@ -387,17 +427,17 @@ def _iter_direct_live_states(
             chain_code=record.chain_code,
             supply_token_id=supply_token_id,
             debt_token_id=debt_token_id,
-            collateral_token_id=record.collateral_token_id,
-            supply_symbol=_direct_supply_symbol(record),
-            debt_symbol=record.base_symbol if debt_token_id is not None else None,
+            collateral_token_id=collateral_token_id,
+            supply_symbol=supply_symbol,
+            debt_symbol=debt_symbol,
             market_display=_build_market_label(record),
             market_kind_value=record.market_kind,
             monitored=False,
             usage_key=row.position_key,
             components=[(record.market_id, "primary_market")],
             borrow_usd=row.borrowed_usd,
-            collateral_yield_apy=row.supply_apy + row.reward_apy,
-            collateral_yield_weight_usd=_economic_supply_usd(row),
+            collateral_yield_apy=collateral_yield_apy,
+            collateral_yield_weight_usd=collateral_yield_weight_usd,
         )
 
 

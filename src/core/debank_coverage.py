@@ -60,6 +60,8 @@ PROTOCOL_ALIASES: dict[str, str] = {
     "morpho": "morpho",
     "morpho_blue": "morpho",
     "morphoblue": "morpho",
+    "pendle": "pendle",
+    "pendle2": "pendle",
     "plasma_aave3": "aave_v3",
     "spark": "spark",
     "stakedao": "stakedao",
@@ -287,6 +289,7 @@ def _configured_surface(markets_config: MarketsConfig) -> tuple[set[str], set[st
         markets_config.euler_v2,
         markets_config.dolomite,
         markets_config.kamino,
+        markets_config.pendle,
         markets_config.zest,
         markets_config.wallet_balances,
         markets_config.traderjoe_lp,
@@ -308,6 +311,8 @@ def _configured_surface(markets_config: MarketsConfig) -> tuple[set[str], set[st
         configured_protocols.add("dolomite")
     if markets_config.kamino:
         configured_protocols.add("kamino")
+    if markets_config.pendle:
+        configured_protocols.add("pendle")
     if markets_config.zest:
         configured_protocols.add("zest")
     if markets_config.traderjoe_lp:
@@ -367,6 +372,8 @@ def _db_leg_token_symbol(
     collateral_symbol: str | None,
     metadata_json: object,
     supplied_usd: Decimal,
+    raw_supplied_usd: Decimal,
+    collateral_usd: Decimal | None,
     borrowed_usd: Decimal,
 ) -> str | None:
     if protocol_code == "dolomite":
@@ -429,6 +436,21 @@ def _db_leg_token_symbol(
             )
         return base_symbol or collateral_symbol
 
+    if protocol_code == "pendle":
+        if leg_type == "supply":
+            if collateral_usd is not None and collateral_usd > 0 and raw_supplied_usd <= 0:
+                return (
+                    _symbol_from_metadata(metadata_json, "yt_token_symbol")
+                    or collateral_symbol
+                    or base_symbol
+                )
+            return (
+                _symbol_from_metadata(metadata_json, "pt_token_symbol")
+                or base_symbol
+                or collateral_symbol
+            )
+        return base_symbol or collateral_symbol
+
     if leg_type == "supply":
         return _symbol_from_metadata(metadata_json, "symbol") or base_symbol or collateral_symbol
     return (
@@ -461,6 +483,8 @@ def _load_db_legs(
             Chain.chain_code,
             ProtocolModel.protocol_code,
             economic_supply_usd.label("supplied_usd"),
+            PositionSnapshot.supplied_usd.label("raw_supplied_usd"),
+            PositionSnapshot.collateral_usd,
             PositionSnapshot.borrowed_usd,
             Market.metadata_json,
             base_token.symbol,
@@ -482,6 +506,8 @@ def _load_db_legs(
         chain_code,
         protocol_code,
         supplied_usd,
+        raw_supplied_usd,
+        collateral_usd,
         borrowed_usd,
         metadata_json,
         base_symbol,
@@ -501,6 +527,12 @@ def _load_db_legs(
                 collateral_symbol=collateral_symbol,
                 metadata_json=metadata_json,
                 supplied_usd=supplied,
+                raw_supplied_usd=abs(Decimal(raw_supplied_usd)),
+                collateral_usd=(
+                    abs(Decimal(collateral_usd))
+                    if collateral_usd is not None
+                    else None
+                ),
                 borrowed_usd=borrowed,
             )
             if symbol:
@@ -521,6 +553,12 @@ def _load_db_legs(
                 collateral_symbol=collateral_symbol,
                 metadata_json=metadata_json,
                 supplied_usd=supplied,
+                raw_supplied_usd=abs(Decimal(raw_supplied_usd)),
+                collateral_usd=(
+                    abs(Decimal(collateral_usd))
+                    if collateral_usd is not None
+                    else None
+                ),
                 borrowed_usd=borrowed,
             )
             if symbol:

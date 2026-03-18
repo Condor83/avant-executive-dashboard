@@ -35,6 +35,14 @@ class MarketExposureRow(BaseModel):
     active_alert_count: int
     risk_status: str
     watch_status: str
+    pendle_underlying_symbol: str | None = None
+    pendle_pt_liquidity_native: Decimal | None = None
+    pendle_sy_liquidity_native: Decimal | None = None
+    pendle_underlying_apy: Decimal | None = None
+    pendle_implied_apy: Decimal | None = None
+    pendle_pendle_apy: Decimal | None = None
+    pendle_swap_fee_apy: Decimal | None = None
+    pendle_aggregated_apy: Decimal | None = None
 
 
 class MarketExposureHistoryPoint(BaseModel):

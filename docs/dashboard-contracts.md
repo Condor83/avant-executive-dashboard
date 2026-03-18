@@ -46,6 +46,7 @@ Current behavior:
 - Rows may be grouped from multiple canonical legs or multiple raw protocol rows.
 - Reserve-style protocols can collapse into one row when that matches how Avant thinks about the position.
 - Direct lend-side positions are valid and should not be forced into carry-trade semantics.
+- Direct Pendle PT and YT positions are valid lend-side rows and should remain separate positions.
 - `TVL` / equity at the row level is current `net_equity_usd`.
 
 Display/metric semantics:
@@ -64,6 +65,7 @@ Current behavior:
 - Reserve-style protocols reuse native reserves across multiple monitored pairs.
 - Those rows are therefore **not additive**.
 - Top Markets summary cards are computed from deduped native component markets and remain the additive/global source.
+- Direct Pendle strategy markets are shown as native market exposures when Avant has live position usage there.
 
 Row semantics:
 - `Collateral Detail` = collateral-side market context

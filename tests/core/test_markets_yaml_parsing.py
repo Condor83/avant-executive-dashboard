@@ -25,6 +25,7 @@ def test_markets_yaml_has_expected_protocol_keys() -> None:
         "euler_v2",
         "dolomite",
         "kamino",
+        "pendle",
         "zest",
         "wallet_balances",
         "traderjoe_lp",
@@ -110,6 +111,17 @@ def test_dolomite_weeth_market_uses_defillama_carry_fallback() -> None:
                 assert kamino_market.borrow_token.symbol
                 assert kamino_market.borrow_token.mint
                 assert kamino_market.borrow_token.decimals >= 0
+
+    for pendle_chain in markets.pendle.values():
+        for pendle_market in pendle_chain.markets:
+            assert pendle_market.market_address
+            assert pendle_market.name
+            assert pendle_market.pt_token.symbol.startswith("PT-")
+            assert pendle_market.pt_token.address
+            assert pendle_market.pt_token.decimals >= 0
+            assert pendle_market.yt_token.symbol.startswith("YT-")
+            assert pendle_market.yt_token.address
+            assert pendle_market.yt_token.decimals >= 0
 
     for wallet_balance_chain in markets.wallet_balances.values():
         for token in wallet_balance_chain.tokens:
@@ -202,6 +214,20 @@ def test_euler_avalanche_btcb_vault_is_configured_for_monitored_pair() -> None:
     assert target.debt_supported is True
 
 
+def test_pendle_avusd_market_is_configured_for_direct_pt_yt_ingest() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    target = markets.pendle["ethereum"].markets[0]
+
+    assert canonical_address(target.market_address) == "0xf968b785b4bfd5a6c0fc197b42264beeecf58d85"
+    assert target.name == "avUSD Pendle 14MAY2026"
+    assert target.pt_token.symbol == "PT-avUSD-14MAY2026"
+    assert canonical_address(target.pt_token.address) == "0xcc16cd49194e7aa3dca780c742580e2f9b418874"
+    assert target.yt_token.symbol == "YT-avUSD-14MAY2026"
+    assert canonical_address(target.yt_token.address) == "0x5d928577454dfb826dd6163c75a487ab96032c2d"
+    assert target.sy_token_address == "0xaa6a8d538e36f23975beab59f5def2f19152d114"
+
+
 def test_euler_consumer_markets_reference_configured_native_vaults() -> None:
     markets = load_markets_config(Path("config/markets.yaml"))
     consumer = load_consumer_markets_config(Path("config/consumer_markets.yaml"))
@@ -229,6 +255,7 @@ def test_stakedao_fixed_apy_override_requires_matching_source() -> None:
                 "euler_v2": {},
                 "dolomite": {},
                 "kamino": {},
+                "pendle": {},
                 "zest": {},
                 "wallet_balances": {},
                 "traderjoe_lp": {},

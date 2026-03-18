@@ -18,7 +18,7 @@ import {
 import { useMarketExposures } from "@/lib/hooks/use-market-exposures";
 import { useMarketSummary } from "@/lib/hooks/use-market-summary";
 import { useUiMetadata } from "@/lib/hooks/use-ui-metadata";
-import { formatAPY, formatPercent, formatUSDCompact } from "@/lib/formatters";
+import { formatAPY, formatPercent, formatTokenCompact, formatUSDCompact } from "@/lib/formatters";
 import type { MarketExposureFilters, MarketExposureRow, OptionItem } from "@/lib/types";
 
 const MIN_VISIBLE_COLLATERAL_LTV = 0.001;
@@ -44,6 +44,27 @@ function sortableNumber(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isPendleRow(row: MarketExposureRow): boolean {
+  return row.protocol_code === "pendle";
+}
+
+function sumNumericStrings(...values: Array<string | null | undefined>): string | null {
+  let total = 0;
+  let seen = false;
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      continue;
+    }
+    total += parsed;
+    seen = true;
+  }
+  return seen ? String(total) : null;
+}
+
 function watchlistFilterValue(searchParams: URLSearchParams): WatchlistFilterValue | undefined {
   const watchlist = searchParams.get("watchlist");
   if (watchlist === "yes" || watchlist === "no") {
@@ -59,7 +80,7 @@ function watchlistFilterValue(searchParams: URLSearchParams): WatchlistFilterVal
   return undefined;
 }
 
-function exposureColumns(): Column<MarketExposureRow>[] {
+function exposureColumns({ pendleMode }: { pendleMode: boolean }): Column<MarketExposureRow>[] {
   return [
     {
       key: "display_name",
@@ -87,36 +108,78 @@ function exposureColumns(): Column<MarketExposureRow>[] {
     },
     {
       key: "total_supply_usd",
-      header: "Collateral Detail",
+      header: pendleMode ? "PT Side" : "Collateral Detail",
       sortable: true,
-      sortValue: (row) => sortableNumber(row.total_supply_usd),
-      cell: (row) => (
-        <div className="text-right tabular-nums tracking-tight">
-          <div className="text-foreground">{formatUSDCompact(row.total_supply_usd)}</div>
-          <div className="text-xs text-muted-foreground">{row.supply_symbol ?? "---"}</div>
-          <div className="text-xs text-muted-foreground">
-            Yield {formatAPY(row.collateral_yield_apy)}
+      sortValue: (row) =>
+        isPendleRow(row)
+          ? sortableNumber(row.pendle_pt_liquidity_native) ?? sortableNumber(row.total_supply_usd)
+          : sortableNumber(row.total_supply_usd),
+      cell: (row) => {
+        if (isPendleRow(row)) {
+          return (
+            <div className="text-right tabular-nums tracking-tight">
+              <div className="text-foreground">{formatTokenCompact(row.pendle_pt_liquidity_native)}</div>
+              <div className="text-xs text-muted-foreground">{row.supply_symbol ?? "PT"}</div>
+              <div className="text-xs text-muted-foreground">
+                TVL {formatUSDCompact(row.total_supply_usd)}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Implied {formatAPY(row.pendle_implied_apy ?? row.weighted_supply_apy)}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="text-right tabular-nums tracking-tight">
+            <div className="text-foreground">{formatUSDCompact(row.total_supply_usd)}</div>
+            <div className="text-xs text-muted-foreground">
+              {row.collateral_symbol ?? row.supply_symbol ?? "---"}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Yield {formatAPY(row.collateral_yield_apy)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Max LTV {formatCollateralLtv(row.collateral_max_ltv)}
+            </div>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Max LTV {formatCollateralLtv(row.collateral_max_ltv)}
-          </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "total_borrow_usd",
-      header: "Borrow Detail",
+      header: pendleMode ? "SY Side" : "Borrow Detail",
       sortable: true,
-      sortValue: (row) => sortableNumber(row.total_borrow_usd),
-      cell: (row) => (
-        <div className="text-right tabular-nums tracking-tight">
-          <div className="text-foreground">{formatUSDCompact(row.total_borrow_usd)}</div>
-          <div className="text-xs text-muted-foreground">{row.debt_symbol ?? "---"}</div>
-          <div className="text-xs text-muted-foreground">
-            Cost {formatAPY(row.weighted_borrow_apy)}
+      sortValue: (row) =>
+        isPendleRow(row)
+          ? sortableNumber(row.pendle_sy_liquidity_native)
+          : sortableNumber(row.total_borrow_usd),
+      cell: (row) => {
+        if (isPendleRow(row)) {
+          return (
+            <div className="text-right tabular-nums tracking-tight">
+              <div className="text-foreground">{formatTokenCompact(row.pendle_sy_liquidity_native)}</div>
+              <div className="text-xs text-muted-foreground">
+                {row.pendle_underlying_symbol ? `SY / ${row.pendle_underlying_symbol}` : "SY"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Underlying {formatAPY(row.pendle_underlying_apy)}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                Pendle+Fee {formatAPY(sumNumericStrings(row.pendle_pendle_apy, row.pendle_swap_fee_apy))}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="text-right tabular-nums tracking-tight">
+            <div className="text-foreground">{formatUSDCompact(row.total_borrow_usd)}</div>
+            <div className="text-xs text-muted-foreground">{row.debt_symbol ?? "---"}</div>
+            <div className="text-xs text-muted-foreground">
+              Cost {formatAPY(row.weighted_borrow_apy)}
+            </div>
           </div>
-        </div>
-      ),
+        );
+      },
     },
     {
       key: "available_liquidity_usd",
@@ -132,11 +195,19 @@ function exposureColumns(): Column<MarketExposureRow>[] {
     },
     {
       key: "spread_apy",
-      header: "Spread",
+      header: pendleMode ? "All-In APY" : "Spread",
       align: "right",
       sortable: true,
-      sortValue: (row) => sortableNumber(row.spread_apy),
-      cell: (row) => <DecimalCell value={row.spread_apy} formatter={formatAPY} />,
+      sortValue: (row) =>
+        isPendleRow(row)
+          ? sortableNumber(row.pendle_aggregated_apy) ?? sortableNumber(row.weighted_supply_apy)
+          : sortableNumber(row.spread_apy),
+      cell: (row) => (
+        <DecimalCell
+          value={isPendleRow(row) ? (row.pendle_aggregated_apy ?? row.weighted_supply_apy) : row.spread_apy}
+          formatter={formatAPY}
+        />
+      ),
     },
     {
       key: "avant_borrow_share",
@@ -236,6 +307,7 @@ function MarketsContent() {
     watchlist,
   };
   const exposures = useMarketExposures(filters);
+  const pendleMode = filters.protocol_code === "pendle";
 
   const setParam = useCallback(
     (key: string, value: string) => {
@@ -289,7 +361,7 @@ function MarketsContent() {
       <section className="mt-12">
         <h2 className="mb-4 text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Market Exposures</h2>
         <DataTable
-          columns={exposureColumns()}
+          columns={exposureColumns({ pendleMode })}
           data={exposures.data ?? []}
           isLoading={exposures.isLoading || metadata.isLoading}
           rowKey={(row) => row.exposure_slug}

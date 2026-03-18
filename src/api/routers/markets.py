@@ -157,6 +157,7 @@ def _load_component_context(
             MarketExposureComponent.component_role,
             Market.market_id,
             Market.market_kind,
+            Market.metadata_json,
             Market.base_asset_token_id,
             Market.collateral_token_id,
             component_base_token.symbol.label("base_symbol"),
@@ -206,12 +207,33 @@ def _load_latest_caps_by_market(
     return caps_by_market
 
 
+def _load_latest_irm_params_by_market(
+    session: Session,
+    *,
+    market_ids: set[int],
+) -> dict[int, dict[str, Any] | None]:
+    if not market_ids:
+        return {}
+    rows = session.execute(
+        select(MarketSnapshot.market_id, MarketSnapshot.irm_params_json)
+        .where(MarketSnapshot.market_id.in_(market_ids))
+        .order_by(MarketSnapshot.market_id.asc(), MarketSnapshot.as_of_ts_utc.desc())
+    ).all()
+    irm_by_market: dict[int, dict[str, Any] | None] = {}
+    for market_id, irm_params_json in rows:
+        irm_by_market.setdefault(
+            int(market_id),
+            irm_params_json if isinstance(irm_params_json, dict) else None,
+        )
+    return irm_by_market
+
+
 def _build_exposure_context(
     session: Session,
     *,
     business_date: date,
     exposure_ids: list[int],
-) -> dict[int, dict[str, Decimal | None]]:
+) -> dict[int, dict[str, Any]]:
     as_of_ts_utc = session.scalar(
         select(func.max(MarketHealthDaily.as_of_ts_utc)).where(
             MarketHealthDaily.business_date == business_date
@@ -243,6 +265,12 @@ def _build_exposure_context(
             int(row.market_id) for rows in component_rows_by_exposure.values() for row in rows
         },
     )
+    irm_by_market = _load_latest_irm_params_by_market(
+        session,
+        market_ids={
+            int(row.market_id) for rows in component_rows_by_exposure.values() for row in rows
+        },
+    )
 
     token_ids: set[int] = set()
     for rows in component_rows_by_exposure.values():
@@ -262,7 +290,7 @@ def _build_exposure_context(
             token_ids.add(borrow_token_id)
     prices = _load_latest_price_map(session, token_ids)
 
-    output: dict[int, dict[str, Decimal | None]] = {}
+    output: dict[int, dict[str, Any]] = {}
     for exposure_id, rows in component_rows_by_exposure.items():
         supply_component = _pick_component(rows, "supply_market", "primary_market")
         borrow_component = _pick_component(rows, "borrow_market", "primary_market")
@@ -313,13 +341,69 @@ def _build_exposure_context(
             else None
         )
         avant_borrow_usd = borrow_usage_by_exposure.get(exposure_id, ZERO)
-        output[exposure_id] = {
+        context: dict[str, Any] = {
             "supply_cap_usd": supply_cap_usd,
             "borrow_cap_usd": borrow_cap_usd,
             "collateral_max_ltv": collateral_max_ltv,
             "collateral_yield_apy": collateral_yield_apy,
             "avant_borrow_usd": avant_borrow_usd,
         }
+        if supply_component is not None:
+            metadata_json = (
+                supply_component.metadata_json
+                if hasattr(supply_component, "metadata_json")
+                and isinstance(supply_component.metadata_json, dict)
+                else None
+            )
+            irm_params = irm_by_market.get(int(supply_component.market_id))
+            context.update(
+                {
+                    "pendle_underlying_symbol": (
+                        metadata_json.get("underlying_token_symbol")
+                        if isinstance(metadata_json, dict)
+                        else None
+                    ),
+                    "pendle_pt_liquidity_native": (
+                        Decimal(str(irm_params["total_pt"]))
+                        if isinstance(irm_params, dict) and irm_params.get("total_pt") is not None
+                        else None
+                    ),
+                    "pendle_sy_liquidity_native": (
+                        Decimal(str(irm_params["total_sy"]))
+                        if isinstance(irm_params, dict) and irm_params.get("total_sy") is not None
+                        else None
+                    ),
+                    "pendle_underlying_apy": (
+                        Decimal(str(irm_params["underlying_apy"]))
+                        if isinstance(irm_params, dict)
+                        and irm_params.get("underlying_apy") is not None
+                        else None
+                    ),
+                    "pendle_implied_apy": (
+                        Decimal(str(irm_params["implied_apy"]))
+                        if isinstance(irm_params, dict) and irm_params.get("implied_apy") is not None
+                        else None
+                    ),
+                    "pendle_pendle_apy": (
+                        Decimal(str(irm_params["pendle_apy"]))
+                        if isinstance(irm_params, dict) and irm_params.get("pendle_apy") is not None
+                        else None
+                    ),
+                    "pendle_swap_fee_apy": (
+                        Decimal(str(irm_params["swap_fee_apy"]))
+                        if isinstance(irm_params, dict)
+                        and irm_params.get("swap_fee_apy") is not None
+                        else None
+                    ),
+                    "pendle_aggregated_apy": (
+                        Decimal(str(irm_params["aggregated_apy"]))
+                        if isinstance(irm_params, dict)
+                        and irm_params.get("aggregated_apy") is not None
+                        else None
+                    ),
+                }
+            )
+        output[exposure_id] = context
     return output
 
 
@@ -365,7 +449,7 @@ def _exposure_row_query(business_date: date):
 def _build_exposure_row(
     row: Any,
     *,
-    context: dict[str, Decimal | None] | None = None,
+    context: dict[str, Any] | None = None,
 ) -> MarketExposureRow:
     context = context or {}
     collateral_yield_apy = context.get("collateral_yield_apy")
@@ -406,6 +490,14 @@ def _build_exposure_row(
         active_alert_count=row.active_alert_count,
         risk_status=row.risk_status,
         watch_status=row.watch_status,
+        pendle_underlying_symbol=context.get("pendle_underlying_symbol"),
+        pendle_pt_liquidity_native=context.get("pendle_pt_liquidity_native"),
+        pendle_sy_liquidity_native=context.get("pendle_sy_liquidity_native"),
+        pendle_underlying_apy=context.get("pendle_underlying_apy"),
+        pendle_implied_apy=context.get("pendle_implied_apy"),
+        pendle_pendle_apy=context.get("pendle_pendle_apy"),
+        pendle_swap_fee_apy=context.get("pendle_swap_fee_apy"),
+        pendle_aggregated_apy=context.get("pendle_aggregated_apy"),
     )
 
 

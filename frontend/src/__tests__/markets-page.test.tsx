@@ -101,6 +101,14 @@ function makeExposure({
     active_alert_count: 0,
     risk_status: "healthy",
     watch_status: "clear",
+    pendle_underlying_symbol: null,
+    pendle_pt_liquidity_native: null,
+    pendle_sy_liquidity_native: null,
+    pendle_underlying_apy: null,
+    pendle_implied_apy: null,
+    pendle_pendle_apy: null,
+    pendle_swap_fee_apy: null,
+    pendle_aggregated_apy: null,
   };
 }
 
@@ -243,5 +251,51 @@ describe("MarketsPage", () => {
     expect(order[2]).toContain("Alpha Market");
 
     expect(pushMock).not.toHaveBeenCalled();
+  });
+
+  it("renders Pendle rows as PT and SY market sides", () => {
+    searchParamsValue = "protocol_code=pendle";
+    useMarketExposuresMock.mockReturnValue({
+      data: [
+        {
+          ...makeExposure({
+            id: 4,
+            slug: "pendle-avusd",
+            name: "avUSD Pendle 14MAY2026",
+            supplyUsd: "7438836.76",
+            borrowUsd: "0",
+            liquidityUsd: "2444221.12",
+            spreadApy: "0.0835",
+            utilization: "0",
+            avantShare: "0",
+            distanceToKink: "0.85",
+          }),
+          protocol_code: "pendle",
+          supply_symbol: "PT-avUSD-14MAY2026",
+          collateral_symbol: "YT-avUSD-14MAY2026",
+          debt_symbol: null,
+          pendle_underlying_symbol: "avUSD",
+          pendle_pt_liquidity_native: "488676.15919477417",
+          pendle_sy_liquidity_native: "1899012.0702663884",
+          pendle_underlying_apy: "0",
+          pendle_implied_apy: "0.0788356716705838",
+          pendle_pendle_apy: "0.04952900658357847",
+          pendle_swap_fee_apy: "0.0032712492338060617",
+          pendle_aggregated_apy: "0.06878533097185063",
+        },
+      ],
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    render(<MarketsPage />);
+
+    expect(screen.getByText("PT Side")).toBeTruthy();
+    expect(screen.getByText("SY Side")).toBeTruthy();
+    expect(screen.getByText("PT-avUSD-14MAY2026")).toBeTruthy();
+    expect(screen.getByText("SY / avUSD")).toBeTruthy();
+    expect(screen.getByText("488.7K")).toBeTruthy();
+    expect(screen.getByText("1.90M")).toBeTruthy();
   });
 });

@@ -473,6 +473,14 @@ export interface MarketExposureRow {
   active_alert_count: number;
   risk_status: string;
   watch_status: string;
+  pendle_underlying_symbol: string | null;
+  pendle_pt_liquidity_native: string | null;
+  pendle_sy_liquidity_native: string | null;
+  pendle_underlying_apy: string | null;
+  pendle_implied_apy: string | null;
+  pendle_pendle_apy: string | null;
+  pendle_swap_fee_apy: string | null;
+  pendle_aggregated_apy: string | null;
 }
 
 export interface MarketExposureHistoryPoint {

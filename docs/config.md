@@ -17,9 +17,9 @@ Adapters must treat this file as the source of truth (no silent discovery in pro
 
 - Position adapters:
   - `wallet_balances`, `aave_v3`, `spark`, `morpho`, `euler_v2`, `dolomite`,
-    `traderjoe_lp`, `stakedao`, `etherex`, `kamino`, `zest`, `silo_v2`
+    `traderjoe_lp`, `stakedao`, `etherex`, `kamino`, `pendle`, `zest`, `silo_v2`
 - Market adapters:
-  - `aave_v3`, `spark`, `morpho`, `euler_v2`, `dolomite`, `kamino`, `zest`, `silo_v2`
+  - `aave_v3`, `spark`, `morpho`, `euler_v2`, `dolomite`, `kamino`, `pendle`, `zest`, `silo_v2`
 - Position-only adapters:
   - `wallet_balances`, `traderjoe_lp`, `stakedao`, `etherex`
 
@@ -170,6 +170,32 @@ Kamino token normalization policy:
   - `kamino_supply_token_mismatch`
   - `kamino_multi_borrow_token`
   - `kamino_borrow_token_mismatch`
+
+#### Pendle
+- chain config includes:
+  - wallets list
+  - markets list with:
+    - `market_address`
+    - display `name`
+    - `expiry`
+    - `pt_token` block: `symbol`, `address`, `decimals`
+    - `yt_token` block: `symbol`, `address`, `decimals`
+    - optional `underlying_token` block: `symbol`, `address`, `decimals`
+    - optional `sy_token_address`
+
+Pendle position policy:
+- PT and YT ingest as separate canonical position rows on the same configured market.
+- PT rows use `supplied_*`; YT rows use `collateral_*` so the economic supply leg resolves to the YT token.
+- PT `supply_apy` is reconstructed from Pendle trade history and cached by `position_key`, using the same override/cache policy as PT collateral positions elsewhere in the repo.
+- YT `supply_apy` is derived as `underlyingApy - impliedApy` from Pendle market data and may be negative.
+- LP, SY, and cross-PT positions are intentionally ignored in the current tranche.
+
+Pendle market policy:
+- Market snapshots are stored canonically for configured Pendle markets.
+- `total_supply_usd` uses Pendle `totalTvl`.
+- `available_liquidity_usd` uses Pendle `liquidity`.
+- `supply_apy` uses Pendle `impliedApy`.
+- Pendle markets are seeded as `market_kind=other`, so they do not flow into the primary Markets pair-monitor table by default.
 
 #### Zest (Stacks)
 - chain config includes:
