@@ -49,6 +49,7 @@ aave_v3:
     oracle: '0x54586bE62E3c3580375aE3723C145253060Ca0C2'
     wallets:
       - '0x3207363359Ca0c11D11073aD48301E8c958B7910'
+      - '0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD'
       - '0x7bee8D37FBA61a6251a08b957d502C56E2A50FAb'
       - '0x920EefBCf1f5756109952E6Ff6dA1Cab950C64d7'
       - '0xc468315a2df54f9c076bD5Cfe5002BA211F74CA6'
@@ -69,6 +70,10 @@ aave_v3:
     - symbol: WETH
       asset: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
       decimals: 18
+    - symbol: weETH
+      asset: '0xcd5fe23c85820f7b72d0926fc9b05b43e359b7ee'
+      decimals: 18
+      supply_apy_fallback_pool_id: '46bd2bdf-6d92-4066-b482-e885ee172264'
     - symbol: sUSDe
       asset: '0x9D39A5DE30e57443BfF2A8307A4256c8797A3497'
       decimals: 18
@@ -205,6 +210,7 @@ morpho:
       - '0x887fD380C1e4Cc28e119917015fE7fb0062c5d67'
       - '0x920EefBCf1f5756109952E6Ff6dA1Cab950C64d7'
       - '0x95d78eE506c616e88aDb7b6e4517F40c888D6B78'
+      - '0x9d272E3b0EafBc171C75dEF5fE3952858F7E06Aa'
       - '0xaA0d9205AE55dCF6321dF019da9265B12bA41a7f'
     markets:
     - id: '0x729badf297ee9f2f6b3f717b96fd355fc6ec00422284ce1968e76647b258cf44'
@@ -366,6 +372,27 @@ morpho:
       chain_id: 1
       apy_source: morpho_api
       apy_lookback: SIX_HOURS
+  katana:
+    morpho: '0xd50f2dfffd62f94ee4aed9ca05c61d0753268abc'
+    wallets:
+      - '0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD'
+    markets:
+    - id: '0x76e311d4b0e2e6ae88ad9bab18063452a6d39837d7104c430ff62457b91cb2cb'
+      loan_token: vbUSDC
+      loan_token_address: '0x203a662b0bd271a6ed5a60edfbd04bfce608fd36'
+      collateral_token: weETH
+      loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x9893989433e7a383cb313953e4c2365107dc19a7'
+      defillama_pool_id: '46bd2bdf-6d92-4066-b482-e885ee172264'
+    - id: '0xa6ce59291d90ae348b2fa956cc66f31df605a3304a9325e494c94e2cf5b0485a'
+      loan_token: vbUSDT
+      loan_token_address: '0x2dca96907fde857dd3d816880a0df407eeb2d2f2'
+      collateral_token: weETH
+      loan_decimals: 6
+      collateral_decimals: 18
+      collateral_token_address: '0x9893989433e7a383cb313953e4c2365107dc19a7'
+      defillama_pool_id: '46bd2bdf-6d92-4066-b482-e885ee172264'
 pendle:
   ethereum:
     wallets:

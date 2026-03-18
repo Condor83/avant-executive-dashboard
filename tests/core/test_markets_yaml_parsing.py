@@ -198,6 +198,26 @@ def test_spark_weeth_market_uses_defillama_supply_fallback() -> None:
     assert target.supply_apy_fallback_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"
 
 
+def test_katana_morpho_weeth_markets_are_configured_for_audited_wallet() -> None:
+    markets = load_markets_config(Path("config/markets.yaml"))
+
+    katana = markets.morpho["katana"]
+
+    assert "0x6CC60A0b57bc882A0471980D0e2D4aD7DDf3C4bD" in katana.wallets
+    assert len(katana.markets) == 2
+
+    market_ids = {market.id.lower() for market in katana.markets}
+    assert market_ids == {
+        "0x76e311d4b0e2e6ae88ad9bab18063452a6d39837d7104c430ff62457b91cb2cb",
+        "0xa6ce59291d90ae348b2fa956cc66f31df605a3304a9325e494c94e2cf5b0485a",
+    }
+
+    for market in katana.markets:
+        assert market.collateral_token == "weETH"
+        assert market.collateral_token_address == "0x9893989433e7a383cb313953e4c2365107dc19a7"
+        assert market.defillama_pool_id == "46bd2bdf-6d92-4066-b482-e885ee172264"
+
+
 def test_euler_avalanche_btcb_vault_is_configured_for_monitored_pair() -> None:
     markets = load_markets_config(Path("config/markets.yaml"))
 
@@ -222,9 +242,13 @@ def test_pendle_avusd_market_is_configured_for_direct_pt_yt_ingest() -> None:
     assert canonical_address(target.market_address) == "0xf968b785b4bfd5a6c0fc197b42264beeecf58d85"
     assert target.name == "avUSD Pendle 14MAY2026"
     assert target.pt_token.symbol == "PT-avUSD-14MAY2026"
-    assert canonical_address(target.pt_token.address) == "0xcc16cd49194e7aa3dca780c742580e2f9b418874"
+    assert (
+        canonical_address(target.pt_token.address) == "0xcc16cd49194e7aa3dca780c742580e2f9b418874"
+    )
     assert target.yt_token.symbol == "YT-avUSD-14MAY2026"
-    assert canonical_address(target.yt_token.address) == "0x5d928577454dfb826dd6163c75a487ab96032c2d"
+    assert (
+        canonical_address(target.yt_token.address) == "0x5d928577454dfb826dd6163c75a487ab96032c2d"
+    )
     assert target.sy_token_address == "0xaa6a8d538e36f23975beab59f5def2f19152d114"
 
 

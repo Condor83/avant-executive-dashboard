@@ -29,6 +29,7 @@ DEBANK_CHAIN_TO_LOCAL: dict[str, str] = {
     "eth": "ethereum",
     "ethereum": "ethereum",
     "ink": "ink",
+    "katana": "katana",
     "mnt": "mantle",
     "mantle": "mantle",
     "plasma": "plasma",
@@ -529,9 +530,7 @@ def _load_db_legs(
                 supplied_usd=supplied,
                 raw_supplied_usd=abs(Decimal(raw_supplied_usd)),
                 collateral_usd=(
-                    abs(Decimal(collateral_usd))
-                    if collateral_usd is not None
-                    else None
+                    abs(Decimal(collateral_usd)) if collateral_usd is not None else None
                 ),
                 borrowed_usd=borrowed,
             )
@@ -555,9 +554,7 @@ def _load_db_legs(
                 supplied_usd=supplied,
                 raw_supplied_usd=abs(Decimal(raw_supplied_usd)),
                 collateral_usd=(
-                    abs(Decimal(collateral_usd))
-                    if collateral_usd is not None
-                    else None
+                    abs(Decimal(collateral_usd)) if collateral_usd is not None else None
                 ),
                 borrowed_usd=borrowed,
             )

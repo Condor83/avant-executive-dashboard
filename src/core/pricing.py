@@ -18,6 +18,7 @@ CHAIN_TO_DEFILLAMA: dict[str, str] = {
     "bera": "berachain",
     "ethereum": "ethereum",
     "ink": "ink",
+    "katana": "katana",
     "linea": "linea",
     "mantle": "mantle",
     "plasma": "plasma",
